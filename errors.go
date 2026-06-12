@@ -8,5 +8,5 @@ var (
 	ErrInvalidConfig      = errors.New("aac: invalid MPEG-4 audio config")
 	ErrInvalidADTS        = errors.New("aac: invalid ADTS frame")
 	ErrUnsupportedProfile = errors.New("aac: unsupported profile")
-	ErrNativeUnavailable  = errors.New("aac: native decoder unavailable")
+	ErrNativeUnavailable  = errors.New("aac: decoder unavailable")
 )

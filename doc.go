@@ -1,6 +1,6 @@
 // Package aac decodes AAC-LC elementary streams.
 //
-// The production decoder path uses the native FFmpeg AAC decoder through cgo.
-// Pure Go parsing is kept source-shaped against FFmpeg's MPEG-4 Audio and ADTS
-// helpers so stream validation stays available outside the native boundary.
+// The decoder core is a pure-Go translation of the pinned FAAD2 AAC-LC C
+// reference, with Go parsing helpers for MPEG-4 AudioSpecificConfig and ADTS
+// stream framing.
 package aac

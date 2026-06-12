@@ -1,3 +1,6 @@
 [submodule "third_party/ffmpeg"]
 	path = third_party/ffmpeg
 	url = https://git.ffmpeg.org/ffmpeg.git
+[submodule "third_party/faad2"]
+	path = third_party/faad2
+	url = https://github.com/knik0/faad2

@@ -7,7 +7,7 @@ import (
 
 type Decoder struct {
 	mu     sync.Mutex
-	native *nativeDecoder
+	pure   *pureDecoder
 	cfg    Config
 	adts   bool
 	closed bool
@@ -18,19 +18,19 @@ func NewDecoder(cfg Config) (*Decoder, error) {
 	if err != nil {
 		return nil, err
 	}
-	native, err := newNativeDecoder(normalized)
+	pure, err := newPureDecoder(normalized)
 	if err != nil {
 		return nil, err
 	}
-	return &Decoder{native: native, cfg: normalized}, nil
+	return &Decoder{pure: pure, cfg: normalized}, nil
 }
 
 func NewADTSDecoder() (*Decoder, error) {
-	native, err := newNativeDecoder(Config{})
+	pure, err := newPureDecoder(Config{})
 	if err != nil {
 		return nil, err
 	}
-	return &Decoder{native: native, adts: true}, nil
+	return &Decoder{pure: pure, adts: true}, nil
 }
 
 func (d *Decoder) Config() Config {
@@ -48,7 +48,7 @@ func (d *Decoder) DecodeRaw(frame []byte) ([]int16, error) {
 	if d.adts {
 		return nil, fmt.Errorf("%w: ADTS decoder cannot decode raw AAC access units", ErrInvalidConfig)
 	}
-	return d.native.decode(frame)
+	return d.pure.decode(frame)
 }
 
 func (d *Decoder) DecodeADTSFrame(frame []byte) ([]int16, error) {
@@ -77,7 +77,7 @@ func (d *Decoder) DecodeADTSFrame(frame []byte) ([]int16, error) {
 		ChannelConfig:   h.ChannelConfig,
 		Channels:        h.Channels,
 	}
-	return d.native.decode(frame[:h.FrameLength])
+	return d.pure.decode(frame[:h.FrameLength])
 }
 
 func (d *Decoder) Close() error {
@@ -87,9 +87,9 @@ func (d *Decoder) Close() error {
 		return nil
 	}
 	d.closed = true
-	if d.native != nil {
-		d.native.close()
-		d.native = nil
+	if d.pure != nil {
+		d.pure.close()
+		d.pure = nil
 	}
 	return nil
 }
@@ -116,7 +116,7 @@ func DecodeADTS(data []byte) ([]int16, Config, error) {
 }
 
 func NativeVersion() string {
-	return nativeVersion()
+	return PureGoVersion()
 }
 
 func copyConfig(c Config) Config {

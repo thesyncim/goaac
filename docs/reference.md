@@ -2,43 +2,42 @@
 
 ## Upstream Pin
 
-- Project: FFmpeg
-- Repository: `https://git.ffmpeg.org/ffmpeg.git`
-- Release tag: `n8.1.1`
-- Tag object: `150ba6ddfabb5c433bb2fb3ee546d2a96e59066d`
-- Commit: `239f2c733de417201d7ad3b3b8b0d9b63285b2b1`
-- Release page: `https://ffmpeg.org/download.html`
-- Local checkout: `third_party/ffmpeg`
+- Project: FAAD2
+- Repository: `https://github.com/knik0/faad2`
+- Release tag: `2.11.2`
+- Commit: `673a22a3c7c33e96e2ff7aae7c4d2bc190dfbf92`
+- Local checkout: `third_party/faad2`
 
-FFmpeg is used here because its native AAC decoder is actively maintained,
-widely deployed, and performance-oriented. The reference pin is treated as part
-of the behavioral spec along with libavcodec/libavutil/libswresample ABI
-behavior.
+FAAD2 is used as the standalone C reference because its decoder core is compact,
+well-known, and directly buildable as an oracle without pulling in a media
+framework. The local port is generated with `LC_ONLY_DECODER` and `DISABLE_SBR`
+so the checked-in decoder surface is AAC-LC only.
+
+FFmpeg remains a fixture generator in tests, not a runtime dependency or decode
+oracle.
 
 ## Decoder Files
 
-- `libavcodec/aac/aacdec.c`
-- `libavcodec/aac/aacdec.h`
-- `libavcodec/aac/aacdec_float.c`
-- `libavcodec/aac/aacdec_fixed.c`
-- `libavcodec/aac/aacdec_tab.c`
-- `libavcodec/aactab.c`
-- `libavcodec/mpeg4audio.c`
-- `libavcodec/mpeg4audio_sample_rates.c`
-- `libavcodec/adts_header.c`
-- `libavcodec/adts_parser.c`
+- `libfaad/bits.c`
+- `libfaad/cfft.c`
+- `libfaad/common.c`
+- `libfaad/decoder.c`
+- `libfaad/drc.c`
+- `libfaad/error.c`
+- `libfaad/filtbank.c`
+- `libfaad/huffman.c`
+- `libfaad/is.c`
+- `libfaad/mdct.c`
+- `libfaad/mp4.c`
+- `libfaad/ms.c`
+- `libfaad/output.c`
+- `libfaad/pns.c`
+- `libfaad/pulse.c`
+- `libfaad/specrec.c`
+- `libfaad/syntax.c`
+- `libfaad/tns.c`
 
 ## Local Production Slice
-
-The current production slice links FFmpeg's AAC decoder dynamically and exposes a
-small Go API for:
-
-- AudioSpecificConfig validation for AAC-LC.
-- ADTS header parsing and frame splitting.
-- ADTS AAC-LC decode to interleaved S16 PCM.
-- Raw AAC access-unit decode when supplied with AAC-LC AudioSpecificConfig.
-
-## Intentional Scope
 
 Supported now:
 
@@ -46,11 +45,13 @@ Supported now:
 - ADTS streams with one raw data block per frame.
 - Raw AAC access units when configured with AAC-LC AudioSpecificConfig.
 - Interleaved signed 16-bit PCM output.
+- Pure-Go runtime on generated targets: `darwin/arm64` and `linux/arm64`.
 
-Not yet claimed as pure Go parity:
+Not claimed:
 
-- Spectral decode, Huffman decode, prediction, TNS, MS/IS stereo, PNS, IMDCT,
-  and channel coupling.
 - HE-AAC SBR/PS profiles.
+- AAC Main, SSR, LTP, LD, DRM, or error-resilience profiles.
 - LATM/LOAS transport.
 - ADTS frames carrying multiple raw data blocks.
+- Generated support for targets that are not checked in under
+  `internal/faad2ccgo`.
