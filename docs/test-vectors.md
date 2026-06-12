@@ -42,6 +42,11 @@ access-unit APIs.
 The live integration test still synthesizes a fresh AAC-LC fixture with FFmpeg
 and builds the FAAD2 oracle locally when `ffmpeg` and a C compiler are available.
 
+Encoder bring-up also has primitive oracle vectors under `internal/fdkaac`.
+Those vectors are checked against pinned FDK-AAC v2.0.3 probes for writer-side
+bitstream emission, AAC-LC transport headers, and fixed-point arithmetic. They
+prove exact low-level behavior before the full AAC-LC encoder core is exposed.
+
 ## Regenerate
 
 ```sh
