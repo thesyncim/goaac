@@ -13,8 +13,10 @@ well-known, and directly buildable as an oracle without pulling in a media
 framework. The local port is generated with `LC_ONLY_DECODER` and `DISABLE_SBR`
 so the checked-in decoder surface is AAC-LC only.
 
-FFmpeg remains a fixture generator in tests, not a runtime dependency or decode
-oracle.
+FFmpeg remains a fixture generator for committed vectors and live integration
+tests, not a runtime dependency or decode oracle. Oracle PCM hashes come from
+the pinned FAAD2 source compiled with `-ffp-contract=off` to match the generated
+Go port's explicit `float32` evaluation.
 
 ## Decoder Files
 

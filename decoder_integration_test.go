@@ -84,6 +84,7 @@ func buildFAAD2Oracle(t *testing.T, cc, out string) {
 	args := []string{
 		"-std=c99",
 		"-O2",
+		"-ffp-contract=off",
 		"-DLC_ONLY_DECODER",
 		"-DDISABLE_SBR",
 		"-DHAVE_INTTYPES_H=1",
@@ -167,6 +168,17 @@ static int read_file(const char *path, unsigned char **data, unsigned long *size
     return 0;
 }
 
+static unsigned long adts_frame_length(const unsigned char *data, unsigned long size) {
+    unsigned long n;
+    if (size < 7) return 0;
+    if (data[0] != 0xff || (data[1] & 0xf0) != 0xf0) return 0;
+    n = (((unsigned long)data[3] & 0x03) << 11) |
+        ((unsigned long)data[4] << 3) |
+        ((unsigned long)data[5] >> 5);
+    if (n < 7 || n > size) return 0;
+    return n;
+}
+
 int main(int argc, char **argv) {
     unsigned char *data = NULL;
     unsigned long size = 0, samplerate = 0;
@@ -175,6 +187,7 @@ int main(int argc, char **argv) {
     NeAACDecHandle dec;
     NeAACDecConfigurationPtr cfg;
     FILE *out;
+    unsigned long init_size;
 
     if (argc != 3) return 2;
     if (read_file(argv[1], &data, &size) != 0) return 3;
@@ -188,11 +201,16 @@ int main(int argc, char **argv) {
     cfg->outputFormat = FAAD_FMT_16BIT;
     cfg->dontUpSampleImplicitSBR = 1;
     if (!NeAACDecSetConfiguration(dec, cfg)) return 6;
-    if (NeAACDecInit(dec, data, size, &samplerate, &channels) < 0) return 7;
+    init_size = adts_frame_length(data, size);
+    if (init_size == 0) init_size = size;
+    if (NeAACDecInit(dec, data, init_size, &samplerate, &channels) < 0) return 7;
 
     while (off < size) {
         NeAACDecFrameInfo info;
-        void *samples = NeAACDecDecode(dec, &info, data + off, size - off);
+        unsigned long chunk = adts_frame_length(data + off, size - off);
+        void *samples;
+        if (chunk == 0) chunk = size - off;
+        samples = NeAACDecDecode(dec, &info, data + off, chunk);
         if (info.error != 0) {
             fprintf(stderr, "faad2 decode error %u: %s\n", info.error, NeAACDecGetErrorMessage(info.error));
             return 8;
@@ -201,7 +219,7 @@ int main(int argc, char **argv) {
             fwrite(samples, sizeof(int16_t), (size_t)info.samples, out);
         }
         if (info.bytesconsumed == 0) break;
-        off += info.bytesconsumed;
+        off += chunk;
     }
 
     NeAACDecClose(dec);

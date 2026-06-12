@@ -6,4 +6,5 @@ coverage.out
 *.pcm
 *.wav
 *.aac
+!testdata/aaclc/*.aac
 goaac-decode

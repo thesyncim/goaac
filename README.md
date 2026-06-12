@@ -12,8 +12,8 @@ Generated decoder files are currently checked in for `darwin/arm64` and
 
 - Go 1.25+
 - Supported runtime target: `darwin/arm64` or `linux/arm64`
-- Tests: `ffmpeg` to synthesize AAC-LC fixtures and a C compiler for the native
-  FAAD2 oracle
+- Normal tests use committed AAC-LC vectors and need no native decoder
+- Vector regeneration and live oracle synthesis need `ffmpeg` and a C compiler
 
 ## Decode ADTS AAC-LC
 
@@ -95,9 +95,18 @@ CGO_ENABLED=0 go vet -unsafeptr=false -unreachable=false ./...
 CGO_ENABLED=0 go build ./cmd/goaac-decode
 ```
 
-The integration test synthesizes an AAC-LC ADTS fixture with `ffmpeg`, builds a
-small native FAAD2 oracle from `third_party/faad2`, and byte-compares S16 PCM
-from the Go port against the C reference.
+The normal test suite checks committed ADTS AAC-LC vectors in `testdata/aaclc`
+against S16 PCM SHA-256 values generated from the pinned FAAD2 reference. The
+live integration test can also synthesize a fresh fixture with `ffmpeg`, build a
+small native FAAD2 oracle from `third_party/faad2`, and byte-compare the Go
+decoder output against it.
+
+To regenerate the committed vectors:
+
+```sh
+./scripts/gen_testvectors.sh
+CGO_ENABLED=0 go test ./...
+```
 
 ## Regenerating The Port
 
