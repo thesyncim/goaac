@@ -26,6 +26,18 @@ func FXDBL2FXSGL(val FixpDBL) FixpSGL {
 	return FixpSGL(val >> (DfractBits - FractBits))
 }
 
+func FXDBL2FXConstSGL(val FixpDBL) FixpSGL {
+	shifted := (val >> (DfractBits - FractBits - 1)) + 1
+	if shifted > (1<<FractBits)-1 && val > 0 {
+		return MaxValSGL
+	}
+	return FixpSGL(shifted >> 1)
+}
+
+func STC(val uint32) FixpSGL {
+	return FXDBL2FXConstSGL(FixpDBL(int32(val)))
+}
+
 func FixMulDiv2DD(a, b FixpDBL) FixpDBL {
 	return FixpDBL((int64(a) * int64(b)) >> 32)
 }

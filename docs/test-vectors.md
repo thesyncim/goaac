@@ -47,6 +47,11 @@ Those vectors are checked against pinned FDK-AAC v2.0.3 probes for writer-side
 bitstream emission, AAC-LC transport headers, fixed-point arithmetic, and
 multiply-add, scale-vector, complex multiply, and short FFT primitives. They
 prove exact low-level behavior before the full AAC-LC encoder core is exposed.
+The radix-2 FFT bring-up additionally has source-derived vectors for
+`scramble` and the arm64 `SINETABLE_16BIT` `dit_fft` loop. Those vectors are
+exercised by the `internal/fdkaac` wasm test binary and still need a fresh
+native probe once local execution of newly built Mach-O binaries is available
+again.
 
 ## Regenerate
 

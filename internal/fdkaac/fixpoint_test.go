@@ -35,6 +35,27 @@ func TestFixpointConstantsAndConversions(t *testing.T) {
 	}
 }
 
+func TestFixpointConstConversionVectors(t *testing.T) {
+	tests := []struct {
+		in   uint32
+		want FixpSGL
+	}{
+		{0x00000000, 0},
+		{0x00008000, 1},
+		{0x0000ffff, 1},
+		{0x40000000, 0x4000},
+		{0x5a82799a, 0x5a82},
+		{0x7fffffff, MaxValSGL},
+		{0x80000000, MinValSGL},
+		{0xc0000000, -0x4000},
+	}
+	for _, tt := range tests {
+		if got := STC(tt.in); got != tt.want {
+			t.Fatalf("STC(0x%08x) = %d, want %d", tt.in, got, tt.want)
+		}
+	}
+}
+
 func TestFixMulDDVectors(t *testing.T) {
 	// Expected values were checked against pinned FDK-AAC v2.0.3 on arm64.
 	tests := []struct {
