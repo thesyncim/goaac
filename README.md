@@ -69,6 +69,35 @@ dec, err := aac.New(aac.Options{
 })
 ```
 
+## Decode RTMP/FLV AAC-LC
+
+RTMP audio messages carry FLV audio tag bodies. Pass each AAC audio message
+payload to `FLVAACDecoder` in stream order:
+
+```go
+dec := aac.NewRTMPAACDecoder()
+defer dec.Close()
+
+var pcm []int16
+for _, payload := range rtmpAudioPayloads {
+    var info aac.FLVAACFrameInfo
+    pcm, info, err = dec.DecodeRTMPMessage(pcm, payload)
+    if err != nil {
+        panic(err)
+    }
+    if info.SequenceHeader {
+        fmt.Println(info.Config.SampleRate, info.Config.Channels)
+        continue
+    }
+    fmt.Println(info.OutputSamples)
+}
+```
+
+The first AAC sequence-header tag initializes or reconfigures the raw AAC-LC
+decoder from MPEG-4 AudioSpecificConfig. Raw AAC tags append interleaved S16 PCM
+to the caller-owned buffer. `ParseFLVAudioTag` is also exposed when callers need
+zero-copy inspection before decode.
+
 For streaming ADTS input, avoid loading the whole file:
 
 ```go
@@ -97,9 +126,10 @@ CGO_ENABLED=0 go build ./cmd/goaac-decode
 
 The normal test suite checks committed ADTS AAC-LC vectors in `testdata/aaclc`
 against S16 PCM SHA-256 values generated from the pinned FAAD2 reference. The
-live integration test can also synthesize a fresh fixture with `ffmpeg`, build a
-small native FAAD2 oracle from `third_party/faad2`, and byte-compare the Go
-decoder output against it.
+same fixtures are decoded through ADTS, raw access-unit, and RTMP/FLV AAC tag
+paths. The live integration test can also synthesize a fresh fixture with
+`ffmpeg`, build a small native FAAD2 oracle from `third_party/faad2`, and
+byte-compare the Go decoder output against it.
 
 To regenerate the committed vectors:
 

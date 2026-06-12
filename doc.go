@@ -20,5 +20,11 @@
 //	pcm = pcm[:0]
 //	pcm, info, err := dec.Decode(pcm, adtsFrame)
 //
+// RTMP audio message payloads are FLV audio tag bodies. Feed them to
+// FLVAACDecoder in stream order:
+//
+//	rtmp := aac.NewRTMPAACDecoder()
+//	pcm, info, err := rtmp.DecodeRTMPMessage(pcm, payload)
+//
 // PCM samples are interleaved signed 16-bit values in native Go int16 form.
 package aac

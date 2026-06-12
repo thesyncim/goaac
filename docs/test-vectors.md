@@ -22,7 +22,7 @@ floating-point contraction to match that source-level contract.
 
 ## What The Tests Prove
 
-`TestCommittedAACLCVectors` verifies every committed vector through:
+The committed vector tests verify every vector through:
 
 - ADTS frame parsing and input SHA-256 checks
 - complete-stream `DecodeADTS`
@@ -30,7 +30,14 @@ floating-point contraction to match that source-level contract.
 - reusable-buffer `DecodeADTSInto`
 - frame-by-frame `Decoder.Decode`
 - raw AAC payload decode with `TransportRaw`
+- RTMP/FLV AAC sequence-header plus raw-packet decode with `FLVAACDecoder`
+- zero-allocation `ParseFLVAudioTag` inspection
 - byte-exact PCM SHA-256 comparison against the FAAD2 oracle output
+
+The RTMP/FLV checks synthesize AAC sequence-header and raw AAC audio-message
+payloads from the committed ADTS frames. That proves the production streaming
+shape used by RTMP ingest produces the same PCM hashes as the ADTS and raw
+access-unit APIs.
 
 The live integration test still synthesizes a fresh AAC-LC fixture with FFmpeg
 and builds the FAAD2 oracle locally when `ffmpeg` and a C compiler are available.
