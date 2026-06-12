@@ -10,6 +10,46 @@ const testFLVAACHeader = byte(FLVSoundFormatAAC<<4) |
 	byte(FLVSoundSize16Bit<<1) |
 	byte(FLVSoundTypeStereo)
 
+func TestAppendFLVAACMessagePayloads(t *testing.T) {
+	cfg := Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}
+	seq, err := AppendRTMPAACSequenceHeader([]byte{0xee}, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if seq[0] != 0xee {
+		t.Fatalf("sequence header prefix = %#x, want 0xee", seq[0])
+	}
+	tag, err := ParseRTMPAudioMessage(seq[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag.SoundFormat != FLVSoundFormatAAC || tag.AACPacketType != FLVAACPacketTypeSequenceHeader {
+		t.Fatalf("sequence header tag = %+v, want AAC sequence header", tag)
+	}
+	parsed, err := ParseAudioSpecificConfig(tag.Payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.ObjectType != AOTAACLC || parsed.SampleRate != 44100 || parsed.Channels != 2 {
+		t.Fatalf("sequence header config = %+v, want AAC-LC 44100 Hz/2 ch", parsed)
+	}
+
+	raw := AppendRTMPAACRawMessage([]byte{0xdd}, []byte{1, 2, 3})
+	if raw[0] != 0xdd {
+		t.Fatalf("raw tag prefix = %#x, want 0xdd", raw[0])
+	}
+	tag, err = ParseFLVAudioTag(raw[1:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tag.SoundFormat != FLVSoundFormatAAC || tag.AACPacketType != FLVAACPacketTypeRaw {
+		t.Fatalf("raw tag = %+v, want AAC raw", tag)
+	}
+	if len(tag.Payload) != 3 || tag.Payload[0] != 1 || tag.Payload[1] != 2 || tag.Payload[2] != 3 {
+		t.Fatalf("raw payload = %v, want [1 2 3]", tag.Payload)
+	}
+}
+
 func TestParseFLVAudioTagAAC(t *testing.T) {
 	data := []byte{testFLVAACHeader, byte(FLVAACPacketTypeRaw), 0x11, 0x22, 0x33}
 	tag, err := ParseFLVAudioTag(data)

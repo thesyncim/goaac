@@ -1,6 +1,6 @@
 # AAC-LC Reference Source
 
-## Upstream Pin
+## Decoder Upstream Pin
 
 - Project: FAAD2
 - Repository: `https://github.com/knik0/faad2`
@@ -57,3 +57,18 @@ Not claimed:
 - ADTS frames carrying multiple raw data blocks.
 - Generated support for targets that are not checked in under
   `internal/faad2ccgo`.
+
+## Encoder Upstream Pin
+
+- Project: Fraunhofer FDK AAC Codec Library for Android
+- Repository: `https://github.com/mstorsjo/fdk-aac`
+- Release tag: `v2.0.3`
+- Commit: `716f4394641d53f0d79c9ddac3fa93b03a49f278`
+- Local checkout: `third_party/fdk-aac`
+
+FDK-AAC is the source truth for the AAC-LC encoder track. It is used as a pinned
+native oracle and source-shaped translation reference only; the Go runtime must
+remain pure Go and must not link or load FDK-AAC.
+
+See `docs/encoder-reference.md` for the encoder module map, oracle command, and
+completion gates.

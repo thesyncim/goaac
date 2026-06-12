@@ -155,4 +155,12 @@ can provide a matching configuration.
 - Commit: `673a22a3c7c33e96e2ff7aae7c4d2bc190dfbf92`
 - Local checkout: `third_party/faad2`
 
-See `docs/reference.md` and `docs/parity-ledger.md` for the source-truth record.
+The encoder track uses pinned FDK-AAC `v2.0.3` as its quality and parity
+reference. Build the native encoder oracle with:
+
+```sh
+./scripts/build_fdkaac_oracle.sh
+```
+
+See `docs/reference.md`, `docs/encoder-reference.md`, and
+`docs/parity-ledger.md` for the source-truth record.

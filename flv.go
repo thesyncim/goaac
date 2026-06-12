@@ -27,6 +27,11 @@ const (
 	FLVSoundFormatDeviceSpecific          FLVSoundFormat = 15
 )
 
+const flvAACHeader = byte(FLVSoundFormatAAC<<4) |
+	byte(FLVSoundRate44100Hz<<2) |
+	byte(FLVSoundSize16Bit<<1) |
+	byte(FLVSoundTypeStereo)
+
 func (f FLVSoundFormat) String() string {
 	switch f {
 	case FLVSoundFormatLinearPCMPlatformEndian:
@@ -168,6 +173,37 @@ func ParseFLVAudioTag(data []byte) (FLVAudioTag, error) {
 // for ParseFLVAudioTag because RTMP carries FLV audio tag bodies.
 func ParseRTMPAudioMessage(data []byte) (FLVAudioTag, error) {
 	return ParseFLVAudioTag(data)
+}
+
+// AppendFLVAACSequenceHeader appends an FLV/RTMP AAC sequence-header audio tag
+// body carrying cfg's MPEG-4 AudioSpecificConfig.
+func AppendFLVAACSequenceHeader(dst []byte, cfg Config) ([]byte, error) {
+	extra, err := cfg.AudioSpecificConfig()
+	if err != nil {
+		return dst, err
+	}
+	dst = append(dst, flvAACHeader, byte(FLVAACPacketTypeSequenceHeader))
+	return append(dst, extra...), nil
+}
+
+// AppendRTMPAACSequenceHeader appends an RTMP AAC sequence-header message
+// payload. RTMP audio messages carry FLV audio tag bodies, so this is an alias
+// for AppendFLVAACSequenceHeader.
+func AppendRTMPAACSequenceHeader(dst []byte, cfg Config) ([]byte, error) {
+	return AppendFLVAACSequenceHeader(dst, cfg)
+}
+
+// AppendFLVAACRawTag appends an FLV/RTMP AAC raw audio tag body for one raw AAC
+// access unit. The access unit is appended without an ADTS header.
+func AppendFLVAACRawTag(dst, accessUnit []byte) []byte {
+	dst = append(dst, flvAACHeader, byte(FLVAACPacketTypeRaw))
+	return append(dst, accessUnit...)
+}
+
+// AppendRTMPAACRawMessage appends an RTMP AAC raw message payload. RTMP audio
+// messages carry FLV audio tag bodies, so this is an alias for AppendFLVAACRawTag.
+func AppendRTMPAACRawMessage(dst, accessUnit []byte) []byte {
+	return AppendFLVAACRawTag(dst, accessUnit)
 }
 
 // FLVAACFrameInfo describes one decoded FLV/RTMP AAC audio tag.
