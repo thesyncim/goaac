@@ -1,5 +1,55 @@
 package fdkaac
 
+const (
+	fftScaleFactor512 = 8
+	fftScaleFactor256 = 7
+	fftScaleFactor128 = 6
+	fftScaleFactor64  = 5
+	fftScaleFactor8   = 2
+	fftScaleFactor4   = 1
+	fftScaleFactor2   = 1
+)
+
+func FFT2(x []FixpDBL) {
+	r1 := x[2]
+	r2 := x[0]
+	i1 := x[3]
+	i2 := x[1]
+
+	x[0] = (r2 + r1) >> 1
+	x[2] = (r2 - r1) >> 1
+	x[1] = (i2 + i1) >> 1
+	x[3] = (i2 - i1) >> 1
+}
+
+func FFT(length int, x []FixpDBL, scalefactor *int) {
+	switch length {
+	case 2:
+		FFT2(x)
+		*scalefactor += fftScaleFactor2
+	case 4:
+		FFT4(x)
+		*scalefactor += fftScaleFactor4
+	case 8:
+		FFT8(x)
+		*scalefactor += fftScaleFactor8
+	case 64:
+		DITFFT512(x, 6)
+		*scalefactor += fftScaleFactor64
+	case 128:
+		DITFFT512(x, 7)
+		*scalefactor += fftScaleFactor128
+	case 256:
+		DITFFT512(x, 8)
+		*scalefactor += fftScaleFactor256
+	case 512:
+		DITFFT512(x, 9)
+		*scalefactor += fftScaleFactor512
+	default:
+		panic("fdkaac: FFT length not supported")
+	}
+}
+
 func FFT4(x []FixpDBL) {
 	var a00, a10, a20, a30, tmp0, tmp1 FixpDBL
 

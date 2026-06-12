@@ -3,6 +3,37 @@ package fdkaac
 import "testing"
 
 var fftSink FixpDBL
+var fftScaleSink int
+
+func TestFFT2Vectors(t *testing.T) {
+	tests := []struct {
+		in, out [4]FixpDBL
+	}{
+		{
+			in:  [4]FixpDBL{0, 0, 0, 0},
+			out: [4]FixpDBL{0, 0, 0, 0},
+		},
+		{
+			in:  [4]FixpDBL{0x40000000, 0, 0, 0},
+			out: [4]FixpDBL{536870912, 0, 536870912, 0},
+		},
+		{
+			in:  [4]FixpDBL{0x10000000, -0x08000000, 0x04000000, 0x02000000},
+			out: [4]FixpDBL{167772160, -50331648, 100663296, -83886080},
+		},
+		{
+			in:  [4]FixpDBL{0x3fffffff, -0x40000000, -0x20000000, 0x10000000},
+			out: [4]FixpDBL{268435455, -402653184, 805306367, -671088640},
+		},
+	}
+	for _, tt := range tests {
+		got := tt.in
+		FFT2(got[:])
+		if got != tt.out {
+			t.Fatalf("FFT2(%v) = %v, want %v", tt.in, got, tt.out)
+		}
+	}
+}
 
 func TestFFT4Vectors(t *testing.T) {
 	// Expected values were checked against pinned FDK-AAC v2.0.3 on arm64.
@@ -225,13 +256,89 @@ func TestDITFFT512RejectsUnsupportedLengths(t *testing.T) {
 	}
 }
 
+func TestFFTDispatcher(t *testing.T) {
+	t.Run("short kernels", func(t *testing.T) {
+		x2 := [4]FixpDBL{0x10000000, -0x08000000, 0x04000000, 0x02000000}
+		scale := 11
+		FFT(2, x2[:], &scale)
+		if want := [4]FixpDBL{167772160, -50331648, 100663296, -83886080}; x2 != want {
+			t.Fatalf("FFT length 2 = %v, want %v", x2, want)
+		}
+		if scale != 11+fftScaleFactor2 {
+			t.Fatalf("FFT length 2 scale = %d, want %d", scale, 11+fftScaleFactor2)
+		}
+
+		x4 := [8]FixpDBL{0x10000000, -0x08000000, 0x04000000, 0x02000000, -0x10000000, 0x08000000, -0x04000000, -0x02000000}
+		scale = 11
+		FFT(4, x4[:], &scale)
+		if want := [8]FixpDBL{0, 0, 301989888, -201326592, 0, 0, 234881024, -67108864}; x4 != want {
+			t.Fatalf("FFT length 4 = %v, want %v", x4, want)
+		}
+		if scale != 11+fftScaleFactor4 {
+			t.Fatalf("FFT length 4 scale = %d, want %d", scale, 11+fftScaleFactor4)
+		}
+
+		x8 := [16]FixpDBL{0x10000000, -0x08000000, 0x04000000, 0x02000000, -0x10000000, 0x08000000, -0x04000000, -0x02000000, 0x08000000, 0x04000000, -0x08000000, 0x01000000, 0x02000000, -0x01000000, -0x02000000, 0x00800000}
+		scale = 11
+		FFT(8, x8[:], &scale)
+		if want := [16]FixpDBL{0, 18874368, 108375168, 5888384, 178257920, -54525952, -50163584, -165866880, 83886080, 6291456, 34231168, 44443264, 140509184, -37748736, 41774976, -85791360}; x8 != want {
+			t.Fatalf("FFT length 8 = %v, want %v", x8, want)
+		}
+		if scale != 11+fftScaleFactor8 {
+			t.Fatalf("FFT length 8 scale = %d, want %d", scale, 11+fftScaleFactor8)
+		}
+	})
+
+	t.Run("radix lengths", func(t *testing.T) {
+		tests := []struct {
+			length     int
+			scaleDelta int
+			hash       uint64
+		}{
+			{length: 64, scaleDelta: fftScaleFactor64, hash: 0x24da1b06d4d1acd5},
+			{length: 128, scaleDelta: fftScaleFactor128, hash: 0x6e30afc5327a54af},
+			{length: 256, scaleDelta: fftScaleFactor256, hash: 0xf072fffa1018bb22},
+			{length: 512, scaleDelta: fftScaleFactor512, hash: 0xec99e0d7675b0da8},
+		}
+		for _, tt := range tests {
+			x := make([]FixpDBL, 2*tt.length)
+			fillDITFFT512Input(x)
+			scale := 11
+			FFT(tt.length, x, &scale)
+			if got := hashFixpDBL(x); got != tt.hash {
+				t.Fatalf("FFT length %d hash = %#016x, want %#016x", tt.length, got, tt.hash)
+			}
+			if scale != 11+tt.scaleDelta {
+				t.Fatalf("FFT length %d scale = %d, want %d", tt.length, scale, 11+tt.scaleDelta)
+			}
+		}
+	})
+}
+
+func TestFFTRejectsUnsupportedLengths(t *testing.T) {
+	for _, length := range []int{0, 3, 5, 16, 32, 120, 1024} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("FFT length %d did not panic", length)
+				}
+			}()
+			var x [2048]FixpDBL
+			scale := 0
+			FFT(length, x[:], &scale)
+		}()
+	}
+}
+
 func TestFFTShortAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
+		x2 := [4]FixpDBL{0x10000000, -0x08000000, 0x04000000, 0x02000000}
 		x4 := [8]FixpDBL{0x10000000, -0x08000000, 0x04000000, 0x02000000, -0x10000000, 0x08000000, -0x04000000, -0x02000000}
 		x8 := [16]FixpDBL{0x10000000, -0x08000000, 0x04000000, 0x02000000, -0x10000000, 0x08000000, -0x04000000, -0x02000000, 0x08000000, 0x04000000, -0x08000000, 0x01000000, 0x02000000, -0x01000000, -0x02000000, 0x00800000}
+		FFT2(x2[:])
 		FFT4(x4[:])
 		FFT8(x8[:])
-		fftSink = x4[0] ^ x8[0]
+		fftSink = x2[0] ^ x4[0] ^ x8[0]
 	})
 	if allocs != 0 {
 		t.Fatalf("short FFT helpers allocations = %v, want 0", allocs)
@@ -252,6 +359,20 @@ func TestDITFFTAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("DITFFT allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFFTDispatcherAllocs(t *testing.T) {
+	allocs := testing.AllocsPerRun(1000, func() {
+		var x [128]FixpDBL
+		fillDITFFT512Input(x[:])
+		scale := 3
+		FFT(64, x[:], &scale)
+		fftSink = x[0]
+		fftScaleSink = scale
+	})
+	if allocs != 0 {
+		t.Fatalf("FFT dispatcher allocations = %v, want 0", allocs)
 	}
 }
 

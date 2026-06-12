@@ -58,6 +58,11 @@ also locked by source-derived sample entries, an FNV-1a checksum, output hashes
 for all four supported lengths, an unsupported-length transition test, and a
 zero-allocation guard.
 
+The FDK `fft` dispatcher subset is covered for lengths 2, 4, 8, 64, 128, 256,
+and 512. Tests verify exact short-kernel outputs, radix FFT hashes,
+scale-factor increments, unsupported-length transitions, and zero steady-state
+allocation.
+
 ## Regenerate
 
 ```sh
