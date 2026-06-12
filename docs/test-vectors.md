@@ -72,6 +72,12 @@ sine/KBD windows. Tests verify source-derived checksums, sample entries, FDK
 selector transitions including `shape & 1`, unsupported-length rejection, and
 zero steady-state allocation.
 
+The FDK radix-2 DCT-IV subset is covered for AAC-LC lengths 128 and 1024.
+Tests verify source-derived output hashes, table selection for sine window
+twiddles and the 1024-entry sine table, exact scale-factor increments,
+unsupported-length rejection for the missing mixed-radix paths, and zero
+steady-state allocation.
+
 ## Regenerate
 
 ```sh
