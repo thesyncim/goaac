@@ -78,3 +78,4 @@ do not claim patent coverage from this repository.
 | Upstream path/function | Local path/function | Proof |
 | --- | --- | --- |
 | `libFDK/include/FDK_bitstream.h:FDKwriteBits`, `FDKwriteEscapedValue`, `FDKsyncCache`, `FDKbyteAlign`, `FDKfetchBuffer`; `libFDK/src/FDK_bitbuffer.cpp:FDK_put`, `FDK_Fetch` | `internal/fdkaac/bitstream.go` | Unit vectors checked against a native FDK v2.0.3 probe, ring-buffer wrap tests, partial-byte fetch tests, and steady-state allocation guard. |
+| `libMpegTPEnc/src/tpenc_asc.cpp:transportEnc_writeASC`, `writeAot`, `writeSampleRate`, AAC-LC `transportEnc_writeGASpecificConfig`; `libMpegTPEnc/src/tpenc_adts.cpp:adtsWrite_Init`, `adtsWrite_EncodeHeader` | `internal/fdkaac/transport.go` | Native FDK v2.0.3 byte-vector probe for AAC-LC ASC and CRC-less ADTS headers, unsupported-branch tests, and scratch-based zero-allocation guard. |
