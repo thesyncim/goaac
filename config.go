@@ -4,6 +4,7 @@ import (
 	"fmt"
 )
 
+// AudioObjectType is an MPEG-4 audio object type.
 type AudioObjectType int
 
 const (
@@ -84,6 +85,11 @@ var mpeg4AudioChannels = [...]int{
 	8,
 }
 
+// Config describes an MPEG-4 AudioSpecificConfig and decoder output shape.
+//
+// For raw AAC-LC decoding, pass either ExtraData containing an
+// AudioSpecificConfig, or ObjectType/SampleRate/ChannelConfig (or Channels)
+// so the decoder can build one.
 type Config struct {
 	ObjectType           AudioObjectType
 	SampleRate           int
@@ -98,6 +104,7 @@ type Config struct {
 	ExtraData            []byte
 }
 
+// ParseAudioSpecificConfig parses MPEG-4 AudioSpecificConfig bytes.
 func ParseAudioSpecificConfig(data []byte) (Config, error) {
 	if len(data) == 0 {
 		return Config{}, ErrInvalidConfig
@@ -146,6 +153,7 @@ func ParseAudioSpecificConfig(data []byte) (Config, error) {
 	return cfg, nil
 }
 
+// AudioSpecificConfig serializes c as MPEG-4 AudioSpecificConfig bytes.
 func (c Config) AudioSpecificConfig() ([]byte, error) {
 	cfg, err := normalizeRawConfig(c)
 	if err != nil {
@@ -170,6 +178,7 @@ func buildAudioSpecificConfig(cfg Config) []byte {
 	return w.bytes()
 }
 
+// SampleRateIndex returns the MPEG-4 sampling-frequency index for rate.
 func SampleRateIndex(rate int) (int, bool) {
 	for i, v := range mpeg4AudioSampleRates {
 		if v == rate {
@@ -179,6 +188,7 @@ func SampleRateIndex(rate int) (int, bool) {
 	return 15, false
 }
 
+// SampleRateFromIndex returns the sampling frequency for a MPEG-4 index.
 func SampleRateFromIndex(index int) (int, bool) {
 	if index < 0 || index >= len(mpeg4AudioSampleRates) {
 		return 0, false
@@ -186,6 +196,7 @@ func SampleRateFromIndex(index int) (int, bool) {
 	return mpeg4AudioSampleRates[index], true
 }
 
+// ChannelsFromConfig returns the channel count for a channel configuration.
 func ChannelsFromConfig(config int) (int, bool) {
 	if config < 0 || config >= len(mpeg4AudioChannels) {
 		return 0, false
@@ -193,6 +204,7 @@ func ChannelsFromConfig(config int) (int, bool) {
 	return mpeg4AudioChannels[config], true
 }
 
+// ChannelConfigForChannels returns a channel configuration for common layouts.
 func ChannelConfigForChannels(channels int) (int, bool) {
 	for i, n := range mpeg4AudioChannels {
 		if i != 0 && n == channels {

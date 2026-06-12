@@ -33,6 +33,54 @@ fmt.Println(cfg.SampleRate, cfg.Channels, len(pcm))
 
 The returned PCM is interleaved signed 16-bit native-endian samples.
 
+## Decoder API
+
+Use `New` when you want explicit transport selection and reusable output
+buffers:
+
+```go
+dec, err := aac.New(aac.Options{Transport: aac.TransportADTS})
+if err != nil {
+    panic(err)
+}
+defer dec.Close()
+
+var pcm []int16
+for _, frame := range frames {
+    var info aac.FrameInfo
+    pcm, info, err = dec.Decode(pcm, frame.Data)
+    if err != nil {
+        panic(err)
+    }
+    fmt.Println(info.SampleRate, info.Channels, info.OutputSamples)
+}
+```
+
+For raw AAC-LC access units, pass a raw config:
+
+```go
+dec, err := aac.New(aac.Options{
+    Transport: aac.TransportRaw,
+    Config: aac.Config{
+        ObjectType:    aac.AOTAACLC,
+        SampleRate:    44100,
+        ChannelConfig: 2,
+    },
+})
+```
+
+For streaming ADTS input, avoid loading the whole file:
+
+```go
+f, err := os.Open("input.aac")
+if err != nil {
+    panic(err)
+}
+defer f.Close()
+
+pcm, cfg, err := aac.DecodeADTSReader(f)
+```
+
 ## CLI
 
 ```sh

@@ -133,19 +133,32 @@ func (d *pureDecoder) initADTS(frame []byte) error {
 	return nil
 }
 
+type coreFrameInfo struct {
+	InputBytes    int
+	OutputSamples int
+	Channels      int
+	SampleRate    int
+	ObjectType    AudioObjectType
+}
+
 func (d *pureDecoder) decode(frame []byte) ([]int16, error) {
+	out, _, err := d.decodeInto(nil, frame)
+	return out, err
+}
+
+func (d *pureDecoder) decodeInto(dst []int16, frame []byte) ([]int16, coreFrameInfo, error) {
 	if len(frame) == 0 {
-		return nil, nil
+		return dst, coreFrameInfo{}, nil
 	}
 	if d == nil || d.handle == 0 || d.tls == nil {
-		return nil, ErrClosed
+		return dst, coreFrameInfo{}, ErrClosed
 	}
 	if !d.initialized {
 		if d.raw {
-			return nil, fmt.Errorf("%w: raw decoder not initialized", ErrInvalidConfig)
+			return dst, coreFrameInfo{}, fmt.Errorf("%w: raw decoder not initialized", ErrInvalidConfig)
 		}
 		if err := d.initADTS(frame); err != nil {
-			return nil, err
+			return dst, coreFrameInfo{}, err
 		}
 	}
 
@@ -163,13 +176,18 @@ func (d *pureDecoder) decode(frame []byte) ([]int16, error) {
 	)
 	info := *(*faad2ccgo.NeAACDecFrameInfo)(unsafe.Pointer(infoPtr))
 	if info.Ferror1 != 0 {
-		return nil, d.frameError(info.Ferror1, "decode")
+		return dst, coreFrameInfo{}, d.frameError(info.Ferror1, "decode")
 	}
 	if info.Fsamples == 0 || samples == 0 {
-		return nil, nil
+		return dst, coreFrameInfo{
+			InputBytes: int(info.Fbytesconsumed),
+			Channels:   int(info.Fchannels),
+			SampleRate: int(info.Fsamplerate),
+			ObjectType: AudioObjectType(info.Fobject_type),
+		}, nil
 	}
 	if info.Fobject_type != uint8(AOTAACLC) {
-		return nil, fmt.Errorf("%w: FAAD2 decoded object type %d", ErrUnsupportedProfile, info.Fobject_type)
+		return dst, coreFrameInfo{}, fmt.Errorf("%w: FAAD2 decoded object type %d", ErrUnsupportedProfile, info.Fobject_type)
 	}
 	if info.Fsamplerate != 0 {
 		d.cfg.SampleRate = int(info.Fsamplerate)
@@ -180,9 +198,14 @@ func (d *pureDecoder) decode(frame []byte) ([]int16, error) {
 
 	n := int(info.Fsamples)
 	src := unsafe.Slice((*int16)(unsafe.Pointer(samples)), n)
-	out := make([]int16, n)
-	copy(out, src)
-	return out, nil
+	dst = append(dst, src...)
+	return dst, coreFrameInfo{
+		InputBytes:    int(info.Fbytesconsumed),
+		OutputSamples: n,
+		Channels:      int(info.Fchannels),
+		SampleRate:    int(info.Fsamplerate),
+		ObjectType:    AudioObjectType(info.Fobject_type),
+	}, nil
 }
 
 func (d *pureDecoder) allocBytes(data []byte) uintptr {

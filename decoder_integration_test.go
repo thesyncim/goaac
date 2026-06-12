@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -43,6 +44,16 @@ func TestDecodeADTSMatchesFAAD2Oracle(t *testing.T) {
 	pcm, cfg, err := DecodeADTS(data)
 	if err != nil {
 		t.Fatal(err)
+	}
+	streamPCM, streamCfg, err := DecodeADTSReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(int16sToLE(streamPCM), int16sToLE(pcm)) {
+		t.Fatalf("streaming PCM mismatch: got %d samples, want %d samples", len(streamPCM), len(pcm))
+	}
+	if !reflect.DeepEqual(streamCfg, cfg) {
+		t.Fatalf("stream config = %+v, want %+v", streamCfg, cfg)
 	}
 	if cfg.ObjectType != AOTAACLC || cfg.SampleRate != 44100 || cfg.Channels != 2 {
 		t.Fatalf("decoded config = %+v", cfg)

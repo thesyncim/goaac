@@ -27,12 +27,23 @@ type ADTSHeader struct {
 	CopyrightIDStart  bool
 }
 
+// ADTSFrame is one ADTS frame and its parsed header. Data aliases the input
+// stream bytes passed to the parser or reader.
 type ADTSFrame struct {
 	Header ADTSHeader
 	Data   []byte
 }
 
+// ParseADTSHeader parses one complete ADTS frame header from data.
 func ParseADTSHeader(data []byte) (ADTSHeader, error) {
+	return parseADTSHeader(data, true)
+}
+
+func parseADTSHeaderPrefix(data []byte) (ADTSHeader, error) {
+	return parseADTSHeader(data, false)
+}
+
+func parseADTSHeader(data []byte, requireFullFrame bool) (ADTSHeader, error) {
 	if len(data) < ADTSHeaderSize {
 		return ADTSHeader{}, ErrNeedMoreData
 	}
@@ -65,7 +76,7 @@ func ParseADTSHeader(data []byte) (ADTSHeader, error) {
 	if frameLength < headerLength {
 		return ADTSHeader{}, fmt.Errorf("%w: frame length %d < header length %d", ErrInvalidADTS, frameLength, headerLength)
 	}
-	if len(data) < frameLength {
+	if requireFullFrame && len(data) < frameLength {
 		return ADTSHeader{}, ErrNeedMoreData
 	}
 	rawBlocks := int(data[6] & 0x03)
@@ -89,6 +100,8 @@ func ParseADTSHeader(data []byte) (ADTSHeader, error) {
 	}, nil
 }
 
+// SplitADTSFrames splits a complete ADTS stream into frame slices that alias
+// data.
 func SplitADTSFrames(data []byte) ([]ADTSFrame, error) {
 	var frames []ADTSFrame
 	for off := 0; off < len(data); {
@@ -104,6 +117,8 @@ func SplitADTSFrames(data []byte) ([]ADTSFrame, error) {
 	return frames, nil
 }
 
+// AppendADTSHeader appends a seven-byte ADTS header for payloadLen bytes of
+// AAC-LC payload to dst.
 func AppendADTSHeader(dst []byte, cfg Config, payloadLen int) ([]byte, error) {
 	cfg, err := normalizeRawConfig(cfg)
 	if err != nil {

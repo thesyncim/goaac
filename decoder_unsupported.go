@@ -14,6 +14,18 @@ func (d *pureDecoder) decode([]byte) ([]int16, error) {
 	return nil, ErrClosed
 }
 
+type coreFrameInfo struct {
+	InputBytes    int
+	OutputSamples int
+	Channels      int
+	SampleRate    int
+	ObjectType    AudioObjectType
+}
+
+func (d *pureDecoder) decodeInto(dst []int16, _ []byte) ([]int16, coreFrameInfo, error) {
+	return dst, coreFrameInfo{}, ErrClosed
+}
+
 func (d *pureDecoder) close() {}
 
 func PureGoVersion() string {
