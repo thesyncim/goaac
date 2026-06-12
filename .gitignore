@@ -1,0 +1,9 @@
+.DS_Store
+dist/
+coverage.out
+*.test
+*.prof
+*.pcm
+*.wav
+*.aac
+goaac-decode
