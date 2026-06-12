@@ -4,6 +4,7 @@ import "testing"
 
 var fftSink FixpDBL
 var fftScaleSink int
+var romSink FixpSPK
 
 func TestFFT2Vectors(t *testing.T) {
 	tests := []struct {
@@ -201,6 +202,9 @@ func TestSineTable512ROM(t *testing.T) {
 	if len(SineTable512) != 257 {
 		t.Fatalf("len(SineTable512) = %d, want 257", len(SineTable512))
 	}
+	if sineTable512Size != 512 {
+		t.Fatalf("sineTable512Size = %d, want 512", sineTable512Size)
+	}
 	samples := map[int]FixpSPK{
 		0:   {Re: 32767, Im: 0},
 		1:   {Re: 32767, Im: 101},
@@ -219,6 +223,51 @@ func TestSineTable512ROM(t *testing.T) {
 	const wantHash uint64 = 0x97e5ffd5a49695b4
 	if got := hashFixpSPK(SineTable512[:]); got != wantHash {
 		t.Fatalf("SineTable512 hash = %#016x, want %#016x", got, wantHash)
+	}
+}
+
+func TestSineTable1024ROM(t *testing.T) {
+	if len(SineTable1024) != 513 {
+		t.Fatalf("len(SineTable1024) = %d, want 513", len(SineTable1024))
+	}
+	if sineTable1024Size != 1024 {
+		t.Fatalf("sineTable1024Size = %d, want 1024", sineTable1024Size)
+	}
+	samples := map[int]FixpSPK{
+		0:   {Re: 32767, Im: 0},
+		1:   {Re: 32767, Im: 50},
+		2:   {Re: 32767, Im: 101},
+		4:   {Re: 32767, Im: 201},
+		8:   {Re: 32766, Im: 402},
+		64:  {Re: 32610, Im: 3212},
+		128: {Re: 32138, Im: 6393},
+		256: {Re: 30274, Im: 12540},
+		512: {Re: 23170, Im: 23170},
+	}
+	for i, want := range samples {
+		if got := SineTable1024[i]; got != want {
+			t.Fatalf("SineTable1024[%d] = %+v, want %+v", i, got, want)
+		}
+	}
+	for i, want := range SineTable512 {
+		if got := SineTable1024[i*2]; got != want {
+			t.Fatalf("SineTable1024[%d] = %+v, want SineTable512[%d] %+v", i*2, got, i, want)
+		}
+	}
+	const wantHash uint64 = 0xe78a87bde9241ac1
+	if got := hashFixpSPK(SineTable1024[:]); got != wantHash {
+		t.Fatalf("SineTable1024 hash = %#016x, want %#016x", got, wantHash)
+	}
+}
+
+func TestSineTableROMAllocs(t *testing.T) {
+	allocs := testing.AllocsPerRun(1000, func() {
+		a := SineTable1024[128]
+		b := SineTable512[64]
+		romSink = FixpSPK{Re: a.Re + b.Re, Im: a.Im + b.Im}
+	})
+	if allocs != 0 {
+		t.Fatalf("sine table ROM access allocations = %v, want 0", allocs)
 	}
 }
 

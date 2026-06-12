@@ -63,6 +63,10 @@ and 512. Tests verify exact short-kernel outputs, radix FFT hashes,
 scale-factor increments, unsupported-length transitions, and zero steady-state
 allocation.
 
+The FDK `SineTable1024` ROM used by radix-2 DCT-IV sine twiddle selection is
+locked by source-derived sample entries, an FNV-1a checksum, a relation check
+against `SineTable512`, and a zero-allocation guard.
+
 ## Regenerate
 
 ```sh
