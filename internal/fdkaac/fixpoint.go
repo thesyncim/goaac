@@ -173,6 +173,30 @@ func CountLeadingBits(val FixpDBL) int {
 	return FixNormD(val)
 }
 
+func FAddSaturateSGL(a, b FixpSGL) FixpSGL {
+	sum := int32(a) + int32(b)
+	if sum > int32(MaxValSGL) {
+		return MaxValSGL
+	}
+	if sum < int32(MinValSGL) {
+		return MinValSGL
+	}
+	return FixpSGL(sum)
+}
+
+func FAddSaturateDBL(a, b FixpDBL) FixpDBL {
+	sum := (a >> 1) + (b >> 1)
+	max := MaxValDBL >> 1
+	min := MinValDBL >> 1
+	if sum > max {
+		return max << 1
+	}
+	if sum < min {
+		return min << 1
+	}
+	return sum << 1
+}
+
 func FixNormZS(val FixpSGL) int {
 	shifted := int32(val) << (DfractBits - FractBits)
 	if shifted == 0 {
