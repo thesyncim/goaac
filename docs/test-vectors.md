@@ -84,6 +84,11 @@ blocks, long/start/short/stop transition hashes with sine/KBD window-state
 changes, exact scale-factor increments, unsupported mixed-radix rejection, and
 zero steady-state allocation.
 
+The FDK AAC-LC block switching subset is covered with source-derived state
+hashes for attack/no-attack frame transitions, IIR-filtered and unfiltered
+window energies, LFE and low-delay controls, stereo common-window grouping
+sync, unsupported-state rejection, and zero steady-state allocation.
+
 ## Regenerate
 
 ```sh
