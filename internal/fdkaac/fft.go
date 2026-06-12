@@ -336,3 +336,10 @@ func DITFFT(x []FixpDBL, ldn int, trigdata []FixpSPK, trigDataSize int) {
 		}
 	}
 }
+
+func DITFFT512(x []FixpDBL, ldn int) {
+	if ldn < 6 || ldn > 9 {
+		panic("fdkaac: DITFFT512 requires 6 <= ldn <= 9")
+	}
+	DITFFT(x, ldn, SineTable512[:], sineTable512Size)
+}

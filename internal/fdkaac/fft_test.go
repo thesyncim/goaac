@@ -166,6 +166,65 @@ func TestDITFFTVectors(t *testing.T) {
 	}
 }
 
+func TestSineTable512ROM(t *testing.T) {
+	if len(SineTable512) != 257 {
+		t.Fatalf("len(SineTable512) = %d, want 257", len(SineTable512))
+	}
+	samples := map[int]FixpSPK{
+		0:   {Re: 32767, Im: 0},
+		1:   {Re: 32767, Im: 101},
+		2:   {Re: 32767, Im: 201},
+		4:   {Re: 32766, Im: 402},
+		8:   {Re: 32758, Im: 804},
+		64:  {Re: 32138, Im: 6393},
+		128: {Re: 30274, Im: 12540},
+		256: {Re: 23170, Im: 23170},
+	}
+	for i, want := range samples {
+		if got := SineTable512[i]; got != want {
+			t.Fatalf("SineTable512[%d] = %+v, want %+v", i, got, want)
+		}
+	}
+	const wantHash uint64 = 0x97e5ffd5a49695b4
+	if got := hashFixpSPK(SineTable512[:]); got != wantHash {
+		t.Fatalf("SineTable512 hash = %#016x, want %#016x", got, wantHash)
+	}
+}
+
+func TestDITFFT512WithFDKROM(t *testing.T) {
+	tests := []struct {
+		ldn  int
+		hash uint64
+	}{
+		{ldn: 6, hash: 0x24da1b06d4d1acd5},
+		{ldn: 7, hash: 0x6e30afc5327a54af},
+		{ldn: 8, hash: 0xf072fffa1018bb22},
+		{ldn: 9, hash: 0xec99e0d7675b0da8},
+	}
+	for _, tt := range tests {
+		x := make([]FixpDBL, 2<<uint(tt.ldn))
+		fillDITFFT512Input(x)
+		DITFFT512(x, tt.ldn)
+		if got := hashFixpDBL(x); got != tt.hash {
+			t.Fatalf("DITFFT512 ldn %d hash = %#016x, want %#016x", tt.ldn, got, tt.hash)
+		}
+	}
+}
+
+func TestDITFFT512RejectsUnsupportedLengths(t *testing.T) {
+	for _, ldn := range []int{3, 5, 10} {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("DITFFT512 ldn %d did not panic", ldn)
+				}
+			}()
+			var x [128]FixpDBL
+			DITFFT512(x[:], ldn)
+		}()
+	}
+}
+
 func TestFFTShortAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		x4 := [8]FixpDBL{0x10000000, -0x08000000, 0x04000000, 0x02000000, -0x10000000, 0x08000000, -0x04000000, -0x02000000}
@@ -196,6 +255,18 @@ func TestDITFFTAllocs(t *testing.T) {
 	}
 }
 
+func TestDITFFT512Allocs(t *testing.T) {
+	allocs := testing.AllocsPerRun(1000, func() {
+		var x [128]FixpDBL
+		fillDITFFT512Input(x[:])
+		DITFFT512(x[:], 6)
+		fftSink = x[0]
+	})
+	if allocs != 0 {
+		t.Fatalf("DITFFT512 allocations = %v, want 0", allocs)
+	}
+}
+
 func equalFixpDBL(a, b []FixpDBL) bool {
 	if len(a) != len(b) {
 		return false
@@ -206,4 +277,42 @@ func equalFixpDBL(a, b []FixpDBL) bool {
 		}
 	}
 	return true
+}
+
+func fillDITFFT512Input(x []FixpDBL) {
+	for i := 0; i < len(x)/2; i++ {
+		x[2*i] = FixpDBL(((i % 17) - 8) * 0x0102030)
+		x[2*i+1] = FixpDBL(((i % 19) - 9) * 0x00f0e0d)
+	}
+}
+
+func hashFixpSPK(x []FixpSPK) uint64 {
+	h := uint64(14695981039346656037)
+	for _, v := range x {
+		u := uint16(v.Re)
+		h = fnv64AddByte(h, byte(u))
+		h = fnv64AddByte(h, byte(u>>8))
+		u = uint16(v.Im)
+		h = fnv64AddByte(h, byte(u))
+		h = fnv64AddByte(h, byte(u>>8))
+	}
+	return h
+}
+
+func hashFixpDBL(x []FixpDBL) uint64 {
+	h := uint64(14695981039346656037)
+	for _, v := range x {
+		u := uint32(v)
+		h = fnv64AddByte(h, byte(u))
+		h = fnv64AddByte(h, byte(u>>8))
+		h = fnv64AddByte(h, byte(u>>16))
+		h = fnv64AddByte(h, byte(u>>24))
+	}
+	return h
+}
+
+func fnv64AddByte(h uint64, b byte) uint64 {
+	h ^= uint64(b)
+	h *= 1099511628211
+	return h
 }

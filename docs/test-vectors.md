@@ -53,6 +53,11 @@ exercised by the `internal/fdkaac` wasm test binary and still need a fresh
 native probe once local execution of newly built Mach-O binaries is available
 again.
 
+The FDK `SineTable512` ROM used by the 64/128/256/512-point radix FFT path is
+also locked by source-derived sample entries, an FNV-1a checksum, output hashes
+for all four supported lengths, an unsupported-length transition test, and a
+zero-allocation guard.
+
 ## Regenerate
 
 ```sh
