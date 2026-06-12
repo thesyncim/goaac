@@ -45,8 +45,8 @@ and builds the FAAD2 oracle locally when `ffmpeg` and a C compiler are available
 Encoder bring-up also has primitive oracle vectors under `internal/fdkaac`.
 Those vectors are checked against pinned FDK-AAC v2.0.3 probes for writer-side
 bitstream emission, AAC-LC transport headers, fixed-point arithmetic, and
-multiply-add and scale-vector primitives. They prove exact low-level behavior
-before the full AAC-LC encoder core is exposed.
+multiply-add, scale-vector, and complex multiply primitives. They prove exact
+low-level behavior before the full AAC-LC encoder core is exposed.
 
 ## Regenerate
 
