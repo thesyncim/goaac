@@ -72,3 +72,9 @@ substitute for encoder parity.
 The FDK-AAC software license grants copyright redistribution rights but does not
 grant patent rights. Keep the full upstream notice in source distributions and
 do not claim patent coverage from this repository.
+
+## Ported Slices
+
+| Upstream path/function | Local path/function | Proof |
+| --- | --- | --- |
+| `libFDK/include/FDK_bitstream.h:FDKwriteBits`, `FDKwriteEscapedValue`, `FDKsyncCache`, `FDKbyteAlign`, `FDKfetchBuffer`; `libFDK/src/FDK_bitbuffer.cpp:FDK_put`, `FDK_Fetch` | `internal/fdkaac/bitstream.go` | Unit vectors checked against a native FDK v2.0.3 probe, ring-buffer wrap tests, partial-byte fetch tests, and steady-state allocation guard. |
