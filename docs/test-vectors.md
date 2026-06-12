@@ -67,6 +67,11 @@ The FDK `SineTable1024` ROM used by radix-2 DCT-IV sine twiddle selection is
 locked by source-derived sample entries, an FNV-1a checksum, a relation check
 against `SineTable512`, and a zero-allocation guard.
 
+The AAC-LC window slope ROM subset is covered for 1024/960 and 128/120
+sine/KBD windows. Tests verify source-derived checksums, sample entries, FDK
+selector transitions including `shape & 1`, unsupported-length rejection, and
+zero steady-state allocation.
+
 ## Regenerate
 
 ```sh
