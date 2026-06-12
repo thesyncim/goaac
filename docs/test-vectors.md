@@ -78,6 +78,12 @@ twiddles and the 1024-entry sine table, exact scale-factor increments,
 unsupported-length rejection for the missing mixed-radix paths, and zero
 steady-state allocation.
 
+The FDK AAC-LC MDCT transform subset is covered for radix-2 long and short
+transforms. Tests verify source-derived output hashes for long and short MDCT
+blocks, long/start/short/stop transition hashes with sine/KBD window-state
+changes, exact scale-factor increments, unsupported mixed-radix rejection, and
+zero steady-state allocation.
+
 ## Regenerate
 
 ```sh
