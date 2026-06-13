@@ -120,6 +120,12 @@ spreading, PCM quantization floors, FDK's per-window `energyShift` mutation,
 start/stop pre-echo history transitions, spread-energy preparation, invalid
 control transitions, and zero steady-state allocation.
 
+The FDK AAC-LC MS stereo subset is covered with source-derived MS-none,
+MS-some, and MS-all promotion vectors. Tests verify per-band mask and digest
+decisions, intensity-stereo exclusion handling, mid/side spectrum rewrites,
+energy/threshold/LD/spread updates, invalid controls, and zero steady-state
+allocation.
+
 ## Regenerate
 
 ```sh
