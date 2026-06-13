@@ -53,6 +53,8 @@ type QCMainQuantizeResult struct {
 	GainAdjustments        int
 	CrashRecoveryNeeded    int
 	BitsToSave             int
+	CrashRecoverySavedBits int
+	CrashRecoveryStopSfb   int
 }
 
 type QCMainReduceBitConsumptionResult struct {
@@ -61,6 +63,16 @@ type QCMainReduceBitConsumptionResult struct {
 	MaxIterationsHit    int
 	CrashRecoveryNeeded int
 	BitsToSave          int
+	SavedBits           int
+	StopSfb             int
+	StaticBitsNew       int
+}
+
+type QCCrashRecoveryResult struct {
+	BitsToSave    int
+	SavedBits     int
+	StopSfb       int
+	StaticBitsNew int
 }
 
 type QCPrepareBitDistributionResult struct {
@@ -105,7 +117,9 @@ func FDKaacEncQCMainQuantizeFrame(
 	invQuant int,
 	dZoneQuantEnable int,
 	maxIterations int,
+	aot int,
 	syntaxFlags uint32,
+	epConfig int8,
 ) (QCMainQuantizeResult, int) {
 	checkQCMainQuantizeFrameInputs(cm, psyOutElement, qcOut, qcElement, adjThrState, elementBits, scratch, maxIterations)
 
@@ -142,14 +156,21 @@ func FDKaacEncQCMainQuantizeFrame(
 					scratch.ChConstraintsFulfilled[i][:nChannels],
 					scratch.CalculateQuant[i][:nChannels],
 					nChannels,
+					psyOutElement[i],
+					qcOut,
 					qcElement[i],
 					elementBits[i],
+					aot,
+					syntaxFlags,
+					epConfig,
 				)
 				result.ReductionIterations++
 				result.GainAdjustments += reduceResult.AdjustedChannels
 				if reduceResult.CrashRecoveryNeeded != 0 {
 					result.CrashRecoveryNeeded = 1
 					result.BitsToSave = reduceResult.BitsToSave
+					result.CrashRecoverySavedBits = reduceResult.SavedBits
+					result.CrashRecoveryStopSfb = reduceResult.StopSfb
 				}
 				if errCode != AACEncOK {
 					result.ConstraintsFulfilled = 0
@@ -256,8 +277,13 @@ func FDKaacEncReduceBitConsumption(
 	chConstraintsFulfilled []int,
 	calculateQuant []int,
 	nChannels int,
+	psyOutElement *PsyOutElement,
+	qcOut *QCOut,
 	qcOutElement *QCOutElement,
 	elBits *ElementBits,
+	aot int,
+	syntaxFlags uint32,
+	epConfig int8,
 ) (QCMainReduceBitConsumptionResult, int) {
 	checkReduceBitConsumptionInputs(
 		iterations, maxIterations, gainAdjustment, chConstraintsFulfilled,
@@ -286,12 +312,22 @@ func FDKaacEncReduceBitConsumption(
 		if bitsToSave > 0 {
 			result.CrashRecoveryNeeded = 1
 			result.BitsToSave = bitsToSave
-			return result, AACEncQuantError
+			crashResult, errCode := FDKaacEncCrashRecovery(nChannels, psyOutElement, qcOut, qcOutElement, bitsToSave, aot, syntaxFlags, epConfig)
+			result.SavedBits = crashResult.SavedBits
+			result.StopSfb = crashResult.StopSfb
+			result.StaticBitsNew = crashResult.StaticBitsNew
+			if errCode != AACEncOK {
+				return result, errCode
+			}
+		}
+		if bitsToSave <= 0 {
+			for ch := 0; ch < nChannels; ch++ {
+				qcOutElement.QCOutChannel[ch].GlobalGain++
+				result.AdjustedChannels++
+			}
 		}
 		for ch := 0; ch < nChannels; ch++ {
-			qcOutElement.QCOutChannel[ch].GlobalGain++
 			calculateQuant[ch] = 1
-			result.AdjustedChannels++
 		}
 	} else {
 		return result, AACEncQuantError
@@ -300,6 +336,111 @@ func FDKaacEncReduceBitConsumption(
 	(*iterations)++
 	result.IterationsReached = *iterations
 	return result, AACEncOK
+}
+
+func FDKaacEncCrashRecovery(
+	nChannels int,
+	psyOutElement *PsyOutElement,
+	qcOut *QCOut,
+	qcOutElement *QCOutElement,
+	bitsToSave int,
+	aot int,
+	syntaxFlags uint32,
+	epConfig int8,
+) (QCCrashRecoveryResult, int) {
+	checkCrashRecoveryInputs(nChannels, psyOutElement, qcOut, qcOutElement, bitsToSave)
+
+	result := QCCrashRecoveryResult{BitsToSave: bitsToSave, StopSfb: -1}
+	var bitsPerScf [2][maxGroupedSFB]int
+	var sectionToScf [2][maxGroupedSFB]int
+	for ch := 0; ch < nChannels; ch++ {
+		for sfb := 0; sfb < maxGroupedSFB; sfb++ {
+			sectionToScf[ch][sfb] = -1
+		}
+		psyChannel := psyOutElement.PsyOutChannel[ch]
+		qcChannel := qcOutElement.QCOutChannel[ch]
+		for sect := 0; sect < qcChannel.SectionData.NoOfSections; sect++ {
+			section := qcChannel.SectionData.Huffsection[sect]
+			for sfb := section.SfbStart; sfb < section.SfbStart+section.SfbCnt; sfb++ {
+				if section.CodeBook != codeBookPNSNo {
+					sfbStartLine := psyChannel.SfbOffsets[sfb]
+					noOfLines := psyChannel.SfbOffsets[sfb+1] - sfbStartLine
+					bitsPerScf[ch][sfb] = fdkaacEncCountValuesCrashRecovery(qcChannel.QuantSpec[sfbStartLine:], noOfLines, section.CodeBook)
+				}
+				sectionToScf[ch][sfb] = sect
+			}
+		}
+	}
+
+	savedBits := 0
+	sfb := qcOutElement.QCOutChannel[0].SectionData.MaxSfbPerGroup - 1
+	for ; sfb >= 0; sfb-- {
+		for sfbGrp := 0; sfbGrp < psyOutElement.PsyOutChannel[0].SfbCnt; sfbGrp += psyOutElement.PsyOutChannel[0].SfbPerGroup {
+			for ch := 0; ch < nChannels; ch++ {
+				idx := sfbGrp + sfb
+				sect := sectionToScf[ch][idx]
+				if sect < 0 {
+					panic("fdkaac: uncovered crash-recovery scalefactor band")
+				}
+				qcChannel := qcOutElement.QCOutChannel[ch]
+				qcChannel.SectionData.Huffsection[sect].SfbCnt--
+				savedBits += bitsPerScf[ch][idx]
+				if qcChannel.SectionData.Huffsection[sect].SfbCnt == 0 {
+					if psyOutElement.PsyOutChannel[ch].LastWindowSequence != ShortWindow {
+						savedBits += fdkaacEncSideInfoTabLong[0]
+					} else {
+						savedBits += fdkaacEncSideInfoTabShort[0]
+					}
+				}
+			}
+		}
+		if savedBits >= bitsToSave {
+			break
+		}
+	}
+	if sfb == -1 {
+		sfb = 0
+	}
+	result.StopSfb = sfb
+
+	for ch := 0; ch < nChannels; ch++ {
+		qcOutElement.QCOutChannel[ch].SectionData.MaxSfbPerGroup = sfb
+		psyOutElement.PsyOutChannel[ch].MaxSfbPerGroup = sfb
+		if sfb == 0 {
+			psyOutElement.PsyOutChannel[ch].TNSInfo = TNSInfo{}
+			psyOutElement.ToolsInfo = ToolsInfo{}
+		}
+	}
+
+	elInfo := ElementInfo{NChannelsInEl: nChannels}
+	if nChannels == 2 {
+		elInfo.ElType = idCPE
+	} else {
+		elInfo.ElType = idSCE
+	}
+	psyChannels := psyOutElement.PsyOutChannel[:nChannels]
+	qcChannels := qcOutElement.QCOutChannel[:nChannels]
+	statBitsNew, errCode := FDKaacEncChannelElementWrite(nil, &elInfo, qcChannels, psyOutElement, psyChannels, syntaxFlags, aot, epConfig, 0)
+	if errCode != AACEncOK {
+		return result, errCode
+	}
+	result.StaticBitsNew = statBitsNew
+
+	staticSavedBits := qcOutElement.StaticBitsUsed - statBitsNew
+	qcOutElement.StaticBitsUsed -= staticSavedBits
+	qcOutElement.GrantedDynBits += staticSavedBits
+	qcOut.StaticBits -= staticSavedBits
+	qcOut.GrantedDynBits += staticSavedBits
+	qcOut.MaxDynBits += staticSavedBits
+	result.SavedBits = staticSavedBits
+	return result, AACEncOK
+}
+
+func fdkaacEncCountValuesCrashRecovery(values []int16, width int, codeBook int) int {
+	if codeBook < codeBookZeroNo || codeBook > codeBookEscNo {
+		return 0
+	}
+	return FDKaacEncCountValues(values, width, codeBook)
 }
 
 func FDKaacEncCalcMaxValueInSfb(
@@ -755,6 +896,74 @@ func checkReduceBitConsumptionInputs(
 	}
 	if qcOutElement.DynBitsUsed < 0 || qcOutElement.StaticBitsUsed < 0 {
 		panic("fdkaac: invalid reduce-bit bit counts")
+	}
+}
+
+func checkCrashRecoveryInputs(
+	nChannels int,
+	psyOutElement *PsyOutElement,
+	qcOut *QCOut,
+	qcOutElement *QCOutElement,
+	bitsToSave int,
+) {
+	if nChannels <= 0 || nChannels > 2 {
+		panic("fdkaac: invalid crash-recovery channel count")
+	}
+	if psyOutElement == nil {
+		panic("fdkaac: nil crash-recovery psy element")
+	}
+	if qcOut == nil {
+		panic("fdkaac: nil crash-recovery frame output")
+	}
+	if qcOutElement == nil {
+		panic("fdkaac: nil crash-recovery output element")
+	}
+	if bitsToSave <= 0 {
+		panic("fdkaac: invalid crash-recovery bit demand")
+	}
+	for ch := 0; ch < nChannels; ch++ {
+		psyChannel := psyOutElement.PsyOutChannel[ch]
+		qcChannel := qcOutElement.QCOutChannel[ch]
+		if psyChannel == nil {
+			panic("fdkaac: nil crash-recovery psy channel")
+		}
+		if qcChannel == nil {
+			panic("fdkaac: nil crash-recovery output channel")
+		}
+		if psyChannel.SfbCnt <= 0 || psyChannel.SfbCnt > maxGroupedSFB ||
+			psyChannel.SfbPerGroup <= 0 || psyChannel.SfbCnt%psyChannel.SfbPerGroup != 0 ||
+			psyChannel.MaxSfbPerGroup < 0 || psyChannel.MaxSfbPerGroup > psyChannel.SfbPerGroup {
+			panic("fdkaac: invalid crash-recovery psy bands")
+		}
+		sectionData := &qcChannel.SectionData
+		if sectionData.SfbCnt <= 0 || sectionData.SfbCnt > maxGroupedSFB ||
+			sectionData.SfbPerGroup <= 0 || sectionData.SfbCnt%sectionData.SfbPerGroup != 0 ||
+			sectionData.MaxSfbPerGroup < 0 || sectionData.MaxSfbPerGroup > sectionData.SfbPerGroup ||
+			sectionData.MaxSfbPerGroup != psyChannel.MaxSfbPerGroup ||
+			sectionData.SfbCnt != psyChannel.SfbCnt ||
+			sectionData.SfbPerGroup != psyChannel.SfbPerGroup {
+			panic("fdkaac: invalid crash-recovery section bands")
+		}
+		if sectionData.NoOfSections < 0 || sectionData.NoOfSections > maxSections {
+			panic("fdkaac: invalid crash-recovery section count")
+		}
+		if psyChannel.SfbOffsets[0] < 0 {
+			panic("fdkaac: invalid crash-recovery offsets")
+		}
+		for sfb := 0; sfb < sectionData.SfbCnt; sfb++ {
+			if psyChannel.SfbOffsets[sfb+1] < psyChannel.SfbOffsets[sfb] {
+				panic("fdkaac: invalid crash-recovery offsets")
+			}
+		}
+		if psyChannel.SfbOffsets[sectionData.SfbCnt] > len(qcChannel.QuantSpec) {
+			panic("fdkaac: short crash-recovery spectrum")
+		}
+		for sect := 0; sect < sectionData.NoOfSections; sect++ {
+			section := sectionData.Huffsection[sect]
+			if section.SfbStart < 0 || section.SfbCnt < 0 || section.SfbStart+section.SfbCnt > sectionData.SfbCnt {
+				panic("fdkaac: invalid crash-recovery section")
+			}
+		}
 	}
 }
 

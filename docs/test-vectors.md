@@ -312,12 +312,14 @@ compilation, and zero steady-state allocation.
 
 The FDK AAC-LC QC quantize/reduce-loop subset is covered with a source-shaped
 `FDKaacEnc_calcMaxValueInSfb` vector, `FDKaacEnc_reduceBitConsumption` normal
-and max-iteration vectors, an explicit crash-recovery boundary vector, and an
-SCE `FDKaacEnc_QCMain` body vector. Tests compare the wrapper against the
-direct scale-factor estimation, spectrum quantization, max-value scan, dynamic
-noiseless bit count, `dynBitsLast` seeding, and frame dynamic-bit summing
-sequence. They also verify retry-scratch reset, malformed controls, no-cgo
-compilation, and zero steady-state allocation.
+and max-iteration vectors, a source-shaped `FDKaacEnc_crashRecovery` vector,
+and an SCE `FDKaacEnc_QCMain` body vector. Tests compare the wrapper against
+the direct scale-factor estimation, spectrum quantization, max-value scan,
+dynamic noiseless bit count, `dynBitsLast` seeding, and frame dynamic-bit
+summing sequence. The crash-recovery vector verifies high-band trimming to
+zero spectrum, TNS/tool clearing, static side-info recounting, dynamic-budget
+rebasing, retry scheduling, malformed controls, no-cgo compilation, and zero
+steady-state allocation.
 
 The FDK AAC-LC QC fill/finalize/reservoir accounting subset is covered with
 source-shaped vectors for `FDKaacEnc_getTotalConsumedBits`,

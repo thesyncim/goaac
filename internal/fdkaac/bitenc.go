@@ -1096,7 +1096,7 @@ func checkChannelElementWriteInputs(
 		if psyOutChannel[ch].SfbPerGroup <= 0 || psyOutChannel[ch].SfbCnt%psyOutChannel[ch].SfbPerGroup != 0 {
 			panic("fdkaac: invalid channel-element sfb group")
 		}
-		if psyOutChannel[ch].MaxSfbPerGroup <= 0 || psyOutChannel[ch].MaxSfbPerGroup > psyOutChannel[ch].SfbPerGroup {
+		if psyOutChannel[ch].MaxSfbPerGroup < 0 || psyOutChannel[ch].MaxSfbPerGroup > psyOutChannel[ch].SfbPerGroup {
 			panic("fdkaac: invalid channel-element max sfb")
 		}
 		if qcOutChannel == nil {
@@ -1118,7 +1118,7 @@ func checkChannelElementWriteInputs(
 		if sectionData.SfbPerGroup <= 0 || sectionData.SfbCnt%sectionData.SfbPerGroup != 0 {
 			panic("fdkaac: invalid channel-element sfb group")
 		}
-		if sectionData.MaxSfbPerGroup <= 0 || sectionData.MaxSfbPerGroup > sectionData.SfbPerGroup {
+		if sectionData.MaxSfbPerGroup < 0 || sectionData.MaxSfbPerGroup > sectionData.SfbPerGroup {
 			panic("fdkaac: invalid channel-element max sfb")
 		}
 		if psyOutChannel[ch].SfbOffsets[0] < 0 {
