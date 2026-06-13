@@ -352,6 +352,14 @@ SFB clamping, long and short tool flags, lowpass lines, PCM quantization floors,
 spreading and spread-energy factor hashes, min-SNR hashes, malformed controls,
 no-cgo compilation, and zero steady-state allocation.
 
+The FDK AAC-LC TNS configuration subset is covered with source-shaped vectors
+for `FDKaacEnc_InitTnsConfiguration` and
+`FDKaacEnc_FreqToBandWidthRounding`. Tests verify long and short active/order
+controls, coefficient resolution, LPC start and stop bands/lines, tabulated
+threshold/order/filter-direction flags, long/short ACF window hashes,
+low-bitrate inactive controls, malformed controls, no-cgo compilation, and zero
+steady-state allocation.
+
 The FDK AAC-LC QC lifecycle subset is covered with source-shaped vectors for
 `FDKaacEnc_QCNew`, `FDKaacEnc_QCOutNew`, and `FDKaacEnc_QCOutInit`. Tests verify
 fresh fixed-state pointer linking, 5.1 WAV channel-to-element traversal,
