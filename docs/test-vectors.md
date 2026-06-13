@@ -310,6 +310,14 @@ direct form-factor, PE-calculation, and static channel-element dry-run sequence,
 verify the nil-QC static side-info bit count, malformed controls, no-cgo
 compilation, and zero steady-state allocation.
 
+The FDK AAC-LC QC first-pass quantize/count subset is covered with a
+source-shaped `FDKaacEnc_calcMaxValueInSfb` vector and an SCE
+`FDKaacEnc_QCMain` body vector. Tests compare the wrapper against the direct
+scale-factor estimation, spectrum quantization, max-value scan, dynamic
+noiseless bit count, `dynBitsLast` seeding, and frame dynamic-bit summing
+sequence, plus malformed controls, no-cgo compilation, and zero steady-state
+allocation.
+
 The FDK AAC-LC bit-reservoir PE distribution subset is covered with
 source-derived vectors for `FDKaacEnc_bitresCalcBitFac`,
 `FDKaacEnc_DistributeBits`, and the high/low bit-reservoir PE-correction

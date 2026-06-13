@@ -58,6 +58,7 @@ const (
 
 	AACEncOK                     = 0x0000
 	AACEncUnknown                = 0x0002
+	AACEncQuantError             = 0x4020
 	AACEncUnsupportedAOT         = 0x3000
 	AACEncInvalidElementInfoType = 0x4120
 	AACEncWriteScalError         = 0x41e0

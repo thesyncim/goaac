@@ -208,6 +208,7 @@ type QCOutElement struct {
 type QCOut struct {
 	TotalNoRedPe       int
 	TotalGrantedPeCorr int
+	UsedDynBits        int
 }
 
 type CorrectThresholdScratch struct {
