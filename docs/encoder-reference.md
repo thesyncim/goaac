@@ -78,6 +78,8 @@ buffers:
 - `EncodeADTSFrameInto` wraps that raw access unit in a CRC-less ADTS header.
 - `AppendRTMPSequenceHeader` and `EncodeRTMPMessageInto` emit FLV/RTMP AAC
   audio-message bodies.
+- `FlushFrameInto` drains delayed raw or ADTS access units for the configured
+  transport; `FlushRTMPMessageInto` drains delayed FLV/RTMP AAC message bodies.
 
 The configured transport owns bit-reservoir accounting. Raw AAC access units
 used by RTMP/FLV muxers initialize transport static bits to zero, while ADTS
@@ -85,11 +87,18 @@ encoding reserves the 56-bit CRC-less ADTS header and writes FDK-style
 bit-reservoir fullness. Explicit encode calls reject transport mismatches so a
 single state cannot silently emit wrongly budgeted frames.
 
+End-of-stream flushing follows the FDK AAC-LC delay model from
+`aacenc_lib.cpp`: `DELAY_AAC(1024)` is 1600 samples per channel
+(`1024 + BSLA(1024)`), so whole-frame draining emits two delayed AAC-LC access
+units for the supported 1024-sample frame length. After flushing starts, normal
+input encode calls return `ErrClosed`.
+
 The current vectors prove deterministic pure-Go output and zero allocations on
 the initialized encode hot path. The opt-in `TestEncoderFDKAACOracleParity`
 compares generated ADTS programs against the pinned native FDK oracle when
 `GOAAC_FDK_ENCODER_ORACLE` points at `aac-enc`; it is skipped by default. Byte
-identity against the native FDK oracle for complete audio programs is still open.
+lengths, ADTS frame counts, and ADTS headers match the oracle fixtures after
+draining; AAC payload byte identity against the native FDK oracle is still open.
 
 ## License Note
 

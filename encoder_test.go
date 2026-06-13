@@ -1,6 +1,7 @@
 package aac
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
@@ -93,6 +94,62 @@ func TestEncoderADTSVector(t *testing.T) {
 	}
 }
 
+func TestEncoderFlushADTSVector(t *testing.T) {
+	enc := newTestEncoder(t, TransportADTS)
+	defer enc.Close()
+	var pcm [2 * encoderSamplesPerFrame]int16
+	fillEncoderSmoothPCM(pcm[:], 2)
+
+	stream, info, err := enc.EncodeADTSFrameInto(nil, pcm[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	payloadBytes := info.PayloadBytes
+	flushFrames := 0
+	for {
+		before := len(stream)
+		var more bool
+		stream, info, more, err = enc.FlushFrameInto(stream)
+		if err != nil {
+			t.Fatalf("flush frame %d: %v", flushFrames, err)
+		}
+		if !more {
+			break
+		}
+		if info.InputSamples != 0 || info.Transport != TransportADTS || info.ADTSHeaderBytes != ADTSHeaderSize {
+			t.Fatalf("flush frame %d info = %+v", flushFrames, info)
+		}
+		if info.OutputBytes != len(stream)-before || info.PayloadBytes <= 0 {
+			t.Fatalf("flush frame %d lengths = before %d after %d info %+v", flushFrames, before, len(stream), info)
+		}
+		payloadBytes += info.PayloadBytes
+		flushFrames++
+	}
+	if flushFrames != 2 {
+		t.Fatalf("flush frames = %d, want 2", flushFrames)
+	}
+	frames, err := SplitADTSFrames(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 3 {
+		t.Fatalf("ADTS frames after flush = %d, want 3", len(frames))
+	}
+	if gotPayload := len(stream) - len(frames)*ADTSHeaderSize; gotPayload != payloadBytes {
+		t.Fatalf("payload bytes = %d, want encoder sum %d", gotPayload, payloadBytes)
+	}
+	if got, want := sha256Hex(stream), "f14dd64a7f69bbf60f5e7b292df01032469019b42be4b1386828b3dff5cc985a"; got != want {
+		t.Fatalf("flushed ADTS sha256 = %s, want %s; len=%d payload=%d", got, want, len(stream), payloadBytes)
+	}
+	got, _, err := enc.EncodeADTSFrameInto(stream, pcm[:])
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("encode after flush err = %v, want ErrClosed", err)
+	}
+	if !bytes.Equal(got, stream) {
+		t.Fatalf("encode after flush changed dst: got len %d, want %d", len(got), len(stream))
+	}
+}
+
 func TestEncoderADTSMultiFrameTransitionRoundTrip(t *testing.T) {
 	enc := newTestEncoder(t, TransportADTS)
 	defer enc.Close()
@@ -117,13 +174,38 @@ func TestEncoderADTSMultiFrameTransitionRoundTrip(t *testing.T) {
 		}
 		payloadBytes += info.PayloadBytes
 	}
+	flushFrames := 0
+	for {
+		before := len(stream)
+		var info EncodedFrameInfo
+		var more bool
+		var err error
+		stream, info, more, err = enc.FlushFrameInto(stream)
+		if err != nil {
+			t.Fatalf("flush frame %d: %v", flushFrames, err)
+		}
+		if !more {
+			break
+		}
+		if info.InputSamples != 0 || !info.QuantizationDone || info.Transport != TransportADTS || info.ADTSHeaderBytes != ADTSHeaderSize {
+			t.Fatalf("flush frame %d info = %+v", flushFrames, info)
+		}
+		if info.OutputBytes != len(stream)-before || info.PayloadBytes <= 0 {
+			t.Fatalf("flush frame %d lengths = before %d after %d info %+v", flushFrames, before, len(stream), info)
+		}
+		payloadBytes += info.PayloadBytes
+		flushFrames++
+	}
+	if flushFrames != 2 {
+		t.Fatalf("flush frames = %d, want 2", flushFrames)
+	}
 
 	frames, err := SplitADTSFrames(stream)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(frames) != 6 {
-		t.Fatalf("ADTS frames = %d, want 6", len(frames))
+	if len(frames) != 8 {
+		t.Fatalf("ADTS frames = %d, want 8", len(frames))
 	}
 	if gotPayload := len(stream) - len(frames)*ADTSHeaderSize; gotPayload != payloadBytes {
 		t.Fatalf("payload bytes = %d, want encoder sum %d", gotPayload, payloadBytes)
@@ -155,10 +237,10 @@ func TestEncoderADTSMultiFrameTransitionRoundTrip(t *testing.T) {
 	if len(pcm) == 0 {
 		t.Fatal("roundtrip produced no PCM")
 	}
-	if got, want := sha256Hex(stream), "6b47aaa53077b7019cdece70dc2c707a7a9c45a3f748e99eb0b9b62d29910a40"; got != want {
+	if got, want := sha256Hex(stream), "6e203648c4472d40570bb69e5a4ca0effc264214b8b1d2540c8bc47ecb94bcaf"; got != want {
 		t.Fatalf("transition stream sha256 = %s, want %s; len=%d payload=%d", got, want, len(stream), payloadBytes)
 	}
-	if got, want := sha256Int16(pcm), "1ae33c71f0e03ec2c4d8270901c2a489d8870bbb7539c888fc43b4b4951ef577"; got != want {
+	if got, want := sha256Int16(pcm), "4be31c47c811a91e45375f4e2b6300e59117530c73edfeef2daea82370966e85"; got != want {
 		t.Fatalf("transition PCM sha256 = %s, want %s; samples=%d", got, want, len(pcm))
 	}
 }
@@ -200,6 +282,53 @@ func TestEncoderRTMPVector(t *testing.T) {
 	}
 	if got, want := sha256Hex(rawTag.Payload), "86738e2a79887cb24c6c5897dc78acdf3fdd8d6d79dc14cf5412dfc368b60641"; got != want {
 		t.Fatalf("RTMP payload sha256 = %s, want %s", got, want)
+	}
+}
+
+func TestEncoderRTMPFlushFrames(t *testing.T) {
+	enc := newTestEncoder(t, TransportRaw)
+	defer enc.Close()
+	var pcm [2 * encoderSamplesPerFrame]int16
+	fillEncoderSmoothPCM(pcm[:], 2)
+
+	msg, _, err := enc.EncodeRTMPMessageInto(nil, pcm[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	flushFrames := 0
+	for {
+		before := len(msg)
+		var info EncodedFrameInfo
+		var more bool
+		msg, info, more, err = enc.FlushRTMPMessageInto(msg)
+		if err != nil {
+			t.Fatalf("RTMP flush frame %d: %v", flushFrames, err)
+		}
+		if !more {
+			break
+		}
+		if info.InputSamples != 0 || info.Transport != TransportRaw || info.PayloadBytes <= 0 || info.OutputBytes != len(msg)-before {
+			t.Fatalf("RTMP flush frame %d info = %+v", flushFrames, info)
+		}
+		tag, err := ParseRTMPAudioMessage(msg[before:])
+		if err != nil {
+			t.Fatalf("parse RTMP flush frame %d: %v", flushFrames, err)
+		}
+		if tag.SoundFormat != FLVSoundFormatAAC || tag.AACPacketType != FLVAACPacketTypeRaw || len(tag.Payload) != info.PayloadBytes {
+			t.Fatalf("RTMP flush frame %d tag = %+v info=%+v", flushFrames, tag, info)
+		}
+		flushFrames++
+	}
+	if flushFrames != 2 {
+		t.Fatalf("RTMP flush frames = %d, want 2", flushFrames)
+	}
+	dst := []byte{1, 2, 3}
+	got, _, err := enc.EncodeRTMPMessageInto(dst, pcm[:])
+	if !errors.Is(err, ErrClosed) {
+		t.Fatalf("RTMP encode after flush err = %v, want ErrClosed", err)
+	}
+	if !bytes.Equal(got, dst) {
+		t.Fatalf("RTMP encode after flush changed dst: got %v, want %v", got, dst)
 	}
 }
 

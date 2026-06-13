@@ -40,7 +40,9 @@ The returned PCM is interleaved signed 16-bit native-endian samples.
 The encoder accepts one 1024-sample interleaved S16 PCM frame per call. The
 configured transport owns encoder bit-reservoir accounting, so create a raw
 encoder for MP4/FLV/RTMP muxers and an ADTS encoder when you need self-framed
-AAC:
+AAC. At end of input, call the flush method for the selected output shape until
+it returns `more=false`; AAC-LC drains two delayed frames for the default
+1024-sample configuration:
 
 ```go
 enc, err := aac.NewEncoder(aac.EncoderOptions{
@@ -62,7 +64,16 @@ au, info, err := enc.EncodeRawInto(au[:0], pcm1024InterleavedS16)
 if err != nil {
     panic(err)
 }
-fmt.Println(info.PayloadBytes)
+writeAccessUnit(au, info)
+for more := true; more; {
+    au, info, more, err = enc.FlushFrameInto(au[:0])
+    if err != nil {
+        panic(err)
+    }
+    if more {
+        writeAccessUnit(au, info)
+    }
+}
 ```
 
 For ADTS:
@@ -75,15 +86,31 @@ enc, err := aac.NewEncoder(aac.EncoderOptions{
 })
 frame, info, err := enc.EncodeADTSFrameInto(nil, pcm1024InterleavedS16)
 fmt.Println(len(frame), info.ADTSHeaderBytes)
+for more := true; more; {
+    frame, info, more, err = enc.FlushFrameInto(frame)
+    if err != nil {
+        panic(err)
+    }
+}
 ```
 
 For RTMP/FLV AAC audio payloads, send one sequence header, then raw messages:
 
 ```go
 seq, err := enc.AppendRTMPSequenceHeader(nil)
-msg, info, err := enc.EncodeRTMPMessageInto(nil, pcm1024InterleavedS16)
+var msg []byte
+msg, info, err := enc.EncodeRTMPMessageInto(msg[:0], pcm1024InterleavedS16)
+sendRTMPAudioMessage(msg)
+for more := true; more; {
+    msg, info, more, err = enc.FlushRTMPMessageInto(msg[:0])
+    if err != nil {
+        panic(err)
+    }
+    if more {
+        sendRTMPAudioMessage(msg)
+    }
+}
 _ = seq
-_ = msg
 _ = info
 ```
 
@@ -189,10 +216,10 @@ paths. The live integration test can also synthesize a fresh fixture with
 `ffmpeg`, build a small native FAAD2 oracle from `third_party/faad2`, and
 byte-compare the Go decoder output against it.
 
-Encoder tests pin pure-Go FDK-shaped raw and ADTS-budgeted access-unit SHA-256
-values for deterministic S16 frames, verify ADTS reservoir signaling and
-RTMP/FLV wrapping, check invalid control transitions, and enforce zero
-allocations on the initialized raw encode hot path.
+Encoder tests pin pure-Go FDK-shaped raw, ADTS-budgeted, and flushed
+access-unit SHA-256 values for deterministic S16 frames, verify ADTS reservoir
+signaling and RTMP/FLV wrapping, check invalid control transitions, and enforce
+zero allocations on the initialized raw encode hot path.
 
 To regenerate the committed vectors:
 
@@ -232,7 +259,9 @@ GOAAC_FDK_ENCODER_ORACLE="$PWD/dist/fdk-aac-oracle/aac-enc" go test . -run TestE
 ```
 
 The oracle test is skipped by default. When enabled, it requires byte-identical
-ADTS output and reports the first header/payload divergence.
+ADTS output and reports the first header/payload divergence. The Go encoder now
+matches the native FDK oracle's ADTS frame count, frame lengths, and headers for
+the committed oracle fixtures; payload byte identity is still in progress.
 
 See `docs/reference.md`, `docs/encoder-reference.md`, and
 `docs/parity-ledger.md` for the source-truth record.

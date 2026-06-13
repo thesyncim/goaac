@@ -96,6 +96,23 @@ func encodeEncoderOracleADTS(t *testing.T, pcm []int16, channels int, channelCon
 			t.Fatalf("go encode frame %d info = %+v", frame, info)
 		}
 	}
+	for flushFrame := 0; ; flushFrame++ {
+		var info EncodedFrameInfo
+		var more bool
+		out, info, more, err = enc.FlushFrameInto(out)
+		if err != nil {
+			t.Fatalf("go flush frame %d: %v", flushFrame, err)
+		}
+		if !more {
+			break
+		}
+		if info.InputSamples != 0 || info.PayloadBytes <= 0 || info.ADTSHeaderBytes != ADTSHeaderSize {
+			t.Fatalf("go flush frame %d info = %+v", flushFrame, info)
+		}
+		if flushFrame > 3 {
+			t.Fatalf("go flush emitted too many frames")
+		}
+	}
 	return out
 }
 
