@@ -126,6 +126,11 @@ decisions, intensity-stereo exclusion handling, mid/side spectrum rewrites,
 energy/threshold/LD/spread updates, invalid controls, and zero steady-state
 allocation.
 
+The FDK AAC-LC psychoacoustic output handoff subset is covered with
+source-derived long and short vectors for output field selection, grouping-mask
+generation, group-length copying, grouped energy/spread-energy copying, invalid
+state transitions, and zero steady-state allocation.
+
 ## Regenerate
 
 ```sh
