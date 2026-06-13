@@ -664,6 +664,153 @@ func TestFDKaacEncAssimilateMultipleScf2Vectors(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncEstimateScaleFactorsChannelVectors(t *testing.T) {
+	activeMdct := [11]FixpDBL{
+		0x00100000, -0x00200000,
+		0x00800000, -0x01000000,
+		0x04000000, -0x08000000, 0x10000000,
+		-0x18000000, 0x20000000,
+		0x01800000, -0x03000000,
+	}
+	zeroMdct := [11]FixpDBL{}
+	activeThreshold := [5]FixpDBL{-400000000, -400000000, -400000000, -400000000, -400000000}
+	zeroThreshold := [5]FixpDBL{}
+
+	tests := []struct {
+		name      string
+		invQuant  int
+		dz        int
+		threshold [5]FixpDBL
+		wantGain  int
+		wantScf   [5]int
+		wantMdct  [11]FixpDBL
+		wantQuant [11]int16
+		wantTmp   [11]int16
+		hashScf   uint64
+		hashMdct  uint64
+		hashQuant uint64
+		hashTmp   uint64
+	}{
+		{
+			name:      "estimate without inverse quant refinement",
+			threshold: activeThreshold,
+			wantGain:  -15,
+			wantScf:   [5]int{0, 0, 1, 2, 3},
+			wantMdct:  activeMdct,
+			wantQuant: [11]int16{77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77},
+			wantTmp:   [11]int16{-77, -77, -77, -77, -77, -77, -77, -77, -77, -77, -77},
+			hashScf:   0x973d59669a25a835,
+			hashMdct:  0x6023f90ca026c77d,
+			hashQuant: 0x53d5c4a2713d7b78,
+			hashTmp:   0x488c9dabb335b135,
+		},
+		{
+			name:      "estimate with inverse quant refinement",
+			invQuant:  1,
+			threshold: activeThreshold,
+			wantGain:  -14,
+			wantScf:   [5]int{0, 0, 3, 5, 5},
+			wantMdct:  activeMdct,
+			wantQuant: [11]int16{0, 0, 0, 0, 1, -1, 2, -3, 4, 0, -1},
+			wantTmp:   [11]int16{0, 0, 0, 0, 1, -1, 2, -3, 4, 0, -1},
+			hashScf:   0x66c92d9b71ec9936,
+			hashMdct:  0x6023f90ca026c77d,
+			hashQuant: 0xc7edf3bbcd3d6894,
+			hashTmp:   0xc7edf3bbcd3d6894,
+		},
+		{
+			name:      "estimate with multi scalefactor assimilation",
+			invQuant:  2,
+			threshold: activeThreshold,
+			wantGain:  -14,
+			wantScf:   [5]int{0, 0, 3, 5, 5},
+			wantMdct:  activeMdct,
+			wantQuant: [11]int16{0, 0, 0, 0, 1, -1, 2, -3, 4, 0, -1},
+			wantTmp:   [11]int16{0, 0, 0, 0, 1, -1, 2, -3, 3, 0, -1},
+			hashScf:   0x66c92d9b71ec9936,
+			hashMdct:  0x6023f90ca026c77d,
+			hashQuant: 0xc7edf3bbcd3d6894,
+			hashTmp:   0xbbdd5ac43875336b,
+		},
+		{
+			name:      "estimate with dead-zone quantization",
+			invQuant:  1,
+			dz:        1,
+			threshold: activeThreshold,
+			wantGain:  -14,
+			wantScf:   [5]int{0, 0, 3, 2, 4},
+			wantMdct:  activeMdct,
+			wantQuant: [11]int16{0, 0, 0, 0, 0, -1, 2, -2, 3, 0, 0},
+			wantTmp:   [11]int16{0, 0, 0, 0, 0, -1, 2, -3, 3, 0, 0},
+			hashScf:   0x25e9406a2163bb60,
+			hashMdct:  0x6023f90ca026c77d,
+			hashQuant: 0xd1a22e7758ffa07d,
+			hashTmp:   0x7bada278fbd2899e,
+		},
+		{
+			name:      "all irrelevant bands zero spectrum",
+			threshold: zeroThreshold,
+			wantGain:  0,
+			wantScf:   [5]int{0, 0, 0, 0, 0},
+			wantMdct:  zeroMdct,
+			wantQuant: [11]int16{77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77},
+			wantTmp:   [11]int16{-77, -77, -77, -77, -77, -77, -77, -77, -77, -77, -77},
+			hashScf:   0xee85fafd354b0935,
+			hashMdct:  0x6b54ea71af95ef15,
+			hashQuant: 0x53d5c4a2713d7b78,
+			hashTmp:   0x488c9dabb335b135,
+		},
+	}
+
+	for _, tt := range tests {
+		var psy PsyOutChannel
+		var qc QCOutChannel
+		var quant [11]int16
+		var quantTmp [11]int16
+		var minScf [5]int
+		var constPart [5]FixpDBL
+		var form [5]FixpDBL
+		setupAssimilateSingleVector(&psy, &qc, quant[:], quantTmp[:], minScf[:], constPart[:], form[:])
+		copy(qc.SfbThresholdLdData[:], tt.threshold[:])
+		scf := [5]int{91, 92, 93, 94, 95}
+		gain := -123
+
+		FDKaacEncEstimateScaleFactorsChannel(&qc, &psy, scf[:], &gain, form[:], tt.invQuant, quant[:], tt.dz, quantTmp[:])
+
+		if gain != tt.wantGain {
+			t.Fatalf("%s gain = %d, want %d", tt.name, gain, tt.wantGain)
+		}
+		assertIntSlice(t, tt.name+" scf", scf[:], tt.wantScf[:], tt.hashScf)
+		assertFixpDBLSlice(t, tt.name+" mdct", qc.MdctSpectrum[:len(tt.wantMdct)], tt.wantMdct[:], tt.hashMdct)
+		assertInt16Slice(t, tt.name+" quant", quant[:], tt.wantQuant[:], tt.hashQuant)
+		assertInt16Slice(t, tt.name+" temp quant", quantTmp[:], tt.wantTmp[:], tt.hashTmp)
+	}
+}
+
+func TestFDKaacEncEstimateScaleFactorsChannelGroupedVector(t *testing.T) {
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	fillShortFormFactorInput(&qc, &psy)
+	form := [12]FixpDBL{-384653471, -315286532, -286561148, MinValDBL, -291398406, -305775759, -293504191, MinValDBL, -338330422, -323306888, -296050596, MinValDBL}
+	energy := [12]FixpDBL{-390000000, -300000000, -260000000, -200000000, -290000000, -330000000, -280000000, -210000000, -340000000, -320000000, -260000000, -220000000}
+	threshold := [12]FixpDBL{-410000000, -290000000, -270000000, -190000000, -300000000, -310000000, -300000000, -200000000, -330000000, -340000000, -250000000, -230000000}
+	copy(qc.SfbEnergyLdData[:], energy[:])
+	copy(qc.SfbThresholdLdData[:], threshold[:])
+	scf := [12]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12}
+	gain := -777
+
+	FDKaacEncEstimateScaleFactorsChannel(&qc, &psy, scf[:], &gain, form[:], 0, nil, 0, nil)
+
+	if gain != -8 {
+		t.Fatalf("grouped estimate gain = %d, want -8", gain)
+	}
+	wantScf := [12]int{3, 0, 0, fdkIntMin, 2, 0, 2, fdkIntMin, 0, 2, 0, fdkIntMin}
+	assertIntSlice(t, "grouped estimate scf", scf[:], wantScf[:], 0xb1102d212497f884)
+	if h := hashFixpDBL(qc.MdctSpectrum[:40]); h != 0xbd9d27f633a9b2e6 {
+		t.Fatalf("grouped estimate mdct hash = %#016x, want %#016x", h, uint64(0xbd9d27f633a9b2e6))
+	}
+}
+
 func TestFDKaacEncCalcFormFactorRejectsInvalid(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -917,6 +1064,87 @@ func TestFDKaacEncImproveScfRejectsInvalid(t *testing.T) {
 		}},
 		{name: "nil min scalefactor", fn: func() {
 			FDKaacEncImproveScf(spec[:], quant[:], quantTmp[:], len(spec), -350000000, -22, -24, &dist, nil, 0)
+		}},
+	}
+
+	for _, tt := range tests {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		}()
+	}
+}
+
+func TestFDKaacEncEstimateScaleFactorsChannelRejectsInvalid(t *testing.T) {
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var quant [11]int16
+	var quantTmp [11]int16
+	var minScf [5]int
+	var constPart [5]FixpDBL
+	var form [5]FixpDBL
+	var scf [5]int
+	var gain int
+	setupAssimilateSingleVector(&psy, &qc, quant[:], quantTmp[:], minScf[:], constPart[:], form[:])
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{name: "nil qc", fn: func() {
+			FDKaacEncEstimateScaleFactorsChannel(nil, &psy, scf[:], &gain, form[:], 0, nil, 0, nil)
+		}},
+		{name: "nil psy", fn: func() {
+			FDKaacEncEstimateScaleFactorsChannel(&qc, nil, scf[:], &gain, form[:], 0, nil, 0, nil)
+		}},
+		{name: "nil global gain", fn: func() {
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &psy, scf[:], nil, form[:], 0, nil, 0, nil)
+		}},
+		{name: "bad band count", fn: func() {
+			bad := psy
+			bad.SfbCnt = 0
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &bad, scf[:], &gain, form[:], 0, nil, 0, nil)
+		}},
+		{name: "bad group multiple", fn: func() {
+			bad := psy
+			bad.SfbPerGroup = 4
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &bad, scf[:], &gain, form[:], 0, nil, 0, nil)
+		}},
+		{name: "bad group width", fn: func() {
+			bad := psy
+			bad.MaxSfbPerGroup = bad.SfbPerGroup + 1
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &bad, scf[:], &gain, form[:], 0, nil, 0, nil)
+		}},
+		{name: "short scf", fn: func() {
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &psy, scf[:4], &gain, form[:], 0, nil, 0, nil)
+		}},
+		{name: "short form", fn: func() {
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &psy, scf[:], &gain, form[:4], 0, nil, 0, nil)
+		}},
+		{name: "negative offset", fn: func() {
+			bad := psy
+			bad.SfbOffsets[0] = -1
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &bad, scf[:], &gain, form[:], 0, nil, 0, nil)
+		}},
+		{name: "decreasing offset", fn: func() {
+			bad := psy
+			bad.SfbOffsets[3] = bad.SfbOffsets[2] - 1
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &bad, scf[:], &gain, form[:], 0, nil, 0, nil)
+		}},
+		{name: "empty active band", fn: func() {
+			bad := psy
+			bad.SfbOffsets[3] = bad.SfbOffsets[2]
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &bad, scf[:], &gain, form[:], 0, nil, 0, nil)
+		}},
+		{name: "short quant", fn: func() {
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &psy, scf[:], &gain, form[:], 1, quant[:10], 0, quantTmp[:])
+		}},
+		{name: "short temp quant", fn: func() {
+			FDKaacEncEstimateScaleFactorsChannel(&qc, &psy, scf[:], &gain, form[:], 1, quant[:], 0, quantTmp[:10])
 		}},
 	}
 
@@ -1212,6 +1440,30 @@ func TestFDKaacEncImproveScfAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("improve-scf allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncEstimateScaleFactorsChannelAllocs(t *testing.T) {
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var quant [11]int16
+	var quantTmp [11]int16
+	var minScf [5]int
+	var constPart [5]FixpDBL
+	var form [5]FixpDBL
+	var scf [5]int
+	threshold := [5]FixpDBL{-400000000, -400000000, -400000000, -400000000, -400000000}
+	gain := 0
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		setupAssimilateSingleVector(&psy, &qc, quant[:], quantTmp[:], minScf[:], constPart[:], form[:])
+		copy(qc.SfbThresholdLdData[:], threshold[:])
+		FDKaacEncEstimateScaleFactorsChannel(&qc, &psy, scf[:], &gain, form[:], 2, quant[:], 0, quantTmp[:])
+		scfPeSink = FixpDBL(gain) + qc.MdctSpectrum[0] + FixpDBL(quant[8])
+		scfPeHashSink = hashBandEnergyInts(scf[:])
+	})
+	if allocs != 0 {
+		t.Fatalf("estimate-scalefactor allocations = %v, want 0", allocs)
 	}
 }
 

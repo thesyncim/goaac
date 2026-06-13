@@ -22,6 +22,10 @@ const scfLd1e3 = FixpDBL(0x13ee7b47)
 const scfFinerDistRatio = FixpDBL(0x66666666)
 const scfDistIncreaseLimit = FixpDBL(0x0055077a)
 const scfEnergyDecreaseLimit = FixpDBL(0x00ff2bfe)
+const scfThresholdConstLdData = FixpDBL(0x0582809d)
+const scfConvConst = FixpDBL(0x268826a1)
+const scf08585 = FixpDBL(0x6de353f8)
+const scfC1Const = FixpDBL(-581606939)
 
 type QCOutChannel struct {
 	MdctSpectrum        [1024]FixpDBL
@@ -271,6 +275,223 @@ func FDKaacEncImproveScf(
 	}
 
 	return scfBest
+}
+
+func FDKaacEncEstimateScaleFactorsChannel(
+	qcOutChannel *QCOutChannel,
+	psyOutChannel *PsyOutChannel,
+	scf []int,
+	globalGain *int,
+	sfbFormFactorLdData []FixpDBL,
+	invQuant int,
+	quantSpec []int16,
+	dZoneQuantEnable int,
+	quantSpecTmp []int16,
+) {
+	finalOffset := checkEstimateScaleFactorsChannelInputs(
+		qcOutChannel, psyOutChannel, scf, globalGain, sfbFormFactorLdData,
+		invQuant, quantSpec, quantSpecTmp,
+	)
+
+	var minScfCalculated [maxGroupedSFB]int
+	var sfbDistLdData [maxGroupedSFB]FixpDBL
+	var minSfMaxQuant [maxGroupedSFB]int
+
+	if invQuant > 0 {
+		for i := 0; i < finalOffset; i++ {
+			quantSpec[i] = 0
+		}
+	}
+
+	for i := 0; i < psyOutChannel.SfbCnt; i++ {
+		scf[i] = fdkIntMin
+	}
+	for i := 0; i < maxGroupedSFB; i++ {
+		minSfMaxQuant[i] = fdkIntMin
+	}
+
+	for sfbOffs := 0; sfbOffs < psyOutChannel.SfbCnt; sfbOffs += psyOutChannel.SfbPerGroup {
+		for sfb := 0; sfb < psyOutChannel.MaxSfbPerGroup; sfb++ {
+			idx := sfbOffs + sfb
+			threshLdData := qcOutChannel.SfbThresholdLdData[idx]
+			energyLdData := qcOutChannel.SfbEnergyLdData[idx]
+
+			sfbDistLdData[idx] = energyLdData
+			if energyLdData <= threshLdData {
+				continue
+			}
+
+			energyPartLdData := sfbFormFactorLdData[idx] + formFactorLdScale
+			thresholdPartLdData := scfThresholdConstLdData + threshLdData
+			scfFract := thresholdPartLdData - energyPartLdData
+			scfFract = FMultDD(scfConvConst, scfFract)
+			scfFract = scfFract + FMultDD(scf08585, scfFract>>3)
+			scfInt := int(scfFract >> (DfractBits - 1 - 3 - ldDataShift))
+
+			maxSpec := FixpDBL(0)
+			start := psyOutChannel.SfbOffsets[idx]
+			stop := psyOutChannel.SfbOffsets[idx+1]
+			for j := start; j < stop; j++ {
+				maxSpec = maxFixpDBL(maxSpec, fixpAbsDBL(qcOutChannel.MdctSpectrum[j]))
+			}
+
+			tmp := CalcLdData(maxSpec)
+			if scfC1Const > MinValDBL-tmp {
+				minSfMaxQuant[idx] = int((scfC1Const+tmp)>>(DfractBits-1-8)) + 1
+			} else {
+				minSfMaxQuant[idx] = int(MinValDBL>>(DfractBits-1-8)) + 1
+			}
+
+			scfInt = maxInt(scfInt, minSfMaxQuant[idx])
+			if invQuant > 0 {
+				scfInt = FDKaacEncImproveScf(
+					qcOutChannel.MdctSpectrum[start:stop],
+					quantSpec[start:stop],
+					quantSpecTmp[start:stop],
+					stop-start,
+					threshLdData,
+					scfInt,
+					minSfMaxQuant[idx],
+					&sfbDistLdData[idx],
+					&minScfCalculated[idx],
+					dZoneQuantEnable,
+				)
+			}
+			scf[idx] = scfInt
+		}
+	}
+
+	if invQuant > 0 {
+		var sfbConstPePart [maxGroupedSFB]FixpDBL
+		var sfbNRelevantLines [maxGroupedSFB]FixpDBL
+
+		for i := 0; i < psyOutChannel.SfbCnt; i++ {
+			sfbConstPePart[i] = FixpDBL(fdkIntMin)
+		}
+
+		FDKaacEncCalcSfbRelevantLines(
+			sfbFormFactorLdData,
+			qcOutChannel.SfbEnergyLdData[:],
+			qcOutChannel.SfbThresholdLdData[:],
+			psyOutChannel.SfbOffsets[:],
+			psyOutChannel.SfbCnt,
+			psyOutChannel.SfbPerGroup,
+			psyOutChannel.MaxSfbPerGroup,
+			sfbNRelevantLines[:],
+		)
+
+		FDKaacEncAssimilateSingleScf(
+			psyOutChannel,
+			qcOutChannel,
+			quantSpec,
+			quantSpecTmp,
+			dZoneQuantEnable,
+			scf,
+			minSfMaxQuant[:],
+			sfbDistLdData[:],
+			sfbConstPePart[:],
+			sfbFormFactorLdData,
+			sfbNRelevantLines[:],
+			minScfCalculated[:],
+			1,
+		)
+
+		if invQuant > 1 {
+			FDKaacEncAssimilateMultipleScf(
+				psyOutChannel,
+				qcOutChannel,
+				quantSpec,
+				quantSpecTmp,
+				dZoneQuantEnable,
+				scf,
+				minSfMaxQuant[:],
+				sfbDistLdData[:],
+				sfbConstPePart[:],
+				sfbFormFactorLdData,
+				sfbNRelevantLines[:],
+			)
+
+			FDKaacEncAssimilateMultipleScf2(
+				psyOutChannel,
+				qcOutChannel,
+				quantSpec,
+				quantSpecTmp,
+				dZoneQuantEnable,
+				scf,
+				minSfMaxQuant[:],
+				sfbDistLdData[:],
+				sfbConstPePart[:],
+				sfbFormFactorLdData,
+				sfbNRelevantLines[:],
+			)
+		}
+	}
+
+	minSf := fdkIntMax
+	for sfbOffs := 0; sfbOffs < psyOutChannel.SfbCnt; sfbOffs += psyOutChannel.SfbPerGroup {
+		for sfb := 0; sfb < psyOutChannel.MaxSfbPerGroup; sfb++ {
+			idx := sfbOffs + sfb
+			if scf[idx] != fdkIntMin {
+				minSf = minInt(minSf, scf[idx])
+			}
+		}
+	}
+
+	for sfbOffs := 0; sfbOffs < psyOutChannel.SfbCnt; sfbOffs += psyOutChannel.SfbPerGroup {
+		for sfb := 0; sfb < psyOutChannel.MaxSfbPerGroup; sfb++ {
+			idx := sfbOffs + sfb
+			if scf[idx] != fdkIntMin && minSf+maxScfDelta < scf[idx] {
+				scf[idx] = minSf + maxScfDelta
+				if invQuant > 0 {
+					start := psyOutChannel.SfbOffsets[idx]
+					stop := psyOutChannel.SfbOffsets[idx+1]
+					sfbDistLdData[idx] = FDKaacEncCalcSfbDist(
+						qcOutChannel.MdctSpectrum[start:stop],
+						quantSpec[start:stop],
+						stop-start,
+						scf[idx],
+						dZoneQuantEnable,
+					)
+				}
+			}
+		}
+	}
+
+	maxSf := fdkIntMin
+	for sfbOffs := 0; sfbOffs < psyOutChannel.SfbCnt; sfbOffs += psyOutChannel.SfbPerGroup {
+		for sfb := 0; sfb < psyOutChannel.MaxSfbPerGroup; sfb++ {
+			maxSf = maxInt(maxSf, scf[sfbOffs+sfb])
+		}
+	}
+
+	if maxSf > fdkIntMin {
+		*globalGain = maxSf
+		for sfbOffs := 0; sfbOffs < psyOutChannel.SfbCnt; sfbOffs += psyOutChannel.SfbPerGroup {
+			for sfb := 0; sfb < psyOutChannel.MaxSfbPerGroup; sfb++ {
+				idx := sfbOffs + sfb
+				if scf[idx] == fdkIntMin {
+					scf[idx] = 0
+					for j := psyOutChannel.SfbOffsets[idx]; j < psyOutChannel.SfbOffsets[idx+1]; j++ {
+						qcOutChannel.MdctSpectrum[j] = 0
+					}
+				} else {
+					scf[idx] = maxSf - scf[idx]
+				}
+			}
+		}
+		return
+	}
+
+	*globalGain = 0
+	for sfbOffs := 0; sfbOffs < psyOutChannel.SfbCnt; sfbOffs += psyOutChannel.SfbPerGroup {
+		for sfb := 0; sfb < psyOutChannel.MaxSfbPerGroup; sfb++ {
+			idx := sfbOffs + sfb
+			scf[idx] = 0
+			for j := psyOutChannel.SfbOffsets[idx]; j < psyOutChannel.SfbOffsets[idx+1]; j++ {
+				qcOutChannel.MdctSpectrum[j] = 0
+			}
+		}
+	}
 }
 
 func FDKaacEncAssimilateSingleScf(
@@ -920,6 +1141,58 @@ func checkImproveScfInputs(
 	if distLdData == nil || minScfCalculated == nil {
 		panic("fdkaac: nil improve-scf output")
 	}
+}
+
+func checkEstimateScaleFactorsChannelInputs(
+	qcOutChannel *QCOutChannel,
+	psyOutChannel *PsyOutChannel,
+	scf []int,
+	globalGain *int,
+	sfbFormFactorLdData []FixpDBL,
+	invQuant int,
+	quantSpec []int16,
+	quantSpecTmp []int16,
+) int {
+	if qcOutChannel == nil {
+		panic("fdkaac: nil estimate-scalefactor qc output")
+	}
+	if psyOutChannel == nil {
+		panic("fdkaac: nil estimate-scalefactor psy output")
+	}
+	if globalGain == nil {
+		panic("fdkaac: nil estimate-scalefactor global gain")
+	}
+	if psyOutChannel.SfbCnt <= 0 || psyOutChannel.SfbCnt > maxGroupedSFB || psyOutChannel.SfbPerGroup <= 0 || psyOutChannel.SfbCnt%psyOutChannel.SfbPerGroup != 0 {
+		panic("fdkaac: invalid estimate-scalefactor band count")
+	}
+	if psyOutChannel.MaxSfbPerGroup <= 0 || psyOutChannel.MaxSfbPerGroup > psyOutChannel.SfbPerGroup {
+		panic("fdkaac: invalid estimate-scalefactor group width")
+	}
+	if len(scf) < psyOutChannel.SfbCnt || len(sfbFormFactorLdData) < psyOutChannel.SfbCnt {
+		panic("fdkaac: short estimate-scalefactor band data")
+	}
+
+	prev := psyOutChannel.SfbOffsets[0]
+	if prev < 0 {
+		panic("fdkaac: invalid estimate-scalefactor offset")
+	}
+	for i := 0; i < psyOutChannel.SfbCnt; i++ {
+		next := psyOutChannel.SfbOffsets[i+1]
+		if next < prev {
+			panic("fdkaac: invalid estimate-scalefactor offset")
+		}
+		if i%psyOutChannel.SfbPerGroup < psyOutChannel.MaxSfbPerGroup && next == prev {
+			panic("fdkaac: empty estimate-scalefactor active band")
+		}
+		prev = next
+	}
+	if prev > len(qcOutChannel.MdctSpectrum) {
+		panic("fdkaac: short estimate-scalefactor spectrum")
+	}
+	if invQuant > 0 && (len(quantSpec) < prev || len(quantSpecTmp) < prev) {
+		panic("fdkaac: short estimate-scalefactor quant data")
+	}
+	return prev
 }
 
 func checkAssimilateSingleScfInputs(

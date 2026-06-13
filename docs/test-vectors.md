@@ -190,6 +190,13 @@ regional refinement, finer regional refinement, no-quant scale lowering,
 threshold rejection, irrelevant-band no-op control, malformed controls, and zero
 steady-state allocation.
 
+The FDK AAC-LC channel scale-factor estimation subset is covered with
+source-derived vectors for `FDKaacEnc_EstimateScaleFactorsChannel`. Tests verify
+initial scale-factor estimation, max-quant lower bounds, inverse-quant
+refinement, single/multi-SCF orchestration, dead-zone quantization, all-zero
+spectrum clearing, grouped inactive-band transitions, malformed controls, and
+zero steady-state allocation.
+
 The FDK AAC-LC line-PE subset is covered with source-derived vectors for
 `CalcLdInt`, `fMultI`, `FDKaacEnc_prepareSfbPe`, and `FDKaacEnc_calcSfbPe`.
 Tests verify active-line preparation, high/low PE branches, inactive and
