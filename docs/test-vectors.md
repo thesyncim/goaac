@@ -131,9 +131,10 @@ totals, malformed controls, and zero steady-state allocation.
 
 The FDK channel bitstream writer helper subset is covered with source-derived
 byte vectors for global gain, long and short ICS info, section data,
-scalefactor/noise data, and spectral payload emission. Tests also verify a
-combined long-channel payload sequence, invalid writer/control transitions, and
-zero steady-state allocation.
+scalefactor/noise data, spectral payload emission, MS mask signalling, TNS
+present flags, long and short TNS payload data, and one-bit pulse/gain-control
+placeholders. Tests also verify a combined long-channel payload sequence,
+invalid writer/control transitions, and zero steady-state allocation.
 
 The FDK AAC-LC short grouping subset is covered with source-derived grouped
 offset and min-SNR vectors, saturating threshold/energy/MS/spread-energy sums,

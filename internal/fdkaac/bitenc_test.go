@@ -80,6 +80,78 @@ func TestFDKaacEncEncodeScaleFactorDataVectors(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncEncodeMSInfoVectors(t *testing.T) {
+	runBitencVector(t, "ms-none", func(bs *BitStream) int {
+		return FDKaacEncEncodeMSInfo(0, 0, 0, MsMaskNone, nil, bs)
+	}, 2, []byte{0x00})
+
+	runBitencVector(t, "ms-all", func(bs *BitStream) int {
+		return FDKaacEncEncodeMSInfo(0, 0, 0, MsMaskAll, nil, bs)
+	}, 2, []byte{0x80})
+
+	jsFlags := [...]int{1, 0, 1, 0, 0, 1, 0, 0}
+	runBitencVector(t, "ms-some", func(bs *BitStream) int {
+		return FDKaacEncEncodeMSInfo(8, 4, 3, MsMaskSome, jsFlags[:], bs)
+	}, 8, []byte{0x6a})
+
+	if got := FDKaacEncEncodeMSInfo(8, 4, 3, MsMaskSome, jsFlags[:], nil); got != 8 {
+		t.Fatalf("nil MS bit count = %d, want 8", got)
+	}
+}
+
+func TestFDKaacEncEncodeTnsDataPresentVectors(t *testing.T) {
+	var inactive TNSInfo
+	runBitencVector(t, "tns-present-inactive", func(bs *BitStream) int {
+		return FDKaacEncEncodeTnsDataPresent(&inactive, LongWindow, bs)
+	}, 1, []byte{0x00})
+
+	active := longTNS4BitCase()
+	runBitencVector(t, "tns-present-active", func(bs *BitStream) int {
+		return FDKaacEncEncodeTnsDataPresent(&active, LongWindow, bs)
+	}, 1, []byte{0x80})
+
+	if got := FDKaacEncEncodeTnsDataPresent(&active, LongWindow, nil); got != 1 {
+		t.Fatalf("nil TNS-present bit count = %d, want 1", got)
+	}
+	if got := FDKaacEncEncodeTnsDataPresent(nil, LongWindow, nil); got != 1 {
+		t.Fatalf("nil TNS info present count = %d, want 1", got)
+	}
+}
+
+func TestFDKaacEncEncodeTnsDataVectors(t *testing.T) {
+	var inactive TNSInfo
+	runBitencVector(t, "tns-inactive", func(bs *BitStream) int {
+		return FDKaacEncEncodeTnsData(&inactive, LongWindow, bs)
+	}, 0, []byte{})
+
+	long4 := longTNS4BitCase()
+	runBitencVector(t, "tns-long-4bit", func(bs *BitStream) int {
+		return FDKaacEncEncodeTnsData(&long4, LongWindow, bs)
+	}, 32, []byte{0x6f, 0x12, 0xcf, 0x24})
+
+	long3 := longTNS3BitCase()
+	runBitencVector(t, "tns-long-3bit", func(bs *BitStream) int {
+		return FDKaacEncEncodeTnsData(&long3, LongWindow, bs)
+	}, 25, []byte{0x68, 0x0d, 0x81, 0x80})
+
+	short := shortTNSCase()
+	runBitencVector(t, "tns-short", func(bs *BitStream) int {
+		return FDKaacEncEncodeTnsData(&short, ShortWindow, bs)
+	}, 27, []byte{0x95, 0xd8, 0xa0, 0x00})
+
+	if got := FDKaacEncEncodeTnsData(&long4, LongWindow, nil); got != 32 {
+		t.Fatalf("nil TNS data bit count = %d, want 32", got)
+	}
+	if got := FDKaacEncEncodeTnsData(nil, LongWindow, nil); got != 0 {
+		t.Fatalf("nil TNS data count = %d, want 0", got)
+	}
+}
+
+func TestFDKaacEncEncodeOneBitToolPlaceholders(t *testing.T) {
+	runBitencVector(t, "pulse", FDKaacEncEncodePulseData, 1, []byte{0x00})
+	runBitencVector(t, "gain-control", FDKaacEncEncodeGainControlData, 1, []byte{0x00})
+}
+
 func TestFDKaacEncEncodeSpectralDataVectors(t *testing.T) {
 	longTC, longSD := buildBitencSectionData(t, fillDynLongCase)
 	runBitencVector(t, "long-spectral", func(bs *BitStream) int {
@@ -161,6 +233,54 @@ func TestFDKaacEncBitencRejectsInvalid(t *testing.T) {
 			bad.FirstScf = tc.sfbCnt
 			FDKaacEncEncodeScaleFactorData(tc.maxValue[:tc.sfbCnt], &bad, tc.scf[:tc.sfbCnt], &bs, tc.noise[:tc.sfbCnt], tc.isScale[:tc.sfbCnt], 120)
 		}},
+		{"invalid MS digest", func() { FDKaacEncEncodeMSInfo(0, 0, 0, -1, nil, &bs) }},
+		{"invalid MS sfb count", func() { FDKaacEncEncodeMSInfo(-1, 0, 0, MsMaskNone, nil, &bs) }},
+		{"invalid MS group", func() {
+			jsFlags := [...]int{1, 0, 1, 0}
+			FDKaacEncEncodeMSInfo(4, 3, 2, MsMaskSome, jsFlags[:], &bs)
+		}},
+		{"invalid MS max sfb", func() {
+			jsFlags := [...]int{1, 0, 1, 0}
+			FDKaacEncEncodeMSInfo(4, 4, 5, MsMaskSome, jsFlags[:], &bs)
+		}},
+		{"short MS mask", func() {
+			jsFlags := [...]int{1, 0, 1}
+			FDKaacEncEncodeMSInfo(4, 4, 2, MsMaskSome, jsFlags[:], &bs)
+		}},
+		{"invalid TNS block type", func() {
+			tns := longTNS4BitCase()
+			FDKaacEncEncodeTnsData(&tns, -1, &bs)
+		}},
+		{"invalid TNS filter count", func() {
+			tns := longTNS4BitCase()
+			tns.NumOfFilters[0] = maxTnsFilters + 1
+			FDKaacEncEncodeTnsData(&tns, LongWindow, &bs)
+		}},
+		{"invalid TNS coef resolution", func() {
+			tns := longTNS4BitCase()
+			tns.CoefRes[0] = 2
+			FDKaacEncEncodeTnsData(&tns, LongWindow, &bs)
+		}},
+		{"invalid TNS length", func() {
+			tns := longTNS4BitCase()
+			tns.Length[0][0] = 64
+			FDKaacEncEncodeTnsData(&tns, LongWindow, &bs)
+		}},
+		{"invalid short TNS order", func() {
+			tns := shortTNSCase()
+			tns.Order[0][0] = 8
+			FDKaacEncEncodeTnsData(&tns, ShortWindow, &bs)
+		}},
+		{"invalid TNS direction", func() {
+			tns := longTNS4BitCase()
+			tns.Direction[0][0] = 2
+			FDKaacEncEncodeTnsData(&tns, LongWindow, &bs)
+		}},
+		{"invalid TNS coefficient", func() {
+			tns := longTNS4BitCase()
+			tns.Coef[0][0][0] = 8
+			FDKaacEncEncodeTnsData(&tns, LongWindow, &bs)
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() {
@@ -171,6 +291,35 @@ func TestFDKaacEncBitencRejectsInvalid(t *testing.T) {
 			ResetBitStream(&bs, BSWriter)
 			tt.fn()
 		})
+	}
+}
+
+func TestFDKaacEncSideInfoWritersAllocs(t *testing.T) {
+	jsFlags := [...]int{1, 0, 1, 0, 0, 1, 0, 0}
+	tns := longTNS4BitCase()
+	var storage [64]byte
+	var out [64]byte
+	var bs BitStream
+	if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		clear(storage[:])
+		clear(out[:])
+		ResetBitStream(&bs, BSWriter)
+		FDKaacEncEncodeMSInfo(8, 4, 3, MsMaskSome, jsFlags[:], &bs)
+		FDKaacEncEncodeTnsDataPresent(&tns, LongWindow, &bs)
+		FDKaacEncEncodeTnsData(&tns, LongWindow, &bs)
+		FDKaacEncEncodePulseData(&bs)
+		FDKaacEncEncodeGainControlData(&bs)
+		ByteAlign(&bs, 0)
+		n := FetchBuffer(&bs, out[:])
+		bitCountSink = n
+		bitCountHashSink = hashHuffBytes(out[:n])
+	})
+	if allocs != 0 {
+		t.Fatalf("side-info writer allocations = %v, want 0", allocs)
 	}
 }
 
@@ -203,6 +352,39 @@ func TestFDKaacEncBitencAllocs(t *testing.T) {
 	if allocs != 0 {
 		t.Fatalf("bitstream helper allocations = %v, want 0", allocs)
 	}
+}
+
+func longTNS4BitCase() TNSInfo {
+	var tns TNSInfo
+	tns.NumOfFilters[0] = 1
+	tns.CoefRes[0] = 4
+	tns.Length[0][0] = 30
+	tns.Order[0][0] = 4
+	tns.Direction[0][0] = 1
+	copy(tns.Coef[0][0][:], []int{-4, -1, 2, 4})
+	return tns
+}
+
+func longTNS3BitCase() TNSInfo {
+	var tns TNSInfo
+	tns.NumOfFilters[0] = 1
+	tns.CoefRes[0] = 4
+	tns.Length[0][0] = 16
+	tns.Order[0][0] = 3
+	tns.Direction[0][0] = 0
+	copy(tns.Coef[0][0][:], []int{-4, 0, 3})
+	return tns
+}
+
+func shortTNSCase() TNSInfo {
+	var tns TNSInfo
+	tns.NumOfFilters[0] = 1
+	tns.CoefRes[0] = 3
+	tns.Length[0][0] = 5
+	tns.Order[0][0] = 3
+	tns.Direction[0][0] = 1
+	copy(tns.Coef[0][0][:], []int{-2, 1, 2})
+	return tns
 }
 
 func buildBitencSectionData(t *testing.T, fill func(*dynBitCountCase)) (dynBitCountCase, SectionData) {

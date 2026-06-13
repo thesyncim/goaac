@@ -12,9 +12,22 @@ const (
 	sectBitsLong    = 5
 	sectBitsShort   = 3
 
+	maxTnsFilters = 2
+	tnsMaxOrder   = 12
+
 	acScalable = 0x000008
 	acELD      = 0x000010
 )
+
+type TNSInfo struct {
+	NumOfFilters [transFac]int
+	CoefRes      [transFac]int
+	Length       [transFac][maxTnsFilters]int
+	Order        [transFac][maxTnsFilters]int
+	Direction    [transFac][maxTnsFilters]int
+	CoefCompress [transFac][maxTnsFilters]int
+	Coef         [transFac][maxTnsFilters][tnsMaxOrder]int
+}
 
 func FDKaacEncEncodeSpectralData(sfbOffset []int, sectionData *SectionData, quantSpectrum []int16, bitstream *BitStream) int {
 	checkEncodeSpectralDataInputs(sfbOffset, sectionData, quantSpectrum, bitstream)
@@ -180,6 +193,123 @@ func FDKaacEncEncodeScaleFactorData(
 	return int(BitStreamValidBits(bitstream) - startBits)
 }
 
+func FDKaacEncEncodeMSInfo(sfbCnt int, grpSfb int, maxSfb int, msDigest int, jsFlags []int, bitstream *BitStream) int {
+	checkEncodeMSInfoInputs(sfbCnt, grpSfb, maxSfb, msDigest, jsFlags)
+
+	msBits := 0
+	switch msDigest {
+	case MsMaskNone:
+		if bitstream != nil {
+			WriteBits(bitstream, MsMaskNone, 2)
+		}
+		msBits += 2
+	case MsMaskAll:
+		if bitstream != nil {
+			WriteBits(bitstream, MsMaskAll, 2)
+		}
+		msBits += 2
+	case MsMaskSome:
+		if bitstream != nil {
+			WriteBits(bitstream, MsMaskSome, 2)
+		}
+		msBits += 2
+		for sfbOff := 0; sfbOff < sfbCnt; sfbOff += grpSfb {
+			for sfb := 0; sfb < maxSfb; sfb++ {
+				if bitstream != nil {
+					if jsFlags[sfbOff+sfb]&1 != 0 {
+						WriteBits(bitstream, 1, 1)
+					} else {
+						WriteBits(bitstream, 0, 1)
+					}
+				}
+				msBits++
+			}
+		}
+	}
+	return msBits
+}
+
+func FDKaacEncEncodeTnsDataPresent(tnsInfo *TNSInfo, blockType int, bitstream *BitStream) int {
+	checkEncodeTnsInfoInputs(tnsInfo, blockType)
+	if bitstream != nil && tnsInfo != nil {
+		if tnsDataPresent(tnsInfo, blockType) {
+			WriteBits(bitstream, 1, 1)
+		} else {
+			WriteBits(bitstream, 0, 1)
+		}
+	}
+	return 1
+}
+
+func FDKaacEncEncodeTnsData(tnsInfo *TNSInfo, blockType int, bitstream *BitStream) int {
+	checkEncodeTnsInfoInputs(tnsInfo, blockType)
+	if tnsInfo == nil || !tnsDataPresent(tnsInfo, blockType) {
+		return 0
+	}
+
+	tnsBits := 0
+	numOfWindows := tnsWindowCount(blockType)
+	numFilterBits := uint32(2)
+	lengthBits := uint32(6)
+	orderBits := uint32(5)
+	if blockType == ShortWindow {
+		numFilterBits = 1
+		lengthBits = 4
+		orderBits = 3
+	}
+
+	for i := 0; i < numOfWindows; i++ {
+		numFilters := tnsInfo.NumOfFilters[i]
+		if bitstream != nil {
+			WriteBits(bitstream, uint32(numFilters), numFilterBits)
+		}
+		tnsBits += int(numFilterBits)
+		if numFilters != 0 {
+			if bitstream != nil {
+				if tnsInfo.CoefRes[i] == 4 {
+					WriteBits(bitstream, 1, 1)
+				} else {
+					WriteBits(bitstream, 0, 1)
+				}
+			}
+			tnsBits++
+		}
+		for j := 0; j < numFilters; j++ {
+			if bitstream != nil {
+				WriteBits(bitstream, uint32(tnsInfo.Length[i][j]), lengthBits)
+				WriteBits(bitstream, uint32(tnsInfo.Order[i][j]), orderBits)
+			}
+			tnsBits += int(lengthBits + orderBits)
+			if tnsInfo.Order[i][j] != 0 {
+				coefBits := tnsCoefBits(tnsInfo, i, j)
+				if bitstream != nil {
+					WriteBits(bitstream, uint32(tnsInfo.Direction[i][j]), 1)
+					WriteBits(bitstream, uint32(tnsInfo.CoefRes[i]-coefBits), 1)
+					for k := 0; k < tnsInfo.Order[i][j]; k++ {
+						WriteBits(bitstream, uint32(tnsInfo.Coef[i][j][k]&int(BitMask[coefBits])), uint32(coefBits))
+					}
+				}
+				tnsBits += 2 + tnsInfo.Order[i][j]*coefBits
+			}
+		}
+	}
+	return tnsBits
+}
+
+func FDKaacEncEncodeGainControlData(bitstream *BitStream) int {
+	if bitstream != nil {
+		WriteBits(bitstream, 0, 1)
+	}
+	return 1
+}
+
+func FDKaacEncEncodePulseData(bitstream *BitStream) int {
+	if bitstream != nil {
+		WriteBits(bitstream, 0, 1)
+	}
+	return 1
+}
+
 func checkEncodeSpectralDataInputs(sfbOffset []int, sectionData *SectionData, quantSpectrum []int16, bitstream *BitStream) {
 	if bitstream == nil {
 		panic("fdkaac: nil spectral-data bitstream")
@@ -243,6 +373,110 @@ func checkEncodeSectionDataInputs(sectionData *SectionData) {
 			panic("fdkaac: invalid section-data length")
 		}
 	}
+}
+
+func checkEncodeMSInfoInputs(sfbCnt int, grpSfb int, maxSfb int, msDigest int, jsFlags []int) {
+	if msDigest != MsMaskNone && msDigest != MsMaskSome && msDigest != MsMaskAll {
+		panic("fdkaac: invalid MS digest")
+	}
+	if sfbCnt < 0 || sfbCnt > maxGroupedSFB {
+		panic("fdkaac: invalid MS sfb count")
+	}
+	if msDigest != MsMaskSome {
+		return
+	}
+	if grpSfb <= 0 || sfbCnt%grpSfb != 0 {
+		panic("fdkaac: invalid MS group width")
+	}
+	if maxSfb < 0 || maxSfb > grpSfb {
+		panic("fdkaac: invalid MS max sfb")
+	}
+	if len(jsFlags) < sfbCnt {
+		panic("fdkaac: short MS mask")
+	}
+}
+
+func checkEncodeTnsInfoInputs(tnsInfo *TNSInfo, blockType int) {
+	if blockType != LongWindow && blockType != StartWindow && blockType != ShortWindow && blockType != StopWindow {
+		panic("fdkaac: invalid TNS block type")
+	}
+	if tnsInfo == nil {
+		return
+	}
+
+	numOfWindows := tnsWindowCount(blockType)
+	lengthLimit := 1 << 6
+	orderLimit := 1 << 5
+	if blockType == ShortWindow {
+		lengthLimit = 1 << 4
+		orderLimit = 1 << 3
+	}
+
+	for i := 0; i < numOfWindows; i++ {
+		numFilters := tnsInfo.NumOfFilters[i]
+		if numFilters < 0 || numFilters > maxTnsFilters {
+			panic("fdkaac: invalid TNS filter count")
+		}
+		if numFilters == 0 {
+			continue
+		}
+		if tnsInfo.CoefRes[i] != 3 && tnsInfo.CoefRes[i] != 4 {
+			panic("fdkaac: invalid TNS coefficient resolution")
+		}
+		for j := 0; j < numFilters; j++ {
+			if tnsInfo.Length[i][j] < 0 || tnsInfo.Length[i][j] >= lengthLimit {
+				panic("fdkaac: invalid TNS filter length")
+			}
+			if tnsInfo.Order[i][j] < 0 || tnsInfo.Order[i][j] > tnsMaxOrder || tnsInfo.Order[i][j] >= orderLimit {
+				panic("fdkaac: invalid TNS filter order")
+			}
+			if tnsInfo.Direction[i][j] != 0 && tnsInfo.Direction[i][j] != 1 {
+				panic("fdkaac: invalid TNS filter direction")
+			}
+			coefBits := tnsCoefBits(tnsInfo, i, j)
+			coefMin := -(1 << (coefBits - 1))
+			coefMax := (1 << (coefBits - 1)) - 1
+			for k := 0; k < tnsInfo.Order[i][j]; k++ {
+				if tnsInfo.Coef[i][j][k] < coefMin || tnsInfo.Coef[i][j][k] > coefMax {
+					panic("fdkaac: invalid TNS coefficient")
+				}
+			}
+		}
+	}
+}
+
+func tnsWindowCount(blockType int) int {
+	if blockType == ShortWindow {
+		return transFac
+	}
+	return 1
+}
+
+func tnsDataPresent(tnsInfo *TNSInfo, blockType int) bool {
+	numOfWindows := tnsWindowCount(blockType)
+	for i := 0; i < numOfWindows; i++ {
+		if tnsInfo.NumOfFilters[i] != 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func tnsCoefBits(tnsInfo *TNSInfo, window int, filter int) int {
+	if tnsInfo.CoefRes[window] == 4 {
+		for k := 0; k < tnsInfo.Order[window][filter]; k++ {
+			if tnsInfo.Coef[window][filter][k] > 3 || tnsInfo.Coef[window][filter][k] < -4 {
+				return 4
+			}
+		}
+		return 3
+	}
+	for k := 0; k < tnsInfo.Order[window][filter]; k++ {
+		if tnsInfo.Coef[window][filter][k] > 1 || tnsInfo.Coef[window][filter][k] < -2 {
+			return 3
+		}
+	}
+	return 2
 }
 
 func checkEncodeScaleFactorDataInputs(maxValueInSfb []uint32, sectionData *SectionData, scalefac []int, noiseNrg []int, isScale []int) {
