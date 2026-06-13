@@ -389,6 +389,72 @@ func TestFDKaacEncReduceThresholdsCBRZeroReduction(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncVBRReductionTables(t *testing.T) {
+	wantInvInt := [...]FixpDBL{MaxValDBL, MaxValDBL, 0x40000000, 0x2aaaaaaa, 0x20000000, 0x19999999, 0x15555555, 0x12492492}
+	wantInvSqrt4 := [...]FixpDBL{MaxValDBL, MaxValDBL, 0x6ba27e65, 0x61424bb5, 0x5a827999, 0x55994845, 0x51c8e33c, 0x4eb160d1}
+	assertFixpDBLSlice(t, "VBR inverse-int table", adjThrInvInt[:], wantInvInt[:], 0xd99e30ed42afba6c)
+	assertFixpDBLSlice(t, "VBR inverse-sqrt4 table", adjThrInvSqrt4[:], wantInvSqrt4[:], 0x1deaf605797b3cf9)
+}
+
+func TestFDKaacEncCalcChaosMeasureVector(t *testing.T) {
+	_, psy, qc, _, _ := buildAdjThrLongPatchCase()
+	got := FDKaacEncCalcChaosMeasure(psy[0], qc[0].SfbFormFactorLdData[:])
+	if got != 8 {
+		t.Fatalf("chaos measure = %d, want 8", got)
+	}
+
+	noActive := *psy[0]
+	for i := 0; i < 8; i++ {
+		noActive.SfbEnergyLdData[i] = -600000000
+		noActive.SfbThresholdLdData[i] = -100000000
+	}
+	if got := FDKaacEncCalcChaosMeasure(&noActive, qc[0].SfbFormFactorLdData[:]); got != MaxValDBL {
+		t.Fatalf("inactive chaos measure = %d, want %d", got, MaxValDBL)
+	}
+}
+
+func TestFDKaacEncReduceThresholdsVBRLongVector(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var thrExp [2][maxGroupedSFB]FixpDBL
+	var ahFlag [2][maxGroupedSFB]uint8
+	fillVBRLongThresholdReductionCase(&psyStorage, &qcStorage, &thrExp, &ahFlag)
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+	chaosOld := vbrChaosHalf
+
+	FDKaacEncReduceThresholdsVBR(qc[:], psy[:], &ahFlag, &thrExp, 1, peCorrectionHalf, &chaosOld)
+
+	wantThreshold := [...]FixpDBL{-464694604, -500000000, -457131312, -472161452, -449474100, -505000000, -441725520, -479529344}
+	wantFlags := [...]uint8{AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, AvoidHoleInactive}
+	assertFixpDBLSlice(t, "VBR long thresholds", qc[0].SfbThresholdLdData[:8], wantThreshold[:], 0x09e6d3e3b556f9bd)
+	assertUint8Slice(t, "VBR long avoid-hole flags", ahFlag[0][:8], wantFlags[:])
+	if chaosOld != 0 {
+		t.Fatalf("VBR long chaos history = %d, want 0", chaosOld)
+	}
+}
+
+func TestFDKaacEncReduceThresholdsVBRShortVector(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var thrExp [2][maxGroupedSFB]FixpDBL
+	var ahFlag [2][maxGroupedSFB]uint8
+	fillVBRShortThresholdReductionCase(&psyStorage, &qcStorage, &thrExp, &ahFlag)
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+	chaosOld := FixpDBL(0x30000000)
+
+	FDKaacEncReduceThresholdsVBR(qc[:], psy[:], &ahFlag, &thrExp, 1, 0x50000000, &chaosOld)
+
+	wantThreshold := [...]FixpDBL{-242726640, -500000000, -240298184, -530000000, -237773484, -505000000, -235150056, -540000000}
+	wantFlags := [...]uint8{AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, 0, AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, 0}
+	assertFixpDBLSlice(t, "VBR short thresholds", qc[0].SfbThresholdLdData[:8], wantThreshold[:], 0x38db12f3606c9c20)
+	assertUint8Slice(t, "VBR short avoid-hole flags", ahFlag[0][:8], wantFlags[:])
+	if chaosOld != 0x34000000 {
+		t.Fatalf("VBR short chaos history = %#x, want 0x34000000", chaosOld)
+	}
+}
+
 func TestFDKaacEncPECalculationRejectsInvalid(t *testing.T) {
 	peData, psy, qc, tools, state := buildAdjThrLongPatchCase()
 	for _, tt := range []struct {
@@ -543,6 +609,7 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 	psy := [1]*PsyOutChannel{&psyStorage}
 	qc := [1]*QCOutChannel{&qcStorage}
 	peData, pePsy, peFlags := buildPENoAHCase()
+	chaosOld := vbrChaosHalf
 
 	for _, tt := range []struct {
 		name string
@@ -560,6 +627,21 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 		}},
 		{"negative reduction value", func() { FDKaacEncReduceThresholdsCBR(qc[:], psy[:], &ahFlag, &thrExp, 1, -1, 0) }},
 		{"bad reduction exponent", func() { FDKaacEncReduceThresholdsCBR(qc[:], psy[:], &ahFlag, &thrExp, 1, 0x20000000, DfractBits+1) }},
+		{"nil chaos-measure psy", func() { FDKaacEncCalcChaosMeasure(nil, qcStorage.SfbFormFactorLdData[:]) }},
+		{"short chaos-measure form", func() { FDKaacEncCalcChaosMeasure(&psyStorage, qcStorage.SfbFormFactorLdData[:2]) }},
+		{"nil VBR flags", func() { FDKaacEncReduceThresholdsVBR(qc[:], psy[:], nil, &thrExp, 1, peCorrectionHalf, &chaosOld) }},
+		{"nil VBR exponent", func() { FDKaacEncReduceThresholdsVBR(qc[:], psy[:], &ahFlag, nil, 1, peCorrectionHalf, &chaosOld) }},
+		{"nil VBR chaos history", func() { FDKaacEncReduceThresholdsVBR(qc[:], psy[:], &ahFlag, &thrExp, 1, peCorrectionHalf, nil) }},
+		{"negative VBR quality", func() { FDKaacEncReduceThresholdsVBR(qc[:], psy[:], &ahFlag, &thrExp, 1, -1, &chaosOld) }},
+		{"bad VBR group length", func() {
+			var shortPsy PsyOutChannel
+			var shortQC QCOutChannel
+			var shortThrExp [2][maxGroupedSFB]FixpDBL
+			var shortAHFlag [2][maxGroupedSFB]uint8
+			fillVBRShortThresholdReductionCase(&shortPsy, &shortQC, &shortThrExp, &shortAHFlag)
+			shortPsy.GroupLen[0] = len(adjThrInvInt)
+			FDKaacEncReduceThresholdsVBR([]*QCOutChannel{&shortQC}, []*PsyOutChannel{&shortPsy}, &shortAHFlag, &shortThrExp, 1, peCorrectionHalf, &chaosOld)
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() {
@@ -703,6 +785,26 @@ func TestFDKaacEncThresholdReductionAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("threshold reduction allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncVBRThresholdReductionAllocs(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var thrExp [2][maxGroupedSFB]FixpDBL
+	var ahFlag [2][maxGroupedSFB]uint8
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		fillVBRLongThresholdReductionCase(&psyStorage, &qcStorage, &thrExp, &ahFlag)
+		chaosOld := vbrChaosHalf
+		FDKaacEncReduceThresholdsVBR(qc[:], psy[:], &ahFlag, &thrExp, 1, peCorrectionHalf, &chaosOld)
+		adjThrSink = qcStorage.SfbThresholdLdData[0] + chaosOld + FDKaacEncCalcChaosMeasure(&psyStorage, qcStorage.SfbFormFactorLdData[:])
+		adjThrHashSink = uint64(ahFlag[0][3])
+	})
+	if allocs != 0 {
+		t.Fatalf("VBR threshold reduction allocations = %v, want 0", allocs)
 	}
 }
 
@@ -920,4 +1022,47 @@ func fillThresholdReductionCase(
 	psyPtrs := [1]*PsyOutChannel{psy}
 	qcPtrs := [1]*QCOutChannel{qc}
 	FDKaacEncCalcThresholdExp(thrExp, qcPtrs[:], psyPtrs[:], 1)
+}
+
+func fillVBRLongThresholdReductionCase(
+	psy *PsyOutChannel,
+	qc *QCOutChannel,
+	thrExp *[2][maxGroupedSFB]FixpDBL,
+	ahFlag *[2][maxGroupedSFB]uint8,
+) {
+	_, psyPtrs, qcPtrs, _, _ := buildAdjThrLongPatchCase()
+	*psy = *psyPtrs[0]
+	*qc = *qcPtrs[0]
+	copy(qc.SfbWeightedEnergyLdData[:], qc.SfbEnergyLdData[:])
+	*thrExp = [2][maxGroupedSFB]FixpDBL{}
+	*ahFlag = [2][maxGroupedSFB]uint8{}
+	flags := [...]uint8{AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, AvoidHoleInactive}
+	copy(ahFlag[0][:], flags[:])
+
+	psyLocal := [1]*PsyOutChannel{psy}
+	qcLocal := [1]*QCOutChannel{qc}
+	FDKaacEncCalcThresholdExp(thrExp, qcLocal[:], psyLocal[:], 1)
+}
+
+func fillVBRShortThresholdReductionCase(
+	psy *PsyOutChannel,
+	qc *QCOutChannel,
+	thrExp *[2][maxGroupedSFB]FixpDBL,
+	ahFlag *[2][maxGroupedSFB]uint8,
+) {
+	*psy, *qc = buildMinSnrAdaptCase()
+	psy.LastWindowSequence = ShortWindow
+	psy.MaxSfbPerGroup = 3
+	psy.GroupLen = [maxNoOfGroups]int{3, 3, 0, 0}
+	copy(psy.SfbEnergyLdData[:], qc.SfbEnergyLdData[:])
+	copy(psy.SfbThresholdLdData[:], qc.SfbThresholdLdData[:])
+	copy(qc.SfbWeightedEnergyLdData[:], qc.SfbEnergyLdData[:])
+	*thrExp = [2][maxGroupedSFB]FixpDBL{}
+	*ahFlag = [2][maxGroupedSFB]uint8{}
+	flags := [...]uint8{AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, 0, AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, 0}
+	copy(ahFlag[0][:], flags[:])
+
+	psyLocal := [1]*PsyOutChannel{psy}
+	qcLocal := [1]*QCOutChannel{qc}
+	FDKaacEncCalcThresholdExp(thrExp, qcLocal[:], psyLocal[:], 1)
 }

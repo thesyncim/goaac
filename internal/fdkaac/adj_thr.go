@@ -22,6 +22,14 @@ const (
 
 	constPartHeadroom = 4
 
+	vbrScaleGroupEnergy = 8
+	vbrScaleFormFac     = 4
+	vbrScaleNRGs        = 8
+	vbrScaleNLines      = 16
+	vbrScaleNRGsSqrt4   = 2
+	vbrScaleNLinesP34   = 12
+	vbrWinTypeScale     = 3
+
 	bitSaveSlopeLong   FixpDBL = 0x3bbbbbba
 	bitSpendSlopeLong  FixpDBL = 0x55555554
 	bitSaveSlopeShort  FixpDBL = 0x2e8ba2e9
@@ -72,7 +80,26 @@ const (
 	avoidHoleNegHalf        FixpDBL = -0x40000000
 
 	minThresholdRatio29DB FixpDBL = 0x134469eb
+	vbrChaosHalf          FixpDBL = 0x40000000
+	vbrChaosAvgFac0       FixpDBL = 0x20000000
+	vbrChaosAvgFac1       FixpDBL = 0x60000000
+	vbrChaos02            FixpDBL = 0x1999999a
+	vbrChaos01            FixpDBL = 0x0ccccccd
+	vbrChaos07Over12      FixpDBL = 0x4aaaaaab
+	vbrMinLdThresh        FixpDBL = -0x42000000
+	vbrLimitThrReduced    FixpDBL = 0x00008000
+	vbr282Over4           FixpDBL = 0x5a3d70a4
 )
+
+var adjThrInvInt = [8]FixpDBL{
+	MaxValDBL, MaxValDBL, 0x40000000, 0x2aaaaaaa,
+	0x20000000, 0x19999999, 0x15555555, 0x12492492,
+}
+
+var adjThrInvSqrt4 = [8]FixpDBL{
+	MaxValDBL, MaxValDBL, 0x6ba27e65, 0x61424bb5,
+	0x5a827999, 0x55994845, 0x51c8e33c, 0x4eb160d1,
+}
 
 type BitresMode int
 
@@ -453,6 +480,167 @@ func FDKaacEncReduceThresholdsCBR(
 						sfbThrReducedLdData = maxFixpDBL(sfbThrReducedLdData, sfbEnLdData-minThresholdRatio29DB)
 					}
 
+					qcCh.SfbThresholdLdData[idx] = sfbThrReducedLdData
+				}
+			}
+		}
+	}
+}
+
+func FDKaacEncCalcChaosMeasure(psyOutChannel *PsyOutChannel, sfbFormFactorLdData []FixpDBL) FixpDBL {
+	checkChaosMeasureInputs(psyOutChannel, sfbFormFactorLdData)
+
+	frameNLines := 0
+	frameFormFactor := FixpDBL(0)
+	frameEnergy := FixpDBL(0)
+	for sfbGrp := 0; sfbGrp < psyOutChannel.SfbCnt; sfbGrp += psyOutChannel.SfbPerGroup {
+		for sfb := 0; sfb < psyOutChannel.MaxSfbPerGroup; sfb++ {
+			idx := sfbGrp + sfb
+			if psyOutChannel.SfbEnergyLdData[idx] > psyOutChannel.SfbThresholdLdData[idx] {
+				frameFormFactor += CalcInvLdData(sfbFormFactorLdData[idx]) >> vbrScaleFormFac
+				frameNLines += psyOutChannel.SfbOffsets[idx+1] - psyOutChannel.SfbOffsets[idx]
+				frameEnergy += psyOutChannel.SfbEnergy[idx] >> vbrScaleNRGs
+			}
+		}
+	}
+
+	if frameNLines <= 0 {
+		return MaxValDBL
+	}
+
+	scaleOffset := FixpDBL(-((-vbrScaleFormFac + vbrScaleNRGsSqrt4 - formFacShift + vbrScaleNLinesP34) << (DfractBits - 1 - ldDataShift)))
+	nLinesLd := CalcLdData(FixpDBL(frameNLines << (DfractBits - 1 - vbrScaleNLines)))
+	chaosMeasureLd := (((CalcLdData(frameFormFactor) >> 1) -
+		(CalcLdData(frameEnergy) >> (2 + 1))) -
+		(FMultDiv2DD(vbrChaosAvgFac1, nLinesLd) - (scaleOffset >> 1)))
+	return CalcInvLdData(chaosMeasureLd << 1)
+}
+
+func FDKaacEncReduceThresholdsVBR(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	thrExp *[2][maxGroupedSFB]FixpDBL,
+	nChannels int,
+	vbrQualFactor FixpDBL,
+	chaosMeasureOld *FixpDBL,
+) {
+	checkThresholdReductionVBRInputs(qcOutChannel, psyOutChannel, ahFlag, thrExp, nChannels, vbrQualFactor, chaosMeasureOld)
+
+	var chGroupEnergy [transFac][2]FixpDBL
+	var redVal [transFac]FixpDBL
+	frameEnergy := FixpDBL(0)
+	chaosMeasure := FixpDBL(0)
+
+	for ch := 0; ch < nChannels; ch++ {
+		psyCh := psyOutChannel[ch]
+		chEnergy := FixpDBL(0)
+		groupCnt := 0
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			chGroupEnergy[groupCnt][ch] = 0
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				chGroupEnergy[groupCnt][ch] += psyCh.SfbEnergy[sfbGrp+sfb] >> vbrScaleGroupEnergy
+			}
+			chEnergy += chGroupEnergy[groupCnt][ch]
+			groupCnt++
+		}
+		frameEnergy += chEnergy
+
+		chChaosMeasure := vbrChaosHalf
+		if psyOutChannel[0].LastWindowSequence != ShortWindow {
+			chChaosMeasure = FDKaacEncCalcChaosMeasure(psyCh, qcOutChannel[ch].SfbFormFactorLdData[:])
+		}
+		chaosMeasure += FMultDD(chChaosMeasure, chEnergy)
+	}
+
+	if frameEnergy > chaosMeasure {
+		scale := FixNormZD(frameEnergy) - 1
+		chaosMeasure = schurDiv(chaosMeasure<<uint(scale), frameEnergy<<uint(scale), FractBits)
+	} else {
+		chaosMeasure = MaxValDBL
+	}
+
+	chaosMeasureAvg := FMultDD(vbrChaosAvgFac0, chaosMeasure) + FMultDD(vbrChaosAvgFac1, *chaosMeasureOld)
+	chaosMeasure = minFixpDBL(chaosMeasure, chaosMeasureAvg)
+	*chaosMeasureOld = chaosMeasure
+
+	chaosMeasure = (vbrChaos02 >> 2) + FMultDD(vbrChaos07Over12, chaosMeasure-vbrChaos02)
+	chaosMeasure = minFixpDBL(MaxValDBL>>2, maxFixpDBL(vbrChaos01>>2, chaosMeasure)) << 2
+
+	if psyOutChannel[0].LastWindowSequence == ShortWindow {
+		groupCnt := 0
+		for sfbGrp := 0; sfbGrp < psyOutChannel[0].SfbCnt; sfbGrp += psyOutChannel[0].SfbPerGroup {
+			groupEnergy := FixpDBL(0)
+			for ch := 0; ch < nChannels; ch++ {
+				groupEnergy += chGroupEnergy[groupCnt][ch]
+			}
+
+			groupLen := psyOutChannel[0].GroupLen[groupCnt]
+			groupEnergy = FMultDD(groupEnergy, adjThrInvInt[groupLen])
+			groupEnergy = minFixpDBL(groupEnergy, frameEnergy>>vbrWinTypeScale)
+			groupEnergy >>= 2
+
+			redVal[groupCnt] = FMultDD(
+				FMultDD(vbrQualFactor, chaosMeasure),
+				CalcInvLdData(CalcLdData(groupEnergy)>>2),
+			) << uint((2+(2*vbrWinTypeScale)+vbrScaleGroupEnergy)>>2)
+			groupCnt++
+		}
+	} else {
+		redVal[0] = FMultDD(
+			FMultDD(vbrQualFactor, chaosMeasure),
+			CalcInvLdData(CalcLdData(frameEnergy)>>2),
+		) << uint(vbrScaleGroupEnergy>>2)
+	}
+
+	for ch := 0; ch < nChannels; ch++ {
+		qcCh := qcOutChannel[ch]
+		psyCh := psyOutChannel[ch]
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				sfbEnLdData := qcCh.SfbWeightedEnergyLdData[idx]
+				sfbThrLdData := qcCh.SfbThresholdLdData[idx]
+				sfbThrExp := thrExp[ch][idx]
+				if sfbThrLdData >= vbrMinLdThresh && sfbEnLdData > sfbThrLdData && ahFlag[ch][idx] != AvoidHoleActive {
+					var sfbThrReducedLdData FixpDBL
+					if psyCh.LastWindowSequence == ShortWindow {
+						groupNumber := sfb / psyCh.SfbPerGroup
+						groupLen := psyCh.GroupLen[groupNumber]
+						sfbThrExp = FMultDD(
+							sfbThrExp,
+							FMultDD(vbr282Over4, adjThrInvSqrt4[groupLen]),
+						) << 2
+
+						if sfbThrExp <= vbrLimitThrReduced-redVal[groupNumber] {
+							sfbThrReducedLdData = MinValDBL
+						} else if redVal[groupNumber] >= MaxValDBL-sfbThrExp {
+							sfbThrReducedLdData = 0
+						} else {
+							sfbThrReducedLdData = CalcLdData(sfbThrExp+redVal[groupNumber]) << 2
+						}
+						sfbThrReducedLdData += CalcLdInt(groupLen) - FixpDBL(6<<(DfractBits-1-ldDataShift))
+					} else {
+						if redVal[0] >= MaxValDBL-sfbThrExp {
+							sfbThrReducedLdData = 0
+						} else {
+							sfbThrReducedLdData = CalcLdData(sfbThrExp+redVal[0]) << 2
+						}
+					}
+
+					if sfbThrReducedLdData-sfbEnLdData > qcCh.SfbMinSnrLdData[idx] && ahFlag[ch][idx] != AvoidHoleNone {
+						if qcCh.SfbMinSnrLdData[idx] > MinValDBL-sfbEnLdData {
+							sfbThrReducedLdData = maxFixpDBL(qcCh.SfbMinSnrLdData[idx]+sfbEnLdData, sfbThrLdData)
+						} else {
+							sfbThrReducedLdData = sfbThrLdData
+						}
+						ahFlag[ch][idx] = AvoidHoleActive
+					}
+
+					if sfbThrReducedLdData < avoidHoleNegHalf {
+						sfbThrReducedLdData = MinValDBL
+					}
+					sfbThrReducedLdData = maxFixpDBL(vbrMinLdThresh, sfbThrReducedLdData)
 					qcCh.SfbThresholdLdData[idx] = sfbThrReducedLdData
 				}
 			}
@@ -904,6 +1092,53 @@ func checkThresholdReductionInputs(
 	}
 	if redValM < 0 || redValE < -DfractBits || redValE > DfractBits {
 		panic("fdkaac: invalid threshold reduction value")
+	}
+}
+
+func checkChaosMeasureInputs(psyOutChannel *PsyOutChannel, sfbFormFactorLdData []FixpDBL) {
+	if psyOutChannel == nil {
+		panic("fdkaac: nil chaos-measure psy output")
+	}
+	checkPEChannelShape(psyOutChannel)
+	if len(sfbFormFactorLdData) < psyOutChannel.SfbCnt {
+		panic("fdkaac: short chaos-measure form-factor data")
+	}
+}
+
+func checkThresholdReductionVBRInputs(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	thrExp *[2][maxGroupedSFB]FixpDBL,
+	nChannels int,
+	vbrQualFactor FixpDBL,
+	chaosMeasureOld *FixpDBL,
+) {
+	checkThresholdAdjustmentInputs(qcOutChannel, psyOutChannel, nChannels)
+	if ahFlag == nil {
+		panic("fdkaac: nil VBR threshold reduction avoid-hole flags")
+	}
+	if thrExp == nil {
+		panic("fdkaac: nil VBR threshold reduction exponent scratch")
+	}
+	if chaosMeasureOld == nil {
+		panic("fdkaac: nil VBR threshold reduction chaos history")
+	}
+	if vbrQualFactor < 0 {
+		panic("fdkaac: invalid VBR quality factor")
+	}
+	if psyOutChannel[0].LastWindowSequence == ShortWindow {
+		groupCnt := 0
+		for sfbGrp := 0; sfbGrp < psyOutChannel[0].SfbCnt; sfbGrp += psyOutChannel[0].SfbPerGroup {
+			if groupCnt >= transFac {
+				panic("fdkaac: too many VBR short groups")
+			}
+			groupLen := psyOutChannel[0].GroupLen[groupCnt]
+			if groupLen < 0 || groupLen >= len(adjThrInvInt) || groupLen >= len(adjThrInvSqrt4) {
+				panic("fdkaac: invalid VBR short group length")
+			}
+			groupCnt++
+		}
 	}
 }
 

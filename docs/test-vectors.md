@@ -260,6 +260,13 @@ AH-active skips, NO_AH bypass, AH activation and min-SNR clamping, 29 dB
 minimum-ratio limiting, zero-reduction no-op behavior, malformed controls,
 no-cgo compilation, and zero steady-state allocation.
 
+The FDK AAC-LC VBR threshold-reduction subset is covered with source-derived
+`invInt` and `invSqrt4` table hashes, a `FDKaacEnc_calcChaosMeasure` vector,
+and long/short-window vectors for `FDKaacEnc_reduceThresholdsVBR`. Tests verify
+chaos smoothing/history, no-active chaos fallback, AH-active skips, AH
+activation and min-SNR clamping, short-window group scaling, malformed
+controls, no-cgo compilation, and zero steady-state allocation.
+
 The FDK AAC-LC PE threshold-adjustment subset is covered with source-derived
 vectors for normalized Schur division, `FDKaacEnc_preparePe`,
 `FDKaacEnc_calcWeighting`, `FDKaacEnc_calcPe`, and `FDKaacEnc_peCalculation`.
