@@ -240,6 +240,12 @@ Tests verify active-line preparation, high/low PE branches, inactive and
 intensity-book transitions, malformed controls, and zero steady-state
 allocation.
 
+The FDK AAC-LC min-SNR adaptation subset is covered with source-derived
+vectors for `FDKaacEnc_calcThreshExp` and `FDKaacEnc_adaptMinSnr`. Tests verify
+threshold exponent scratch output, default `MINSNR_ADAPT_PARAM` constants,
+low-energy min-SNR reduction, zero-energy no-op behavior, malformed controls,
+and zero steady-state allocation.
+
 The FDK AAC-LC PE threshold-adjustment subset is covered with source-derived
 vectors for normalized Schur division, `FDKaacEnc_preparePe`,
 `FDKaacEnc_calcWeighting`, `FDKaacEnc_calcPe`, and `FDKaacEnc_peCalculation`.

@@ -43,6 +43,14 @@ const (
 	lowBitresCorrectionAmp FixpDBL = 0x00a3d70a
 	lowBitresMaxDiff       FixpDBL = 0x20000000
 	lowBitresCorrectionMin FixpDBL = 0x30000000
+
+	minSnrLimitLD64               FixpDBL = -0x00a4d3c2
+	minSnrAdaptLog10              FixpDBL = 0x268826c0
+	minSnrAdaptAvgLdShift         FixpDBL = 0x0c000000
+	minSnrAdaptDefaultMaxRed              = FixpDBL(0x00800000)
+	minSnrAdaptDefaultStartRatio          = FixpDBL(0x06a4d3c0)
+	minSnrAdaptDefaultRedRatioFac         = FixpDBL(-0x30000000)
+	minSnrAdaptDefaultRedOffs             = FixpDBL(0x02c00000)
 )
 
 type BitresMode int
@@ -129,6 +137,90 @@ func FDKaacEncInitBitresState(state *AdjThrState) {
 	}
 	state.BitDistributionMode = 0
 	state.MaxIter2ndGuess = 1
+}
+
+func FDKaacEncInitMinSnrAdaptParam(param *MinSNRAdaptParam) {
+	if param == nil {
+		panic("fdkaac: nil min-SNR adaptation parameter")
+	}
+	param.MaxRed = minSnrAdaptDefaultMaxRed
+	param.StartRatio = minSnrAdaptDefaultStartRatio
+	param.MaxRatio = 0
+	param.RedRatioFac = minSnrAdaptDefaultRedRatioFac
+	param.RedOffs = minSnrAdaptDefaultRedOffs
+}
+
+func FDKaacEncCalcThresholdExp(
+	thrExp *[2][maxGroupedSFB]FixpDBL,
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	nChannels int,
+) {
+	checkThresholdAdjustmentInputs(qcOutChannel, psyOutChannel, nChannels)
+	if thrExp == nil {
+		panic("fdkaac: nil threshold exponent scratch")
+	}
+
+	for ch := 0; ch < nChannels; ch++ {
+		psyCh := psyOutChannel[ch]
+		qcCh := qcOutChannel[ch]
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				thrExp[ch][idx] = CalcInvLdData(qcCh.SfbThresholdLdData[idx] >> 2)
+			}
+		}
+	}
+}
+
+func FDKaacEncAdaptMinSnr(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	msaParam *MinSNRAdaptParam,
+	nChannels int,
+) {
+	checkThresholdAdjustmentInputs(qcOutChannel, psyOutChannel, nChannels)
+	if msaParam == nil {
+		panic("fdkaac: nil min-SNR adaptation parameter")
+	}
+
+	msaParamRedRatioFac := FMultDD(msaParam.RedRatioFac, minSnrAdaptLog10)
+
+	for ch := 0; ch < nChannels; ch++ {
+		psyCh := psyOutChannel[ch]
+		qcCh := qcOutChannel[ch]
+
+		nSfb := 0
+		accu := FixpDBL(0)
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			nSfb += psyCh.MaxSfbPerGroup
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				accu += psyCh.SfbEnergy[sfbGrp+sfb] >> 6
+			}
+		}
+
+		avgEnLD64 := MinValDBL
+		if accu != 0 && nSfb != 0 {
+			avgEnLD64 = CalcLdData(accu) + minSnrAdaptAvgLdShift - CalcLdInt(nSfb)
+		}
+
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				sfbEnergyLdData := qcCh.SfbEnergyLdData[idx]
+				sfbMinSnrLdData := qcCh.SfbMinSnrLdData[idx]
+				dbRatio := avgEnLD64 - sfbEnergyLdData
+				update := msaParam.StartRatio < dbRatio
+				minSnrRed := msaParam.RedOffs + FMultDD(msaParamRedRatioFac, dbRatio)
+				minSnrRed = maxFixpDBL(minSnrRed, msaParam.MaxRed)
+				minSnrRed = FMultDD(sfbMinSnrLdData, minSnrRed) << 6
+				minSnrRed = minFixpDBL(minSnrLimitLD64, minSnrRed)
+				if update {
+					qcCh.SfbMinSnrLdData[idx] = minSnrRed
+				}
+			}
+		}
+	}
 }
 
 func FDKaacEncBitresCalcBitFac(
@@ -489,6 +581,24 @@ func fdkaacEncCalcPECorrectionLowBitres(
 	}
 
 	return lowBitresCorrectionMin, 1
+}
+
+func checkThresholdAdjustmentInputs(qcOutChannel []*QCOutChannel, psyOutChannel []*PsyOutChannel, nChannels int) {
+	if nChannels <= 0 || nChannels > 2 {
+		panic("fdkaac: invalid threshold adjustment channel count")
+	}
+	if len(qcOutChannel) < nChannels || len(psyOutChannel) < nChannels {
+		panic("fdkaac: short threshold adjustment channel inputs")
+	}
+	for ch := 0; ch < nChannels; ch++ {
+		if qcOutChannel[ch] == nil {
+			panic("fdkaac: nil threshold adjustment qc output")
+		}
+		if psyOutChannel[ch] == nil {
+			panic("fdkaac: nil threshold adjustment psy output")
+		}
+		checkPEChannelShape(psyOutChannel[ch])
+	}
 }
 
 func checkBitresCalcInputs(

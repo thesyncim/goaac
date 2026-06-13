@@ -188,6 +188,51 @@ func TestFDKaacEncPECorrectionHighBitresVector(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncThresholdExpVector(t *testing.T) {
+	_, psy, qc, _, _ := buildAdjThrLongPatchCase()
+	var thrExp [2][maxGroupedSFB]FixpDBL
+	thrExp[0][8] = 12345
+
+	FDKaacEncCalcThresholdExp(&thrExp, qc[:], psy[:], 1)
+
+	want := [...]FixpDBL{146436310, 162369982, 154197474, 139065786, 162369982, 158230974, 170975635, 132066240}
+	assertFixpDBLSlice(t, "threshold exponent", thrExp[0][:8], want[:], 0xe9a52d022f9509a2)
+	if thrExp[0][8] != 12345 {
+		t.Fatalf("threshold exponent touched inactive band = %d", thrExp[0][8])
+	}
+}
+
+func TestFDKaacEncAdaptMinSnrVector(t *testing.T) {
+	var param MinSNRAdaptParam
+	FDKaacEncInitMinSnrAdaptParam(&param)
+	gotParam := [...]FixpDBL{param.MaxRed, param.StartRatio, param.RedRatioFac, param.RedOffs}
+	wantParam := [...]FixpDBL{0x00800000, 0x06a4d3c0, -0x30000000, 0x02c00000}
+	if gotParam != wantParam {
+		t.Fatalf("min-SNR defaults = %v, want %v", gotParam, wantParam)
+	}
+
+	psyStorage, qcStorage := buildMinSnrAdaptCase()
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+	FDKaacEncAdaptMinSnr(qc[:], psy[:], &param, 1)
+
+	wantMinSnr := [...]FixpDBL{-90000000, -109772544, -120282752, -80000000, -70000000, -110239808, -95471104, -100000000}
+	assertFixpDBLSlice(t, "adapted min-SNR", qc[0].SfbMinSnrLdData[:8], wantMinSnr[:], 0xe5ce61fd11345447)
+
+	zeroPsy, zeroQC := buildMinSnrAdaptCase()
+	for i := 0; i < 8; i++ {
+		zeroPsy.SfbEnergy[i] = 0
+		zeroQC.SfbEnergyLdData[i] = MinValDBL
+	}
+	before := zeroQC.SfbMinSnrLdData
+	zeroPsyPtrs := [1]*PsyOutChannel{&zeroPsy}
+	zeroQCPtrs := [1]*QCOutChannel{&zeroQC}
+	FDKaacEncAdaptMinSnr(zeroQCPtrs[:], zeroPsyPtrs[:], &param, 1)
+	if zeroQC.SfbMinSnrLdData != before {
+		t.Fatalf("zero-energy min-SNR changed = %v, want %v", zeroQC.SfbMinSnrLdData[:8], before[:8])
+	}
+}
+
 func TestFDKaacEncPECalculationRejectsInvalid(t *testing.T) {
 	peData, psy, qc, tools, state := buildAdjThrLongPatchCase()
 	for _, tt := range []struct {
@@ -223,6 +268,49 @@ func TestFDKaacEncPECalculationRejectsInvalid(t *testing.T) {
 			bad := *psy[0]
 			bad.LastWindowSequence = -1
 			FDKaacEncPECalculation(&peData, []*PsyOutChannel{&bad}, qc[:], &tools, &state, 1)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		})
+	}
+}
+
+func TestFDKaacEncMinSnrAdjustmentRejectsInvalid(t *testing.T) {
+	var param MinSNRAdaptParam
+	FDKaacEncInitMinSnrAdaptParam(&param)
+	var thrExp [2][maxGroupedSFB]FixpDBL
+	psyStorage, qcStorage := buildMinSnrAdaptCase()
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+
+	for _, tt := range []struct {
+		name string
+		fn   func()
+	}{
+		{"nil threshold scratch", func() { FDKaacEncCalcThresholdExp(nil, qc[:], psy[:], 1) }},
+		{"nil min snr param", func() { FDKaacEncAdaptMinSnr(qc[:], psy[:], nil, 1) }},
+		{"nil init param", func() { FDKaacEncInitMinSnrAdaptParam(nil) }},
+		{"bad channel count", func() { FDKaacEncCalcThresholdExp(&thrExp, qc[:], psy[:], 0) }},
+		{"short inputs", func() { FDKaacEncAdaptMinSnr(qc[:0], psy[:], &param, 1) }},
+		{"nil qc", func() {
+			bad := [1]*QCOutChannel{nil}
+			FDKaacEncAdaptMinSnr(bad[:], psy[:], &param, 1)
+		}},
+		{"nil psy", func() {
+			bad := [1]*PsyOutChannel{nil}
+			FDKaacEncCalcThresholdExp(&thrExp, qc[:], bad[:], 1)
+		}},
+		{"bad band shape", func() {
+			badPsy := psyStorage
+			badPsy.SfbPerGroup = 3
+			bad := [1]*PsyOutChannel{&badPsy}
+			FDKaacEncAdaptMinSnr(qc[:], bad[:], &param, 1)
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -301,6 +389,26 @@ func TestFDKaacEncDistributeBitsRejectsInvalid(t *testing.T) {
 			}()
 			tt.fn()
 		})
+	}
+}
+
+func TestFDKaacEncMinSnrAdjustmentAllocs(t *testing.T) {
+	var param MinSNRAdaptParam
+	var thrExp [2][maxGroupedSFB]FixpDBL
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		FDKaacEncInitMinSnrAdaptParam(&param)
+		psyStorage, qcStorage = buildMinSnrAdaptCase()
+		FDKaacEncCalcThresholdExp(&thrExp, qc[:], psy[:], 1)
+		FDKaacEncAdaptMinSnr(qc[:], psy[:], &param, 1)
+		adjThrSink = thrExp[0][0] + qcStorage.SfbMinSnrLdData[7]
+	})
+	if allocs != 0 {
+		t.Fatalf("min-SNR adaptation allocations = %v, want 0", allocs)
 	}
 }
 
@@ -433,4 +541,26 @@ func buildBitresElementWithHistoryAndBounds(peLast int, dynBitsLast int, peMin i
 		PeCorrectionFactorM: peCorrectionHalf,
 		PeCorrectionFactorE: 1,
 	}
+}
+
+func buildMinSnrAdaptCase() (PsyOutChannel, QCOutChannel) {
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	psy.SfbCnt = 8
+	psy.SfbPerGroup = 4
+	psy.MaxSfbPerGroup = 4
+	psy.LastWindowSequence = LongWindow
+	for i := 0; i <= 8; i++ {
+		psy.SfbOffsets[i] = i
+	}
+
+	energy := [...]FixpDBL{200000000, 4000000, 2000000, 60000000, 180000000, 1000000, 3000000, 90000000}
+	energyLd := [...]FixpDBL{-114909676, -304286066, -337840498, -173192572, -120010024, -371394930, -318212408, -153564456}
+	threshold := [...]FixpDBL{-520000000, -500000000, -510000000, -530000000, -500000000, -505000000, -490000000, -540000000}
+	minSnr := [...]FixpDBL{-90000000, -120000000, -150000000, -80000000, -70000000, -160000000, -110000000, -100000000}
+	copy(psy.SfbEnergy[:], energy[:])
+	copy(qc.SfbEnergyLdData[:], energyLd[:])
+	copy(qc.SfbThresholdLdData[:], threshold[:])
+	copy(qc.SfbMinSnrLdData[:], minSnr[:])
+	return psy, qc
 }
