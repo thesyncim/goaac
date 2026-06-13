@@ -61,10 +61,13 @@ const (
 
 	AACEncOK                     = 0x0000
 	AACEncUnknown                = 0x0002
+	AACEncUnsupportedBitrateMode = 0x3028
+	AACEncUnsupportedChannelConf = 0x30e0
 	AACEncQuantError             = 0x4020
 	AACEncWrittenBitsError       = 0x4040
 	AACEncBitresTooLow           = 0x40a0
 	AACEncBitresTooHigh          = 0x40a1
+	AACEncInvalidChannelBitrate  = 0x4100
 	AACEncUnsupportedAOT         = 0x3000
 	AACEncInvalidElementInfoType = 0x4120
 	AACEncWriteScalError         = 0x41e0

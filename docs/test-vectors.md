@@ -53,6 +53,13 @@ exercised by the `internal/fdkaac` wasm test binary and still need a fresh
 native probe once local execution of newly built Mach-O binaries is available
 again.
 
+The FDK encoder bandwidth/control subset is covered with source-shaped vectors
+for `FDKaacEnc_DetermineBandWidth`, `FDKaacEnc_GetVBRBitrate`, and
+`FDKaacEnc_AdjustVBRBitrateMode`. Tests verify CBR/VBR table selection,
+proposed-bandwidth clipping, low-delay fixed-point interpolation, effective
+channel handling with LFE excluded, malformed controls, no-cgo compilation, and
+zero steady-state allocation.
+
 The FDK `SineTable512` ROM used by the 64/128/256/512-point radix FFT path is
 also locked by source-derived sample entries, an FNV-1a checksum, output hashes
 for all four supported lengths, an unsupported-length transition test, and a

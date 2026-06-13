@@ -16,18 +16,20 @@ const (
 type ChannelMode int
 
 const (
-	ModeInvalid     ChannelMode = -1
-	ModeUnknown     ChannelMode = 0
-	Mode1           ChannelMode = 1
-	Mode2           ChannelMode = 2
-	Mode1_2         ChannelMode = 3
-	Mode1_2_1       ChannelMode = 4
-	Mode1_2_2       ChannelMode = 5
-	Mode1_2_2_1     ChannelMode = 6
-	Mode1_2_2_2_1   ChannelMode = 7
-	Mode6_1         ChannelMode = 11
-	Mode7_1Back     ChannelMode = 12
-	Mode7_1TopFront ChannelMode = 14
+	ModeInvalid         ChannelMode = -1
+	ModeUnknown         ChannelMode = 0
+	Mode1               ChannelMode = 1
+	Mode2               ChannelMode = 2
+	Mode1_2             ChannelMode = 3
+	Mode1_2_1           ChannelMode = 4
+	Mode1_2_2           ChannelMode = 5
+	Mode1_2_2_1         ChannelMode = 6
+	Mode1_2_2_2_1       ChannelMode = 7
+	Mode6_1             ChannelMode = 11
+	Mode7_1Back         ChannelMode = 12
+	Mode7_1TopFront     ChannelMode = 14
+	Mode7_1RearSurround ChannelMode = 33
+	Mode7_1FrontCenter  ChannelMode = 34
 )
 
 const (
