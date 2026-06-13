@@ -172,6 +172,13 @@ Tests verify active-line preparation, high/low PE branches, inactive and
 intensity-book transitions, malformed controls, and zero steady-state
 allocation.
 
+The FDK AAC-LC quantization subset is covered with mechanically derived ROM
+table checksums and source-derived vectors for `FDKaacEnc_quantizeLines`,
+`FDKaacEnc_invQuantizeLines`, `FDKaacEnc_QuantizeSpectrum`,
+`FDKaacEnc_calcSfbDist`, and `FDKaacEnc_calcSfbQuantEnergyAndDist`. Tests
+verify grouped quantization, quantized energy/distortion feedback, invalid
+controls, and zero steady-state allocation.
+
 ## Regenerate
 
 ```sh
