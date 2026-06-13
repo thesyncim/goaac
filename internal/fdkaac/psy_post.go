@@ -296,6 +296,8 @@ func psyPostGroupShort(
 		}
 	}
 
+	clear(out.SfbMinSnrLdData[:])
+	copy(out.SfbMinSnrLdData[:noSfb], groupedSfbMinSnrLdData[:noSfb])
 	clear(out.SfbOffsets[:])
 	copy(out.SfbOffsets[:], data.GroupedSfbOffset[:])
 }
@@ -316,6 +318,8 @@ func psyPostPrepareLong(data *PsyData, conf *PsyConfiguration, out *PsyOutChanne
 	*maxSfbPerGroup = maxInt(minInt(5, data.SfbActive), sfb+1)
 
 	copy(out.SfbEnergyLdData[:data.SfbActive], data.SfbEnergyLdData.Long[:data.SfbActive])
+	clear(out.SfbMinSnrLdData[:])
+	copy(out.SfbMinSnrLdData[:data.SfbActive], conf.SfbMinSnrLdData[:data.SfbActive])
 	clear(out.SfbOffsets[:])
 	copy(out.SfbOffsets[:], conf.SfbOffset[:])
 	LdDataVector(data.SfbThreshold.Long[:], out.SfbThresholdLdData[:], data.SfbActive)

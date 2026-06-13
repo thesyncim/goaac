@@ -67,6 +67,24 @@ path that means byte-identical ADTS/raw AAC output for fixed inputs and encoder
 settings. Decode-roundtrip PCM hashes are an additional quality guard, not a
 substitute for encoder parity.
 
+## Current Go Encoder Surface
+
+The current public encoder API is mono/stereo AAC-LC only. It accepts one
+1024-sample interleaved S16 PCM frame per call and appends into caller-owned
+buffers:
+
+- `NewEncoder` initializes the pure-Go FDK-shaped encoder state.
+- `EncodeRawInto` emits one raw AAC access unit.
+- `EncodeADTSFrameInto` wraps that raw access unit in a CRC-less ADTS header.
+- `AppendRTMPSequenceHeader` and `EncodeRTMPMessageInto` emit FLV/RTMP AAC
+  audio-message bodies.
+
+The raw frame path initializes transport static bits to zero, so raw AAC access
+units used by RTMP/FLV muxers are not budgeted as if an ADTS header were present.
+The current vectors prove deterministic pure-Go output and zero allocations on
+the initialized encode hot path. They do not yet claim byte identity against the
+native FDK oracle for complete audio programs.
+
 ## License Note
 
 The FDK-AAC software license grants copyright redistribution rights but does not
@@ -104,6 +122,7 @@ do not claim patent coverage from this repository.
 | `libAACenc/src/bitenc.cpp:FDKaacEnc_encodeGlobalGain`, `FDKaacEnc_encodeIcsInfo`, `FDKaacEnc_encodeSectionData`, `FDKaacEnc_encodeScaleFactorData`, `FDKaacEnc_encodeSpectralData`, `FDKaacEnc_encodeMSInfo`, `FDKaacEnc_encodeTnsDataPresent`, `FDKaacEnc_encodeTnsData`, `FDKaacEnc_encodePulseData`, `FDKaacEnc_encodeGainControlData`, `FDKaacEnc_writeExtensionPayload`, `FDKaacEnc_writeDataStreamElement`, `FDKaacEnc_writeExtensionData` | `internal/fdkaac/bitenc.go` | Source-derived byte vectors for global gain, long/short ICS, section data, scalefactor/noise data, spectral payloads, MS masks, TNS present/data payloads, one-bit pulse/gain-control placeholders, raw extension payloads, GA fill elements, DSE payloads, ER/ELD extension branches, combined long channel-payload sequence, invalid transition tests, and zero-allocation guards under the `internal/fdkaac` wasm test binary. |
 | `libFDK/src/FDK_tools_rom.cpp:getBitstreamElementList`; `libAACenc/src/bitenc.cpp:FDKaacEnc_ChannelElementWrite` AAC-LC normal syntax and `minCnt` paths | `internal/fdkaac/bitenc.go:FDKaacEncGetBitstreamElementList`, `FDKaacEncChannelElementWrite` | Source-derived sequence-table pins for AAC-LC SCE/CPE common-window branches, SCE and CPE byte vectors over real section/scalefactor/spectral payload helpers, minimum static-count vectors for SCE TNS suppression and CPE MS suppression, malformed count/error controls, invalid element/control transitions, and zero-allocation guard under the `internal/fdkaac` wasm test binary. |
 | `libAACenc/src/bitenc.cpp:FDKaacEnc_WriteBitstream`, `FDKaacEnc_ByteAlignment`; `libAACenc/src/qc_data.h:QC_OUT_EXTENSION` storage | `internal/fdkaac/bitenc.go:FDKaacEncWriteBitstream`, `FDKaacEncByteAlignment`; `internal/fdkaac/adj_thr.go:QCOut.Extension`, `QCOutElement.Extension` | Source-shaped SCE raw-AU byte vector, element/global extension ordering vector, written-bit mismatch controls, invalid element/control transitions, no-cgo compile gate, and zero-allocation guard. |
+| `libAACenc/src/aacenc.cpp:FDKaacEnc_EncodeFrame` one-subframe AAC-LC core loop | `internal/fdkaac/encode_frame.go:FDKaacEncInitRawFrameState`, `FDKaacEncEncodeFrameRaw`; `encoder.go:NewEncoder`, `EncodeRawInto`, `EncodeADTSFrameInto`, `EncodeRTMPMessageInto` | Source-shaped stereo frame vector through psy, QC prepare, QC main, fill/final bit accounting, bit-reservoir update, and raw-AU bitstream write; public raw/ADTS/RTMP wrapper SHA-256 vectors over the same access unit; invalid state/input controls; no-cgo compile gate; zero-allocation guards for initialized internal and public raw encode hot paths. |
 | `libAACenc/src/psy_main.cpp:FDKaacEnc_PsyNew`, `FDKaacEnc_PsyOutNew`, `FDKaacEnc_psyInit`, `FDKaacEnc_psyInitStates`; `libAACenc/src/psy_main.h:PSY_INTERNAL`, `PSY_ELEMENT`, `PSY_DYNAMIC`; `libAACenc/src/psy_data.h:PSY_STATIC`, `PSY_DATA`; `libAACenc/src/interface.h:PSY_OUT` | `internal/fdkaac/psy_lifecycle.go:PsyInternal`, `PsyElement`, `PsyStatic`, `PsyDynamic`, `PsyOut`, `FDKaacEncPsyNew`, `FDKaacEncPsyOutNew`, `FDKaacEncPsyInit`, `FDKaacEncPsyInitStates` | Source-shaped fixed-state vectors for psy owner/output allocation, LC and low-delay block-switch init states, 5.1 static/output channel linking, TNS/PNS dynamic-state ownership, FDK's preserved static-channel reset threshold, stereo reconfiguration offset branch, malformed controls, no-cgo compile gate, and zero-allocation guard. |
 | `libAACenc/src/psy_main.cpp:FDKaacEnc_psyMainInit`; `libSYS/include/FDK_audio.h:AC_SBR_PRESENT` | `internal/fdkaac/psy_lifecycle.go:FDKaacEncPsyMainInit`; `internal/fdkaac/bitenc.go:acSBRPresent` | Source-shaped AAC-LC stereo vectors comparing `FDKaacEncPsyMainInit` against the direct long/short psy, TNS, PNS, and pre-echo initialization sequence; init-flag reset/preserve vectors; disabled-tool vectors; unsupported-sample-rate and malformed-control tests; no-cgo compile gate; and zero-allocation guard. |
 | `libAACenc/src/psy_main.cpp:FDKaacEnc_psyMain` | `internal/fdkaac/psy_main.go:FDKaacEncPsyMain`; `internal/fdkaac/bitenc.go:AACEncUnsupportedFilterbank` | Source-shaped AAC-LC psychoacoustic runtime vectors covering stereo long-window analysis, real block-switch transition into `START_WINDOW`, MDCT handoff through QC-owned spectrum buffers, lowpass clearing, input-history rotation, energy normalization, TNS/tonality, threshold/group/PNS/intensity/MS/output chaining, malformed controls, no-cgo compile gate, and zero-allocation guard. |

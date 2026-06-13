@@ -18,6 +18,7 @@ type PsyOutChannel struct {
 	SfbEnergy          [maxGroupedSFB]FixpDBL
 	SfbEnergyLdData    [maxGroupedSFB]FixpDBL
 	SfbThresholdLdData [maxGroupedSFB]FixpDBL
+	SfbMinSnrLdData    [maxGroupedSFB]FixpDBL
 	SfbSpreadEnergy    [maxGroupedSFB]FixpDBL
 }
 

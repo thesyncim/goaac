@@ -1,10 +1,12 @@
 # goaac
 
-`goaac` is a pure-Go AAC-LC decoder package. The decoder core is a source-shaped
-Go translation of FAAD2 `2.11.2`, generated from the pinned C source and wrapped
-with a small Go API for ADTS and raw AAC-LC access units.
+`goaac` is a pure-Go AAC-LC package. The decoder core is a source-shaped Go
+translation of FAAD2 `2.11.2`; the encoder track is a source-shaped FDK-AAC
+`v2.0.3` port with a Go API for mono/stereo AAC-LC raw access units, ADTS
+frames, and RTMP/FLV AAC audio-message bodies.
 
-The runtime path does not link to FFmpeg, FAAD2, or any other native library.
+The runtime path does not link to FFmpeg, FAAD2, FDK-AAC, or any other native
+library.
 Generated decoder files are currently checked in for `darwin/arm64` and
 `linux/arm64`; other targets fail with an explicit unsupported-target error.
 
@@ -32,6 +34,56 @@ fmt.Println(cfg.SampleRate, cfg.Channels, len(pcm))
 ```
 
 The returned PCM is interleaved signed 16-bit native-endian samples.
+
+## Encode AAC-LC
+
+The encoder accepts one 1024-sample interleaved S16 PCM frame per call. Use raw
+AAC access units for MP4/FLV/RTMP muxers and ADTS when you need self-framed AAC:
+
+```go
+enc, err := aac.NewEncoder(aac.EncoderOptions{
+    Config: aac.Config{
+        ObjectType:    aac.AOTAACLC,
+        SampleRate:    48000,
+        ChannelConfig: 2,
+    },
+    BitRate:   128000,
+    Transport: aac.TransportRaw,
+})
+if err != nil {
+    panic(err)
+}
+defer enc.Close()
+
+var au []byte
+au, info, err := enc.EncodeRawInto(au[:0], pcm1024InterleavedS16)
+if err != nil {
+    panic(err)
+}
+fmt.Println(info.PayloadBytes)
+```
+
+For ADTS:
+
+```go
+enc, err := aac.NewEncoder(aac.EncoderOptions{
+    Config:    aac.Config{ObjectType: aac.AOTAACLC, SampleRate: 48000, ChannelConfig: 2},
+    BitRate:   128000,
+    Transport: aac.TransportADTS,
+})
+frame, info, err := enc.EncodeADTSFrameInto(nil, pcm1024InterleavedS16)
+fmt.Println(len(frame), info.ADTSHeaderBytes)
+```
+
+For RTMP/FLV AAC audio payloads, send one sequence header, then raw messages:
+
+```go
+seq, err := enc.AppendRTMPSequenceHeader(nil)
+msg, info, err := enc.EncodeRTMPMessageInto(nil, pcm1024InterleavedS16)
+_ = seq
+_ = msg
+_ = info
+```
 
 ## Decoder API
 
@@ -124,12 +176,18 @@ CGO_ENABLED=0 go vet -unsafeptr=false -unreachable=false ./...
 CGO_ENABLED=0 go build ./cmd/goaac-decode
 ```
 
-The normal test suite checks committed ADTS AAC-LC vectors in `testdata/aaclc`
+The normal test suite checks committed ADTS AAC-LC decoder vectors in
+`testdata/aaclc`
 against S16 PCM SHA-256 values generated from the pinned FAAD2 reference. The
 same fixtures are decoded through ADTS, raw access-unit, and RTMP/FLV AAC tag
 paths. The live integration test can also synthesize a fresh fixture with
 `ffmpeg`, build a small native FAAD2 oracle from `third_party/faad2`, and
 byte-compare the Go decoder output against it.
+
+Encoder tests pin the pure-Go FDK-shaped raw access-unit SHA-256 for a
+deterministic stereo S16 frame, verify ADTS and RTMP/FLV wrappers carry the same
+payload, check invalid control transitions, and enforce zero allocations on the
+initialized raw encode hot path.
 
 To regenerate the committed vectors:
 
