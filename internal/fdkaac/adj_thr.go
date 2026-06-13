@@ -1011,6 +1011,26 @@ func FDKaacEncAllowMoreHoles(
 	}
 }
 
+func FDKaacEncResetAHFlags(
+	ahFlag *[2][maxGroupedSFB]uint8,
+	psyOutChannel []*PsyOutChannel,
+	nChannels int,
+) {
+	checkResetAHFlagsInputs(ahFlag, psyOutChannel, nChannels)
+
+	for ch := 0; ch < nChannels; ch++ {
+		psyCh := psyOutChannel[ch]
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				if ahFlag[ch][idx] == AvoidHoleActive {
+					ahFlag[ch][idx] = AvoidHoleInactive
+				}
+			}
+		}
+	}
+}
+
 func FDKaacEncBitresCalcBitFac(
 	bitresBits int,
 	maxBitresBits int,
@@ -1607,6 +1627,28 @@ func checkAllowMoreHolesInputs(
 func checkAllowMoreHolesPEBand(pe FixpDBL) {
 	if pe < 0 {
 		panic("fdkaac: invalid allow-more-holes PE band")
+	}
+}
+
+func checkResetAHFlagsInputs(
+	ahFlag *[2][maxGroupedSFB]uint8,
+	psyOutChannel []*PsyOutChannel,
+	nChannels int,
+) {
+	if ahFlag == nil {
+		panic("fdkaac: nil AH reset flags")
+	}
+	if nChannels <= 0 || nChannels > 2 {
+		panic("fdkaac: invalid AH reset channel count")
+	}
+	if len(psyOutChannel) < nChannels {
+		panic("fdkaac: short AH reset psy inputs")
+	}
+	for ch := 0; ch < nChannels; ch++ {
+		if psyOutChannel[ch] == nil {
+			panic("fdkaac: nil AH reset psy output")
+		}
+		checkPEChannelShape(psyOutChannel[ch])
 	}
 }
 

@@ -285,6 +285,11 @@ inactive-band PE clearing, lower-energy side-channel hole opening, low-energy
 high-band erasure, threshold replacement, no-op behavior, malformed controls,
 no-cgo compilation, and zero steady-state allocation.
 
+The FDK AAC-LC AH reset subset is covered with a source-shaped vector for
+`FDKaacEnc_resetAHFlags`. Tests verify `AH_ACTIVE` to `AH_INACTIVE` transitions
+inside active SFB ranges, inactive-band preservation, malformed controls,
+no-cgo compilation, and zero steady-state allocation.
+
 The FDK AAC-LC PE threshold-adjustment subset is covered with source-derived
 vectors for normalized Schur division, `FDKaacEnc_preparePe`,
 `FDKaacEnc_calcWeighting`, `FDKaacEnc_calcPe`, and `FDKaacEnc_peCalculation`.

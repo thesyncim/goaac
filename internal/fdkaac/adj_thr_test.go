@@ -625,6 +625,78 @@ func TestFDKaacEncAllowMoreHolesNoOp(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncResetAHFlagsVector(t *testing.T) {
+	psy0 := PsyOutChannel{
+		SfbCnt:             8,
+		SfbPerGroup:        4,
+		MaxSfbPerGroup:     3,
+		LastWindowSequence: LongWindow,
+	}
+	psy1 := PsyOutChannel{
+		SfbCnt:             8,
+		SfbPerGroup:        4,
+		MaxSfbPerGroup:     2,
+		LastWindowSequence: LongWindow,
+	}
+	for i := 0; i <= 8; i++ {
+		psy0.SfbOffsets[i] = i
+		psy1.SfbOffsets[i] = i
+	}
+	psy := [2]*PsyOutChannel{&psy0, &psy1}
+	ahFlag := [2][maxGroupedSFB]uint8{
+		{AvoidHoleActive, AvoidHoleNone, AvoidHoleActive, AvoidHoleActive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, AvoidHoleActive},
+		{AvoidHoleActive, AvoidHoleActive, AvoidHoleActive, AvoidHoleNone, AvoidHoleActive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleActive},
+	}
+
+	FDKaacEncResetAHFlags(&ahFlag, psy[:], 2)
+
+	want0 := [...]uint8{AvoidHoleInactive, AvoidHoleNone, AvoidHoleInactive, AvoidHoleActive, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone, AvoidHoleActive}
+	want1 := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleActive}
+	assertUint8Slice(t, "reset AH flags ch0", ahFlag[0][:8], want0[:])
+	assertUint8Slice(t, "reset AH flags ch1", ahFlag[1][:8], want1[:])
+}
+
+func TestFDKaacEncResetAHFlagsRejectsInvalid(t *testing.T) {
+	psy0 := PsyOutChannel{
+		SfbCnt:             8,
+		SfbPerGroup:        4,
+		MaxSfbPerGroup:     3,
+		LastWindowSequence: LongWindow,
+	}
+	for i := 0; i <= 8; i++ {
+		psy0.SfbOffsets[i] = i
+	}
+	psy := [1]*PsyOutChannel{&psy0}
+	var ahFlag [2][maxGroupedSFB]uint8
+
+	for _, tt := range []struct {
+		name string
+		fn   func()
+	}{
+		{"nil flags", func() { FDKaacEncResetAHFlags(nil, psy[:], 1) }},
+		{"bad channel count", func() { FDKaacEncResetAHFlags(&ahFlag, psy[:], 0) }},
+		{"short psy", func() { FDKaacEncResetAHFlags(&ahFlag, psy[:0], 1) }},
+		{"nil psy", func() {
+			bad := [1]*PsyOutChannel{nil}
+			FDKaacEncResetAHFlags(&ahFlag, bad[:], 1)
+		}},
+		{"bad band shape", func() {
+			bad := psy0
+			bad.SfbPerGroup = 3
+			FDKaacEncResetAHFlags(&ahFlag, []*PsyOutChannel{&bad}, 1)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		})
+	}
+}
+
 func TestFDKaacEncPECalculationRejectsInvalid(t *testing.T) {
 	peData, psy, qc, tools, state := buildAdjThrLongPatchCase()
 	for _, tt := range []struct {
@@ -1162,6 +1234,29 @@ func TestFDKaacEncAllowMoreHolesAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("allow-more-holes allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncResetAHFlagsAllocs(t *testing.T) {
+	psy0 := PsyOutChannel{
+		SfbCnt:             8,
+		SfbPerGroup:        4,
+		MaxSfbPerGroup:     3,
+		LastWindowSequence: LongWindow,
+	}
+	for i := 0; i <= 8; i++ {
+		psy0.SfbOffsets[i] = i
+	}
+	psy := [1]*PsyOutChannel{&psy0}
+	var ahFlag [2][maxGroupedSFB]uint8
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		ahFlag[0] = [maxGroupedSFB]uint8{AvoidHoleActive, AvoidHoleNone, AvoidHoleActive, AvoidHoleActive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, AvoidHoleActive}
+		FDKaacEncResetAHFlags(&ahFlag, psy[:], 1)
+		adjThrHashSink = uint64(ahFlag[0][0])<<8 | uint64(ahFlag[0][3])
+	})
+	if allocs != 0 {
+		t.Fatalf("reset AH flag allocations = %v, want 0", allocs)
 	}
 }
 
