@@ -273,6 +273,12 @@ threshold correction, PE-factor scratch, active-line LD scratch, AH-inactive
 clamp controls, malformed prepared-state controls, no-cgo compilation, and zero
 steady-state allocation.
 
+The FDK AAC-LC min-SNR PE-reduction subset is covered with a source-shaped
+vector for `FDKaacEnc_reduceMinSnr`. Tests verify descending high-SFB traversal,
+min-SNR relaxation to 1 dB, threshold replacement, PE-band replacement,
+global/channel PE updates, no-op behavior, malformed controls, no-cgo
+compilation, and zero steady-state allocation.
+
 The FDK AAC-LC PE threshold-adjustment subset is covered with source-derived
 vectors for normalized Schur division, `FDKaacEnc_preparePe`,
 `FDKaacEnc_calcWeighting`, `FDKaacEnc_calcPe`, and `FDKaacEnc_peCalculation`.

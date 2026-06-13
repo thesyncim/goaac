@@ -504,6 +504,54 @@ func TestFDKaacEncCorrectThresholdsVectors(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncReduceMinSnrVector(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var peData PEData
+	var ahFlag [2][maxGroupedSFB]uint8
+	fillReduceMinSnrCase(&psyStorage, &qcStorage, &peData, &ahFlag)
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+	redPeGlobal := 160
+
+	FDKaacEncReduceMinSnr(qc[:], psy[:], &peData, &ahFlag, 1, 90, &redPeGlobal)
+
+	gotTotals := [...]FixpDBL{peData.Pe, peData.PEChannelData[0].Pe, FixpDBL(redPeGlobal)}
+	wantTotals := [...]FixpDBL{76, 76, 76}
+	wantThreshold := [...]FixpDBL{-520000000, -500000000, -510000000, -320802114, -500000000, -505000000, -210802114, -340802114}
+	wantMinSnr := [...]FixpDBL{-90000000, -120000000, -150000000, snrLdFac, -70000000, -160000000, snrLdFac, snrLdFac}
+	wantSfbPe := [...]FixpDBL{720896, 1441792, 5242880, 1966080, 983040, 1638400, 983040, 2359296}
+	assertFixpDBLSlice(t, "reduce-min-SNR totals", gotTotals[:], wantTotals[:], 0xbe4f7b423a8dd959)
+	assertFixpDBLSlice(t, "reduce-min-SNR thresholds", qc[0].SfbThresholdLdData[:8], wantThreshold[:], 0xe05c86648ca3f4a1)
+	assertFixpDBLSlice(t, "reduce-min-SNR min-SNR", qc[0].SfbMinSnrLdData[:8], wantMinSnr[:], 0x05d1661497c1a708)
+	assertFixpDBLSlice(t, "reduce-min-SNR sfb PE", peData.PEChannelData[0].SfbPe[:8], wantSfbPe[:], 0x3391ec27ed897f9b)
+}
+
+func TestFDKaacEncReduceMinSnrNoOp(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var peData PEData
+	var ahFlag [2][maxGroupedSFB]uint8
+	fillReduceMinSnrCase(&psyStorage, &qcStorage, &peData, &ahFlag)
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+	redPeGlobal := 80
+	beforeThreshold := qcStorage.SfbThresholdLdData
+	beforePe := peData.PEChannelData[0].SfbPe
+
+	FDKaacEncReduceMinSnr(qc[:], psy[:], &peData, &ahFlag, 1, 90, &redPeGlobal)
+
+	if redPeGlobal != 80 {
+		t.Fatalf("no-op reduce-min-SNR PE = %d, want 80", redPeGlobal)
+	}
+	if qcStorage.SfbThresholdLdData != beforeThreshold {
+		t.Fatalf("no-op reduce-min-SNR threshold changed = %v, want %v", qcStorage.SfbThresholdLdData[:8], beforeThreshold[:8])
+	}
+	if peData.PEChannelData[0].SfbPe != beforePe {
+		t.Fatalf("no-op reduce-min-SNR PE bands changed = %v, want %v", peData.PEChannelData[0].SfbPe[:8], beforePe[:8])
+	}
+}
+
 func TestFDKaacEncPECalculationRejectsInvalid(t *testing.T) {
 	peData, psy, qc, tools, state := buildAdjThrLongPatchCase()
 	for _, tt := range []struct {
@@ -719,6 +767,31 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 			var emptyPE PEData
 			FDKaacEncCorrectThresholds(qc[:], psy[:], &emptyPE, &ahFlag, &thrExp, &correctScratch, 1, 0x18000000, 0, 1)
 		}},
+		{"nil reduce-min-SNR PE", func() {
+			redPeGlobal := 160
+			FDKaacEncReduceMinSnr(qc[:], psy[:], nil, &ahFlag, 1, 90, &redPeGlobal)
+		}},
+		{"nil reduce-min-SNR flags", func() {
+			redPeGlobal := 160
+			FDKaacEncReduceMinSnr(qc[:], psy[:], &peData, nil, 1, 90, &redPeGlobal)
+		}},
+		{"nil reduce-min-SNR total", func() {
+			FDKaacEncReduceMinSnr(qc[:], psy[:], &peData, &ahFlag, 1, 90, nil)
+		}},
+		{"negative reduce-min-SNR target", func() {
+			redPeGlobal := 160
+			FDKaacEncReduceMinSnr(qc[:], psy[:], &peData, &ahFlag, 1, -1, &redPeGlobal)
+		}},
+		{"negative reduce-min-SNR band PE", func() {
+			var badPsy PsyOutChannel
+			var badQC QCOutChannel
+			var badPE PEData
+			var badFlags [2][maxGroupedSFB]uint8
+			fillReduceMinSnrCase(&badPsy, &badQC, &badPE, &badFlags)
+			badPE.PEChannelData[0].SfbPe[3] = -1
+			redPeGlobal := 160
+			FDKaacEncReduceMinSnr([]*QCOutChannel{&badQC}, []*PsyOutChannel{&badPsy}, &badPE, &badFlags, 1, 90, &redPeGlobal)
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() {
@@ -903,6 +976,26 @@ func TestFDKaacEncCorrectThresholdsAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("correct-threshold allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncReduceMinSnrAllocs(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var peData PEData
+	var ahFlag [2][maxGroupedSFB]uint8
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		fillReduceMinSnrCase(&psyStorage, &qcStorage, &peData, &ahFlag)
+		redPeGlobal := 160
+		FDKaacEncReduceMinSnr(qc[:], psy[:], &peData, &ahFlag, 1, 90, &redPeGlobal)
+		adjThrSink = qcStorage.SfbThresholdLdData[6] + peData.PEChannelData[0].SfbPe[7] + FixpDBL(redPeGlobal)
+		adjThrHashSink = hashFixpDBL(qcStorage.SfbMinSnrLdData[:8])
+	})
+	if allocs != 0 {
+		t.Fatalf("reduce-min-SNR allocations = %v, want 0", allocs)
 	}
 }
 
@@ -1200,4 +1293,47 @@ func fillCorrectThresholdCase(
 	psyLocal := [1]*PsyOutChannel{psy}
 	qcLocal := [1]*QCOutChannel{qc}
 	FDKaacEncCalcThresholdExp(thrExp, qcLocal[:], psyLocal[:], 1)
+}
+
+func fillReduceMinSnrCase(
+	psy *PsyOutChannel,
+	qc *QCOutChannel,
+	peData *PEData,
+	ahFlag *[2][maxGroupedSFB]uint8,
+) {
+	*psy = PsyOutChannel{
+		SfbCnt:             8,
+		SfbPerGroup:        4,
+		MaxSfbPerGroup:     4,
+		LastWindowSequence: LongWindow,
+	}
+	*qc = QCOutChannel{}
+	*peData = PEData{Pe: 160}
+	peData.PEChannelData[0].Pe = 160
+	*ahFlag = [2][maxGroupedSFB]uint8{}
+	for i := 0; i <= 8; i++ {
+		psy.SfbOffsets[i] = i
+	}
+
+	threshold := [...]FixpDBL{-520000000, -500000000, -510000000, -530000000, -500000000, -505000000, -490000000, -540000000}
+	weighted := [...]FixpDBL{-300000000, -250000000, -280000000, -310000000, -260000000, -240000000, -200000000, -330000000}
+	minSnr := [...]FixpDBL{-90000000, -120000000, -150000000, -80000000, -70000000, -160000000, -110000000, -100000000}
+	nLines := [...]int{2, 3, 4, 20, 5, 6, 10, 24}
+	pe := [...]FixpDBL{
+		11 << peConstPartShift,
+		22 << peConstPartShift,
+		80 << peConstPartShift,
+		60 << peConstPartShift,
+		15 << peConstPartShift,
+		25 << peConstPartShift,
+		35 << peConstPartShift,
+		70 << peConstPartShift,
+	}
+	flags := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleInactive, AvoidHoleInactive}
+	copy(qc.SfbThresholdLdData[:], threshold[:])
+	copy(qc.SfbWeightedEnergyLdData[:], weighted[:])
+	copy(qc.SfbMinSnrLdData[:], minSnr[:])
+	copy(peData.PEChannelData[0].SfbNLines[:], nLines[:])
+	copy(peData.PEChannelData[0].SfbPe[:], pe[:])
+	copy(ahFlag[0][:], flags[:])
 }

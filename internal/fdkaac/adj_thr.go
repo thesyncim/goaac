@@ -92,6 +92,8 @@ const (
 
 	correctThreshLdShift FixpDBL = 0x0c000000
 	correctThreshMaxLd   FixpDBL = 0x28000000
+
+	reduceMinSnrMaxNLines = int(MaxValDBL>>uint(peConstPartShift-1)) / 3
 )
 
 var adjThrInvInt = [8]FixpDBL{
@@ -770,6 +772,76 @@ func FDKaacEncCorrectThresholds(
 	}
 }
 
+func FDKaacEncReduceMinSnr(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	peData *PEData,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	nChannels int,
+	desiredPe int,
+	redPeGlobal *int,
+) {
+	checkReduceMinSnrInputs(qcOutChannel, psyOutChannel, peData, ahFlag, nChannels, desiredPe, redPeGlobal)
+
+	newGlobalPe := *redPeGlobal
+	if newGlobalPe <= desiredPe {
+		return
+	}
+
+	globalMaxSfb := 0
+	for ch := 0; ch < nChannels; ch++ {
+		globalMaxSfb = maxInt(globalMaxSfb, psyOutChannel[ch].MaxSfbPerGroup)
+	}
+
+	for newGlobalPe > desiredPe {
+		globalMaxSfb--
+		if globalMaxSfb < 0 {
+			break
+		}
+
+		for ch := 0; ch < nChannels; ch++ {
+			qcCh := qcOutChannel[ch]
+			psyCh := psyOutChannel[ch]
+			peChanData := &peData.PEChannelData[ch]
+
+			if globalMaxSfb < psyCh.MaxSfbPerGroup {
+				deltaPe := FixpDBL(0)
+
+				for sfb := globalMaxSfb; sfb < psyCh.SfbCnt; sfb += psyCh.SfbPerGroup {
+					if peChanData.SfbPe[sfb] < 0 ||
+						peChanData.SfbNLines[sfb] < 0 ||
+						peChanData.SfbNLines[sfb] > reduceMinSnrMaxNLines {
+						panic("fdkaac: invalid reduce-min-SNR PE band")
+					}
+
+					if ahFlag[ch][sfb] != AvoidHoleNone &&
+						qcCh.SfbMinSnrLdData[sfb] < snrLdFac &&
+						qcCh.SfbWeightedEnergyLdData[sfb] > qcCh.SfbThresholdLdData[sfb]-snrLdFac {
+						qcCh.SfbMinSnrLdData[sfb] = snrLdFac
+						qcCh.SfbThresholdLdData[sfb] = qcCh.SfbWeightedEnergyLdData[sfb] + snrLdFac
+
+						deltaPe -= peChanData.SfbPe[sfb]
+						peChanData.SfbPe[sfb] = FixpDBL((3 * peChanData.SfbNLines[sfb]) << (peConstPartShift - 1))
+						deltaPe += peChanData.SfbPe[sfb]
+					}
+				}
+
+				deltaPeInt := int(deltaPe >> peConstPartShift)
+				peData.Pe += FixpDBL(deltaPeInt)
+				peChanData.Pe += FixpDBL(deltaPeInt)
+				newGlobalPe += deltaPeInt
+			}
+
+			if newGlobalPe <= desiredPe {
+				*redPeGlobal = newGlobalPe
+				return
+			}
+		}
+	}
+
+	*redPeGlobal = newGlobalPe
+}
+
 func FDKaacEncBitresCalcBitFac(
 	bitresBits int,
 	maxBitresBits int,
@@ -1290,6 +1362,30 @@ func checkCorrectThresholdInputs(
 	}
 	if redValM < 0 || redValE < -DfractBits || redValE > DfractBits {
 		panic("fdkaac: invalid correct-threshold reduction value")
+	}
+}
+
+func checkReduceMinSnrInputs(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	peData *PEData,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	nChannels int,
+	desiredPe int,
+	redPeGlobal *int,
+) {
+	checkThresholdAdjustmentInputs(qcOutChannel, psyOutChannel, nChannels)
+	if peData == nil {
+		panic("fdkaac: nil reduce-min-SNR PE data")
+	}
+	if ahFlag == nil {
+		panic("fdkaac: nil reduce-min-SNR avoid-hole flags")
+	}
+	if redPeGlobal == nil {
+		panic("fdkaac: nil reduce-min-SNR PE total")
+	}
+	if desiredPe < 0 || *redPeGlobal < 0 {
+		panic("fdkaac: invalid reduce-min-SNR PE target")
 	}
 }
 
