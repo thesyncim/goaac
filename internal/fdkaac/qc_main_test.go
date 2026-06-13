@@ -321,6 +321,67 @@ func TestFDKaacEncPrepareBitDistributionVector(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncGetMinimalStaticBitDemandVector(t *testing.T) {
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var psyElement PsyOutElement
+	var qcOut QCOut
+	fillQCCrashRecoveryCase(&psy, &qc, &psyElement, &qcOut)
+
+	cm := ChannelMapping{NElements: 2}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+	cm.ElInfo[1] = ElementInfo{ElType: idDSE}
+	psyElements := [2]*PsyOutElement{&psyElement, nil}
+
+	bits, errCode := FDKaacEncGetMinimalStaticBitDemand(&cm, psyElements[:])
+	if errCode != AACEncOK {
+		t.Fatalf("minimal static demand error = %#x, want OK", errCode)
+	}
+	if bits != 29 {
+		t.Fatalf("minimal static demand = %d, want 29", bits)
+	}
+}
+
+func TestFDKaacEncPrepareBitDistributionLowReservoirMinimalStaticVector(t *testing.T) {
+	var state AdjThrState
+	FDKaacEncInitBitresState(&state)
+	elementState := buildBitresElementWithHistory(0, -1)
+	state.AdjThrStateElem[0] = &elementState
+
+	psy := PsyOutChannel{LastWindowSequence: LongWindow, WindowShape: WindowShapeKBD}
+	psyElement := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{&psy}}
+	qcElement := QCOutElement{PEData: PEData{Pe: 10}}
+	qcOut := QCOut{StaticBits: 96}
+	cm := ChannelMapping{NElements: 1}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+	elBits := ElementBits{RelativeBitsEl: 0x40000000, BitResLevelEl: 0, MaxBitResBitsEl: 1200}
+	kernel := QCKernel{MaxBitsPerFrame: 2000, MaxBitFac: MaxValDBL, BitResMode: BitresModeFull}
+	psyElements := [1]*PsyOutElement{&psyElement}
+	qcOutFrames := [1]*QCOut{&qcOut}
+	var qcElements [1][maxChannelElements]*QCOutElement
+	qcElements[0][0] = &qcElement
+	elementBits := [maxChannelElements]*ElementBits{&elBits}
+
+	result, errCode := FDKaacEncPrepareBitDistribution(&kernel, &state, psyElements[:], qcOutFrames[:], qcElements[:], &cm, elementBits[:], 40)
+	if errCode != AACEncOK {
+		t.Fatalf("low-reservoir prepare error = %#x, want OK", errCode)
+	}
+	if got := [...]int{
+		result.TotalAvailableBits,
+		result.AvgTotalDynBits,
+		result.DistributedBits,
+		result.DistributedElements,
+		result.TotalGrantedPeCorr,
+		qcOut.GrantedDynBits,
+		qcOut.MaxDynBits,
+		qcElement.GrantedDynBits,
+		qcElement.GrantedPe,
+		qcElement.GrantedPeCorr,
+	}; got != [...]int{40, 0, -56, 1, 0, -56, 1904, -56, 0, 0} {
+		t.Fatalf("low-reservoir prepare vector = %v", got)
+	}
+}
+
 func TestFDKaacEncQCMainQuantizationDecisionVectors(t *testing.T) {
 	for _, tt := range []struct {
 		name                   string

@@ -309,6 +309,52 @@ func TestFDKaacEncChannelElementWriteStaticDryRunVector(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncChannelElementWriteMinCountVectors(t *testing.T) {
+	_, psy := buildLongChannelElementCase(t)
+	psy.TNSInfo = longTNS3BitCase()
+	element := ElementInfo{ElType: idSCE, InstanceTag: 2}
+	psyElement := PsyOutElement{}
+	psyChannels := []*PsyOutChannel{psy}
+
+	normalBits, errCode := FDKaacEncChannelElementWrite(
+		nil, &element, nil, &psyElement, psyChannels,
+		0, aotAACLC, -1, 0,
+	)
+	if errCode != AACEncOK {
+		t.Fatalf("normal static dry-run error = %#x, want OK", errCode)
+	}
+	if normalBits != 54 {
+		t.Fatalf("normal static dry-run bits = %d, want 54", normalBits)
+	}
+
+	minBits, errCode := FDKaacEncChannelElementWrite(
+		nil, &element, nil, &psyElement, psyChannels,
+		0, aotAACLC, -1, 1,
+	)
+	if errCode != AACEncOK {
+		t.Fatalf("minimum static count error = %#x, want OK", errCode)
+	}
+	if minBits != 29 {
+		t.Fatalf("minimum static bits = %d, want 29", minBits)
+	}
+
+	_, psy0 := buildLongChannelElementCase(t)
+	_, psy1 := buildLongChannelElementCase(t)
+	cpe := ElementInfo{ElType: idCPE, InstanceTag: 5}
+	cpePsy := PsyOutElement{CommonWindow: 1, ToolsInfo: ToolsInfo{MsDigest: MsMaskSome}}
+	copy(cpePsy.ToolsInfo.MsMask[:], []int{1, 0, 1, 0, 0, 1, 0, 0})
+	cpeBits, errCode := FDKaacEncChannelElementWrite(
+		nil, &cpe, nil, &cpePsy, []*PsyOutChannel{psy0, psy1},
+		0, aotAACLC, -1, 1,
+	)
+	if errCode != AACEncOK {
+		t.Fatalf("CPE minimum static count error = %#x, want OK", errCode)
+	}
+	if cpeBits != 43 {
+		t.Fatalf("CPE minimum static bits = %d, want 43", cpeBits)
+	}
+}
+
 func TestFDKaacEncChannelElementWriteCPECommonWindowVector(t *testing.T) {
 	qc0, psy0 := buildLongChannelElementCase(t)
 	qc1, psy1 := buildLongChannelElementCase(t)
@@ -559,6 +605,16 @@ func TestFDKaacEncBitencRejectsInvalid(t *testing.T) {
 			_, psy := buildLongChannelElementCase(t)
 			element := ElementInfo{ElType: idSCE, InstanceTag: 0}
 			FDKaacEncChannelElementWrite(&bs, &element, nil, &PsyOutElement{}, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 0)
+		}},
+		{"invalid minimum count", func() {
+			_, psy := buildLongChannelElementCase(t)
+			element := ElementInfo{ElType: idSCE, InstanceTag: 0}
+			FDKaacEncChannelElementWrite(nil, &element, nil, &PsyOutElement{}, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 2)
+		}},
+		{"minimum count with bitstream", func() {
+			_, psy := buildLongChannelElementCase(t)
+			element := ElementInfo{ElType: idSCE, InstanceTag: 0}
+			FDKaacEncChannelElementWrite(&bs, &element, nil, &PsyOutElement{}, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 1)
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

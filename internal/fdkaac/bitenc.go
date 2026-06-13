@@ -717,21 +717,32 @@ func FDKaacEncChannelElementWrite(
 		psyCh := psyOutChannel[ch]
 		var qcCh *QCOutChannel
 		var sectionData *SectionData
+		var tnsInfo *TNSInfo
 		chGlobalGain := 0
-		chBlockType := psyCh.LastWindowSequence
-		chMaxSfbPerGrp := psyCh.MaxSfbPerGroup
-		chSfbPerGrp := psyCh.SfbPerGroup
-		chSfbCnt := psyCh.SfbCnt
+		chBlockType := 0
+		chMaxSfbPerGrp := 0
+		chSfbPerGrp := 0
+		chSfbCnt := 0
 		chFirstScf := 0
-		if qcOutChannel != nil {
-			qcCh = qcOutChannel[ch]
-			sectionData = &qcCh.SectionData
-			chGlobalGain = qcCh.GlobalGain
-			chBlockType = sectionData.BlockType
-			chMaxSfbPerGrp = sectionData.MaxSfbPerGroup
-			chSfbPerGrp = sectionData.SfbPerGroup
-			chSfbCnt = sectionData.SfbCnt
-			chFirstScf = qcCh.Scf[sectionData.FirstScf]
+		if minCnt == 0 {
+			if qcOutChannel != nil {
+				qcCh = qcOutChannel[ch]
+				sectionData = &qcCh.SectionData
+				chGlobalGain = qcCh.GlobalGain
+				chBlockType = sectionData.BlockType
+				chMaxSfbPerGrp = sectionData.MaxSfbPerGroup
+				chSfbPerGrp = sectionData.SfbPerGroup
+				chSfbCnt = sectionData.SfbCnt
+				chFirstScf = qcCh.Scf[sectionData.FirstScf]
+			} else {
+				chSfbCnt = psyCh.SfbCnt
+				chSfbPerGrp = psyCh.SfbPerGroup
+				chMaxSfbPerGrp = psyCh.MaxSfbPerGroup
+			}
+			tnsInfo = &psyCh.TNSInfo
+		}
+		if qcOutChannel == nil {
+			chBlockType = psyCh.LastWindowSequence
 		}
 
 		switch item {
@@ -785,9 +796,9 @@ func FDKaacEncChannelElementWrite(
 		case rbdPulse:
 			bitDemand += FDKaacEncEncodePulseData(bitstream)
 		case rbdTNSDataPresent:
-			bitDemand += FDKaacEncEncodeTnsDataPresent(&psyCh.TNSInfo, chBlockType, bitstream)
+			bitDemand += FDKaacEncEncodeTnsDataPresent(tnsInfo, chBlockType, bitstream)
 		case rbdTNSData:
-			bitDemand += FDKaacEncEncodeTnsData(&psyCh.TNSInfo, chBlockType, bitstream)
+			bitDemand += FDKaacEncEncodeTnsData(tnsInfo, chBlockType, bitstream)
 		case rbdGainControlDataPresent:
 			bitDemand += FDKaacEncEncodeGainControlData(bitstream)
 		case rbdGainControlData:
@@ -1065,8 +1076,11 @@ func checkChannelElementWriteInputs(
 	if psyOutElement.CommonWindow != 0 && psyOutElement.CommonWindow != 1 {
 		panic("fdkaac: invalid common-window flag")
 	}
-	if minCnt != 0 {
-		panic("fdkaac: minimum channel-element count is not ported")
+	if minCnt > 1 {
+		panic("fdkaac: invalid minimum channel-element count")
+	}
+	if minCnt != 0 && bitstream != nil {
+		panic("fdkaac: minimum channel-element count cannot write bits")
 	}
 	if syntaxFlags&(acScalable|acER) != 0 {
 		panic("fdkaac: ER/scalable channel-element writer is not ported")
@@ -1090,14 +1104,16 @@ func checkChannelElementWriteInputs(
 		if psyOutChannel[ch] == nil {
 			panic("fdkaac: nil channel-element psy output")
 		}
-		if psyOutChannel[ch].SfbCnt <= 0 || psyOutChannel[ch].SfbCnt > maxGroupedSFB {
-			panic("fdkaac: invalid channel-element sfb count")
-		}
-		if psyOutChannel[ch].SfbPerGroup <= 0 || psyOutChannel[ch].SfbCnt%psyOutChannel[ch].SfbPerGroup != 0 {
-			panic("fdkaac: invalid channel-element sfb group")
-		}
-		if psyOutChannel[ch].MaxSfbPerGroup < 0 || psyOutChannel[ch].MaxSfbPerGroup > psyOutChannel[ch].SfbPerGroup {
-			panic("fdkaac: invalid channel-element max sfb")
+		if minCnt == 0 || qcOutChannel != nil {
+			if psyOutChannel[ch].SfbCnt <= 0 || psyOutChannel[ch].SfbCnt > maxGroupedSFB {
+				panic("fdkaac: invalid channel-element sfb count")
+			}
+			if psyOutChannel[ch].SfbPerGroup <= 0 || psyOutChannel[ch].SfbCnt%psyOutChannel[ch].SfbPerGroup != 0 {
+				panic("fdkaac: invalid channel-element sfb group")
+			}
+			if psyOutChannel[ch].MaxSfbPerGroup < 0 || psyOutChannel[ch].MaxSfbPerGroup > psyOutChannel[ch].SfbPerGroup {
+				panic("fdkaac: invalid channel-element max sfb")
+			}
 		}
 		if qcOutChannel == nil {
 			if !validPEWindowSequence(psyOutChannel[ch].LastWindowSequence) {

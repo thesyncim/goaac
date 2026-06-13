@@ -334,8 +334,9 @@ with source-shaped vectors for `FDKaacEnc_distributeElementDynBits`,
 `FDKaacEnc_BitResRedistribution`, and `FDKaacEnc_prepareBitDistribution`.
 Tests verify per-element dynamic-bit rounding compensation, one-subframe
 reservoir level redistribution, PE grant handoff through the existing
-bit-reservoir helper, low/high reservoir error returns, malformed controls,
-no-cgo compilation, and zero steady-state allocation.
+bit-reservoir helper, minimal static bit-demand accounting, the low-reservoir
+negative dynamic-grant transition, low/high reservoir error returns, malformed
+controls, no-cgo compilation, and zero steady-state allocation.
 
 The FDK AAC-LC QC one-frame control wrapper subset is covered with
 source-shaped vectors for `FDKaacEnc_QCMain` setup and post-quantization
@@ -349,7 +350,8 @@ The FDK AAC-LC bit-reservoir PE distribution subset is covered with
 source-derived vectors for `FDKaacEnc_bitresCalcBitFac`,
 `FDKaacEnc_DistributeBits`, and the high/low bit-reservoir PE-correction
 helpers. Tests verify long/short bit-factor transitions, full/reduced/disabled
-reservoir modes, malformed controls, no-cgo compilation, and zero steady-state
+reservoir modes, negative dynamic-grant zero-PE behavior, malformed controls,
+no-cgo compilation, and zero steady-state
 allocation.
 
 The FDK AAC-LC quantization subset is covered with mechanically derived ROM

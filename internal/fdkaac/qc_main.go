@@ -802,6 +802,26 @@ func FDKaacEncBitResRedistribution(qcKernel *QCKernel, cm *ChannelMapping, eleme
 	return AACEncOK
 }
 
+func FDKaacEncGetMinimalStaticBitDemand(cm *ChannelMapping, psyOutElement []*PsyOutElement) (int, int) {
+	checkMinimalStaticBitDemandInputs(cm, psyOutElement)
+
+	bitDemand := 0
+	for i := 0; i < cm.NElements; i++ {
+		elInfo := cm.ElInfo[i]
+		if !fdkaacEncIsAdjustableElement(elInfo.ElType) {
+			continue
+		}
+		nChannels := elInfo.NChannelsInEl
+		psyChannels := psyOutElement[i].PsyOutChannel[:nChannels]
+		minBits, errCode := FDKaacEncChannelElementWrite(nil, &elInfo, nil, psyOutElement[i], psyChannels, 0, aotAACLC, -1, 1)
+		if errCode != AACEncOK {
+			return bitDemand, errCode
+		}
+		bitDemand += minBits
+	}
+	return bitDemand, AACEncOK
+}
+
 func FDKaacEncPrepareBitDistribution(
 	qcKernel *QCKernel,
 	adjThrState *AdjThrState,
@@ -820,10 +840,13 @@ func FDKaacEncPrepareBitDistribution(
 	qcOut[0].MaxDynBits = (qcKernel.MaxBitsPerFrame &^ 7) - (qcOut[0].GlobalExtBits + qcOut[0].StaticBits + qcOut[0].ElementExtBits)
 
 	if qcOut[0].GrantedDynBits+qcKernel.BitResTot < 0 {
-		return result, AACEncBitresTooLow
-	}
-	if qcOut[0].GrantedDynBits < 0 {
-		return result, AACEncBitresTooLow
+		minStaticDemand, errCode := FDKaacEncGetMinimalStaticBitDemand(cm, psyOutElement)
+		if errCode != AACEncOK {
+			return result, errCode
+		}
+		if qcOut[0].GrantedDynBits+qcKernel.BitResTot < minStaticDemand-qcOut[0].StaticBits {
+			return result, AACEncBitresTooLow
+		}
 	}
 
 	FDKaacEncDistributeElementDynBits(qcElement[0][:], cm, elementBits, qcOut[0].GrantedDynBits)
@@ -1438,6 +1461,32 @@ func checkBitResRedistributionInputs(qcKernel *QCKernel, cm *ChannelMapping, ele
 		}
 		if elementBits[i].RelativeBitsEl < 0 {
 			panic("fdkaac: invalid bit-reservoir redistribution relative weight")
+		}
+	}
+}
+
+func checkMinimalStaticBitDemandInputs(cm *ChannelMapping, psyOutElement []*PsyOutElement) {
+	if cm == nil {
+		panic("fdkaac: nil minimal-static channel mapping")
+	}
+	if cm.NElements < 0 || cm.NElements > maxChannelElements || len(psyOutElement) < cm.NElements {
+		panic("fdkaac: invalid minimal-static element count")
+	}
+	for i := 0; i < cm.NElements; i++ {
+		elInfo := cm.ElInfo[i]
+		if !fdkaacEncIsAdjustableElement(elInfo.ElType) {
+			continue
+		}
+		if elInfo.NChannelsInEl != channelElementCount(elInfo.ElType) {
+			panic("fdkaac: invalid minimal-static channel count")
+		}
+		if psyOutElement[i] == nil {
+			panic("fdkaac: nil minimal-static psy element")
+		}
+		for ch := 0; ch < elInfo.NChannelsInEl; ch++ {
+			if psyOutElement[i].PsyOutChannel[ch] == nil {
+				panic("fdkaac: nil minimal-static psy channel")
+			}
 		}
 	}
 }

@@ -2409,7 +2409,7 @@ func checkDistributeBitsInputs(
 			panic("fdkaac: invalid bit distribution block type")
 		}
 	}
-	if peData.Pe < 0 || grantedDynBits < 0 || bitresBits < 0 || maxBitresBits < 0 || maxBitFac < 0 {
+	if peData.Pe < 0 || bitresBits < 0 || maxBitresBits < 0 || maxBitFac < 0 {
 		panic("fdkaac: invalid bit distribution level")
 	}
 	if bitResMode != BitresModeFull && bitResMode != BitresModeReduced && bitResMode != BitresModeDisabled {

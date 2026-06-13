@@ -395,6 +395,18 @@ func TestFDKaacEncDistributeBitsVectors(t *testing.T) {
 			want:          [8]int{0, 0, 180, 620, 0, -1, int(lowBitresCorrectionMin), 1},
 		},
 		{
+			name:          "full negative grant",
+			mode:          BitresModeFull,
+			nChannels:     1,
+			window:        [2]int{LongWindow, LongWindow},
+			pe:            320,
+			grantedDyn:    -56,
+			bitresBits:    0,
+			maxBitresBits: 1200,
+			element:       buildBitresElementWithHistory(0, -1),
+			want:          [8]int{0, 0, 180, 620, 0, -1, int(peCorrectionHalf), 1},
+		},
+		{
 			name:          "full short pair",
 			mode:          BitresModeFull,
 			nChannels:     2,
@@ -1476,8 +1488,8 @@ func TestFDKaacEncDistributeBitsRejectsInvalid(t *testing.T) {
 			bad := [1]*PsyOutChannel{&badPsy}
 			FDKaacEncDistributeBits(&state, &element, bad[:], &peData, 1, 0, 720, 500, 1200, MaxValDBL, BitresModeFull)
 		}},
-		{"negative grant", func() {
-			FDKaacEncDistributeBits(&state, &element, psy[:], &peData, 1, 0, -1, 500, 1200, MaxValDBL, BitresModeFull)
+		{"negative reservoir", func() {
+			FDKaacEncDistributeBits(&state, &element, psy[:], &peData, 1, 0, 720, -1, 1200, MaxValDBL, BitresModeFull)
 		}},
 		{"bad mode", func() {
 			FDKaacEncDistributeBits(&state, &element, psy[:], &peData, 1, 0, 720, 500, 1200, MaxValDBL, BitresMode(99))
