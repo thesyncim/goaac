@@ -193,6 +193,11 @@ type AdaptThresholdsToPeResult struct {
 	ReductionValueE int
 }
 
+type AdaptThresholdsVBRScratch struct {
+	AhFlag [2][maxGroupedSFB]uint8
+	ThrExp [2][maxGroupedSFB]FixpDBL
+}
+
 func FDKaacEncInitBitresState(state *AdjThrState) {
 	if state == nil {
 		panic("fdkaac: nil bit reservoir state")
@@ -680,6 +685,30 @@ func FDKaacEncReduceThresholdsCBR(
 			}
 		}
 	}
+}
+
+func FDKaacEncAdaptThresholdsVBR(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	toolsInfo *ToolsInfo,
+	adjThrStateElement *ATSElement,
+	scratch *AdaptThresholdsVBRScratch,
+	nChannels int,
+) {
+	checkAdaptThresholdsVBRInputs(qcOutChannel, psyOutChannel, toolsInfo, adjThrStateElement, scratch, nChannels)
+
+	FDKaacEncCalcThresholdExp(&scratch.ThrExp, qcOutChannel, psyOutChannel, nChannels)
+	FDKaacEncAdaptMinSnr(qcOutChannel, psyOutChannel, &adjThrStateElement.MinSNRAdaptParam, nChannels)
+	FDKaacEncInitAvoidHoleFlag(qcOutChannel, psyOutChannel, &scratch.AhFlag, toolsInfo, nChannels, &adjThrStateElement.AHParam)
+	FDKaacEncReduceThresholdsVBR(
+		qcOutChannel,
+		psyOutChannel,
+		&scratch.AhFlag,
+		&scratch.ThrExp,
+		nChannels,
+		adjThrStateElement.VBRQualFactor,
+		&adjThrStateElement.ChaosMeasureOld,
+	)
 }
 
 func FDKaacEncCalcChaosMeasure(psyOutChannel *PsyOutChannel, sfbFormFactorLdData []FixpDBL) FixpDBL {
@@ -1683,6 +1712,29 @@ func checkAdaptThresholdsToPeInputs(
 	}
 	if peData.Pe < 0 || peData.NActiveLines < 0 {
 		panic("fdkaac: invalid threshold-adaptation PE state")
+	}
+}
+
+func checkAdaptThresholdsVBRInputs(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	toolsInfo *ToolsInfo,
+	adjThrStateElement *ATSElement,
+	scratch *AdaptThresholdsVBRScratch,
+	nChannels int,
+) {
+	checkThresholdAdjustmentInputs(qcOutChannel, psyOutChannel, nChannels)
+	if toolsInfo == nil {
+		panic("fdkaac: nil VBR threshold-adaptation tools info")
+	}
+	if adjThrStateElement == nil {
+		panic("fdkaac: nil VBR threshold-adaptation state")
+	}
+	if scratch == nil {
+		panic("fdkaac: nil VBR threshold-adaptation scratch")
+	}
+	if adjThrStateElement.VBRQualFactor < 0 {
+		panic("fdkaac: invalid VBR threshold-adaptation quality")
 	}
 }
 

@@ -943,6 +943,9 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 	FDKaacEncInitMinSnrAdaptParam(&adaptState.MinSNRAdaptParam)
 	var adaptTools ToolsInfo
 	var adaptScratch AdaptThresholdsToPeScratch
+	adaptVBRState := ATSElement{AHParam: AHParam{ModifyMinSnr: 1}, VBRQualFactor: peCorrectionHalf, ChaosMeasureOld: vbrChaosHalf}
+	FDKaacEncInitMinSnrAdaptParam(&adaptVBRState.MinSNRAdaptParam)
+	var adaptVBRScratch AdaptThresholdsVBRScratch
 
 	for _, tt := range []struct {
 		name string
@@ -976,6 +979,20 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 			bad := adaptPE
 			bad.Pe = -1
 			FDKaacEncAdaptThresholdsToPeCBR(&bad, qc[:], psy[:], &adaptTools, &adaptState, &adaptScratch, 1, 120, 1)
+		}},
+		{"nil VBR adapt tools", func() {
+			FDKaacEncAdaptThresholdsVBR(qc[:], psy[:], nil, &adaptVBRState, &adaptVBRScratch, 1)
+		}},
+		{"nil VBR adapt state", func() {
+			FDKaacEncAdaptThresholdsVBR(qc[:], psy[:], &adaptTools, nil, &adaptVBRScratch, 1)
+		}},
+		{"nil VBR adapt scratch", func() {
+			FDKaacEncAdaptThresholdsVBR(qc[:], psy[:], &adaptTools, &adaptVBRState, nil, 1)
+		}},
+		{"negative VBR adapt quality", func() {
+			bad := adaptVBRState
+			bad.VBRQualFactor = -1
+			FDKaacEncAdaptThresholdsVBR(qc[:], psy[:], &adaptTools, &bad, &adaptVBRScratch, 1)
 		}},
 		{"nil reduction flags", func() { FDKaacEncReduceThresholdsCBR(qc[:], psy[:], nil, &thrExp, 1, 0x20000000, 0) }},
 		{"nil threshold exponent", func() { FDKaacEncReduceThresholdsCBR(qc[:], psy[:], &ahFlag, nil, 1, 0x20000000, 0) }},
@@ -1277,6 +1294,9 @@ func TestFDKaacEncVBRThresholdReductionAllocs(t *testing.T) {
 	var qcStorage QCOutChannel
 	var thrExp [2][maxGroupedSFB]FixpDBL
 	var ahFlag [2][maxGroupedSFB]uint8
+	var tools ToolsInfo
+	var state ATSElement
+	var scratch AdaptThresholdsVBRScratch
 	psy := [1]*PsyOutChannel{&psyStorage}
 	qc := [1]*QCOutChannel{&qcStorage}
 
@@ -1284,7 +1304,11 @@ func TestFDKaacEncVBRThresholdReductionAllocs(t *testing.T) {
 		fillVBRLongThresholdReductionCase(&psyStorage, &qcStorage, &thrExp, &ahFlag)
 		chaosOld := vbrChaosHalf
 		FDKaacEncReduceThresholdsVBR(qc[:], psy[:], &ahFlag, &thrExp, 1, peCorrectionHalf, &chaosOld)
-		adjThrSink = qcStorage.SfbThresholdLdData[0] + chaosOld + FDKaacEncCalcChaosMeasure(&psyStorage, qcStorage.SfbFormFactorLdData[:])
+		fillVBRLongThresholdReductionCase(&psyStorage, &qcStorage, &thrExp, &ahFlag)
+		state = ATSElement{AHParam: AHParam{ModifyMinSnr: 1}, VBRQualFactor: peCorrectionHalf, ChaosMeasureOld: vbrChaosHalf}
+		FDKaacEncInitMinSnrAdaptParam(&state.MinSNRAdaptParam)
+		FDKaacEncAdaptThresholdsVBR(qc[:], psy[:], &tools, &state, &scratch, 1)
+		adjThrSink = qcStorage.SfbThresholdLdData[0] + chaosOld + state.ChaosMeasureOld + scratch.ThrExp[0][0] + FDKaacEncCalcChaosMeasure(&psyStorage, qcStorage.SfbFormFactorLdData[:])
 		adjThrHashSink = uint64(ahFlag[0][3])
 	})
 	if allocs != 0 {
