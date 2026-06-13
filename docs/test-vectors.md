@@ -166,6 +166,12 @@ previous/next relevant-band linking, skipped `FDK_INT_MIN` bands, lazy
 `sfbConstPePart` cache-fill mutation, invalid transitions, and zero
 steady-state allocation.
 
+The FDK AAC-LC improve-SCF subset is covered with source-derived vectors for
+`FDKaacEnc_improveScf`. Tests verify accepted upward refinement, accepted
+downward refinement, minimum-scale stopping, dead-zone quantization,
+quantized-spectrum side effects, malformed controls, and zero steady-state
+allocation.
+
 The FDK AAC-LC line-PE subset is covered with source-derived vectors for
 `CalcLdInt`, `fMultI`, `FDKaacEnc_prepareSfbPe`, and `FDKaacEnc_calcSfbPe`.
 Tests verify active-line preparation, high/low PE branches, inactive and

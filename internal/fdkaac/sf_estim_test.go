@@ -181,6 +181,113 @@ func TestFDKaacEncCalcSpecPeDiffVectors(t *testing.T) {
 	assertFixpDBLSlice(t, "spec PE const part", constPart[:], wantConstPart[:], 0x2215c451354b2881)
 }
 
+func TestFDKaacEncImproveScfVectors(t *testing.T) {
+	spec := improveScfVectorSpec()
+	tests := []struct {
+		name          string
+		thresh        FixpDBL
+		scf           int
+		minScf        int
+		dz            int
+		wantBest      int
+		wantDist      FixpDBL
+		wantMinCalc   int
+		wantQuant     [7]int16
+		wantTmp       [7]int16
+		wantQuantHash uint64
+		wantTmpHash   uint64
+	}{
+		{
+			name:          "upward accepted under allowed distortion",
+			thresh:        -350000000,
+			scf:           -22,
+			minScf:        -24,
+			wantBest:      -21,
+			wantDist:      -402731731,
+			wantMinCalc:   -21,
+			wantQuant:     [...]int16{0, 0, 0, 0, 1, -2, 3},
+			wantTmp:       [...]int16{0, 0, 0, 0, 1, -2, 3},
+			wantQuantHash: 0xf4f4754f5f8670f2,
+			wantTmpHash:   0xf4f4754f5f8670f2,
+		},
+		{
+			name:          "downward accepted after noisy threshold",
+			thresh:        -420000000,
+			scf:           -20,
+			minScf:        -24,
+			wantBest:      -21,
+			wantDist:      -402731731,
+			wantMinCalc:   -21,
+			wantQuant:     [...]int16{0, 0, 0, 0, 1, -2, 3},
+			wantTmp:       [...]int16{0, 0, 0, 0, 1, -2, 3},
+			wantQuantHash: 0xf4f4754f5f8670f2,
+			wantTmpHash:   0xf4f4754f5f8670f2,
+		},
+		{
+			name:          "downward copy changes quantized band",
+			thresh:        -380000000,
+			scf:           -16,
+			minScf:        -20,
+			wantBest:      -17,
+			wantDist:      -352671313,
+			wantMinCalc:   -17,
+			wantQuant:     [...]int16{0, 0, 0, 0, 1, -1, 2},
+			wantTmp:       [...]int16{0, 0, 0, 0, 1, -1, 2},
+			wantQuantHash: 0x7bd72c1d68467362,
+			wantTmpHash:   0x7bd72c1d68467362,
+		},
+		{
+			name:          "minimum scalefactor stops downward search",
+			thresh:        -420000000,
+			scf:           -20,
+			minScf:        -20,
+			wantBest:      -20,
+			wantDist:      -373521274,
+			wantMinCalc:   -20,
+			wantQuant:     [...]int16{0, 0, 0, 0, 1, -2, 3},
+			wantTmp:       [...]int16{0, 0, 0, 0, 1, -1, 2},
+			wantQuantHash: 0xf4f4754f5f8670f2,
+			wantTmpHash:   0x7bd72c1d68467362,
+		},
+		{
+			name:          "dead-zone quantization path",
+			thresh:        -360000000,
+			scf:           -18,
+			minScf:        -21,
+			dz:            1,
+			wantBest:      -18,
+			wantDist:      -347292759,
+			wantMinCalc:   -19,
+			wantQuant:     [...]int16{0, 0, 0, 0, 1, -1, 2},
+			wantTmp:       [...]int16{0, 0, 0, 0, 1, -1, 2},
+			wantQuantHash: 0x7bd72c1d68467362,
+			wantTmpHash:   0x7bd72c1d68467362,
+		},
+	}
+
+	for _, tt := range tests {
+		var quant [7]int16
+		var quantTmp [7]int16
+		fillImproveScfQuant(quant[:], 77)
+		fillImproveScfQuant(quantTmp[:], -77)
+		dist := FixpDBL(123)
+		minCalc := 456
+
+		gotBest := FDKaacEncImproveScf(spec[:], quant[:], quantTmp[:], len(spec), tt.thresh, tt.scf, tt.minScf, &dist, &minCalc, tt.dz)
+		if gotBest != tt.wantBest {
+			t.Fatalf("%s best = %d, want %d", tt.name, gotBest, tt.wantBest)
+		}
+		if dist != tt.wantDist {
+			t.Fatalf("%s dist = %d, want %d", tt.name, dist, tt.wantDist)
+		}
+		if minCalc != tt.wantMinCalc {
+			t.Fatalf("%s minScfCalculated = %d, want %d", tt.name, minCalc, tt.wantMinCalc)
+		}
+		assertInt16Slice(t, tt.name+" quant", quant[:], tt.wantQuant[:], tt.wantQuantHash)
+		assertInt16Slice(t, tt.name+" temp quant", quantTmp[:], tt.wantTmp[:], tt.wantTmpHash)
+	}
+}
+
 func TestFDKaacEncCalcFormFactorRejectsInvalid(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -406,6 +513,49 @@ func TestFDKaacEncScfPeDiffRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncImproveScfRejectsInvalid(t *testing.T) {
+	spec := improveScfVectorSpec()
+	var quant [7]int16
+	var quantTmp [7]int16
+	var dist FixpDBL
+	var minCalc int
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{name: "negative width", fn: func() {
+			FDKaacEncImproveScf(spec[:], quant[:], quantTmp[:], -1, -350000000, -22, -24, &dist, &minCalc, 0)
+		}},
+		{name: "short spectrum", fn: func() {
+			FDKaacEncImproveScf(spec[:6], quant[:], quantTmp[:], len(spec), -350000000, -22, -24, &dist, &minCalc, 0)
+		}},
+		{name: "short quant", fn: func() {
+			FDKaacEncImproveScf(spec[:], quant[:6], quantTmp[:], len(spec), -350000000, -22, -24, &dist, &minCalc, 0)
+		}},
+		{name: "short temp quant", fn: func() {
+			FDKaacEncImproveScf(spec[:], quant[:], quantTmp[:6], len(spec), -350000000, -22, -24, &dist, &minCalc, 0)
+		}},
+		{name: "nil dist", fn: func() {
+			FDKaacEncImproveScf(spec[:], quant[:], quantTmp[:], len(spec), -350000000, -22, -24, nil, &minCalc, 0)
+		}},
+		{name: "nil min scalefactor", fn: func() {
+			FDKaacEncImproveScf(spec[:], quant[:], quantTmp[:], len(spec), -350000000, -22, -24, &dist, nil, 0)
+		}},
+	}
+
+	for _, tt := range tests {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		}()
+	}
+}
+
 func TestFDKaacEncCalcFormFactorAllocs(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -456,6 +606,25 @@ func TestFDKaacEncSingleScfPeAllocs(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncImproveScfAllocs(t *testing.T) {
+	spec := improveScfVectorSpec()
+	var quant [7]int16
+	var quantTmp [7]int16
+	var dist FixpDBL
+	var minCalc int
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		fillImproveScfQuant(quant[:], 77)
+		fillImproveScfQuant(quantTmp[:], -77)
+		best := FDKaacEncImproveScf(spec[:], quant[:], quantTmp[:], len(spec), -350000000, -22, -24, &dist, &minCalc, 0)
+		scfPeSink = dist + FixpDBL(best) + FixpDBL(minCalc)
+		scfPeHashSink = hashInt16AsInt(quant[:])
+	})
+	if allocs != 0 {
+		t.Fatalf("improve-scf allocations = %v, want 0", allocs)
+	}
+}
+
 func TestFDKaacEncScfPeDiffAllocs(t *testing.T) {
 	const min = fdkIntMin
 	scfOld := [...]int{12, min, 8, 11, min, 14, 18, min, 16, 20}
@@ -497,6 +666,24 @@ func fillLongFormFactorInput(qc *QCOutChannel, psy *PsyOutChannel) {
 	}
 	copy(qc.MdctSpectrum[:], spec[:])
 	copy(psy.SfbOffsets[:], offsets[:])
+}
+
+func improveScfVectorSpec() [7]FixpDBL {
+	return [...]FixpDBL{
+		0x00100000,
+		-0x00200000,
+		0x00800000,
+		-0x01000000,
+		0x04000000,
+		-0x08000000,
+		0x10000000,
+	}
+}
+
+func fillImproveScfQuant(x []int16, v int16) {
+	for i := range x {
+		x[i] = v
+	}
 }
 
 func fillShortFormFactorInput(qc *QCOutChannel, psy *PsyOutChannel) {

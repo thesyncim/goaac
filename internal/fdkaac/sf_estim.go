@@ -11,6 +11,8 @@ const peFac0375 = FixpDBL(0x30000000)
 const peSfbConstPart6p75 = FixpDBL(0x02c14050)
 const formFactorLdScale = FixpDBL(0x0c000000)
 const fdkIntMin = -1 << 31
+const upcountLimit = 1
+const distFactorLdData = FixpDBL(-10802114) // FDK FL2FXCONST_DBL(-0.0050301265), ld64(1/1.25).
 
 type QCOutChannel struct {
 	MdctSpectrum        [1024]FixpDBL
@@ -190,6 +192,76 @@ func FDKaacEncCalcSpecPeDiff(
 	return specPeDiff
 }
 
+func FDKaacEncImproveScf(
+	spec []FixpDBL,
+	quantSpec []int16,
+	quantSpecTmp []int16,
+	sfbWidth int,
+	threshLdData FixpDBL,
+	scf int,
+	minScf int,
+	distLdData *FixpDBL,
+	minScfCalculated *int,
+	dZoneQuantEnable int,
+) int {
+	checkImproveScfInputs(spec, quantSpec, quantSpecTmp, sfbWidth, distLdData, minScfCalculated)
+
+	scfBest := scf
+	sfbDistLdData := FDKaacEncCalcSfbDist(spec, quantSpec, sfbWidth, scf, dZoneQuantEnable)
+	*minScfCalculated = scf
+
+	if sfbDistLdData > threshLdData-distFactorLdData {
+		scfEstimated := scf
+		sfbDistBestLdData := sfbDistLdData
+		cnt := 0
+		for sfbDistLdData > threshLdData-distFactorLdData && cnt < upcountLimit {
+			cnt++
+			scf++
+			sfbDistLdData = FDKaacEncCalcSfbDist(spec, quantSpecTmp, sfbWidth, scf, dZoneQuantEnable)
+
+			if sfbDistLdData < sfbDistBestLdData {
+				scfBest = scf
+				sfbDistBestLdData = sfbDistLdData
+				copy(quantSpec[:sfbWidth], quantSpecTmp[:sfbWidth])
+			}
+		}
+
+		cnt = 0
+		scf = scfEstimated
+		sfbDistLdData = sfbDistBestLdData
+		for sfbDistLdData > threshLdData-distFactorLdData && cnt < 1 && scf > minScf {
+			cnt++
+			scf--
+			sfbDistLdData = FDKaacEncCalcSfbDist(spec, quantSpecTmp, sfbWidth, scf, dZoneQuantEnable)
+
+			if sfbDistLdData < sfbDistBestLdData {
+				scfBest = scf
+				sfbDistBestLdData = sfbDistLdData
+				copy(quantSpec[:sfbWidth], quantSpecTmp[:sfbWidth])
+			}
+			*minScfCalculated = scf
+		}
+		*distLdData = sfbDistBestLdData
+	} else {
+		sfbDistBestLdData := sfbDistLdData
+		sfbDistAllowedLdData := minFixpDBL(sfbDistLdData-distFactorLdData, threshLdData)
+		for cnt := 0; cnt < upcountLimit; cnt++ {
+			scf++
+			sfbDistLdData = FDKaacEncCalcSfbDist(spec, quantSpecTmp, sfbWidth, scf, dZoneQuantEnable)
+
+			if sfbDistLdData < sfbDistAllowedLdData {
+				*minScfCalculated = scfBest + 1
+				scfBest = scf
+				sfbDistBestLdData = sfbDistLdData
+				copy(quantSpec[:sfbWidth], quantSpecTmp[:sfbWidth])
+			}
+		}
+		*distLdData = sfbDistBestLdData
+	}
+
+	return scfBest
+}
+
 func checkFormFactorInputs(sfbFormFactorLdData []FixpDBL, psyOutChan *PsyOutChannel) {
 	if psyOutChan == nil {
 		panic("fdkaac: nil form-factor psy output")
@@ -282,5 +354,24 @@ func checkSpecPeDiffInputs(
 	if len(sfbEnergyLdData) < stopSfb || len(scfOld) < stopSfb || len(scfNew) < stopSfb ||
 		len(sfbConstPePart) < stopSfb || len(sfbFormFactorLdData) < stopSfb || len(sfbNRelevantLines) < stopSfb {
 		panic("fdkaac: short spec-pe diff data")
+	}
+}
+
+func checkImproveScfInputs(
+	spec []FixpDBL,
+	quantSpec []int16,
+	quantSpecTmp []int16,
+	sfbWidth int,
+	distLdData *FixpDBL,
+	minScfCalculated *int,
+) {
+	if sfbWidth < 0 {
+		panic("fdkaac: negative improve-scf width")
+	}
+	if len(spec) < sfbWidth || len(quantSpec) < sfbWidth || len(quantSpecTmp) < sfbWidth {
+		panic("fdkaac: short improve-scf data")
+	}
+	if distLdData == nil || minScfCalculated == nil {
+		panic("fdkaac: nil improve-scf output")
 	}
 }
