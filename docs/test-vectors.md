@@ -63,6 +63,13 @@ selection, MPEG/WAV/WG4 channel order, relative-bit shares, 7.1 aliases,
 per-element bitrate, max-bit budgets, LFE reservoir exclusion, malformed
 controls, no-cgo compilation, and zero steady-state allocation.
 
+The FDK `aacenc.cpp` encoder config and QC-budget setup subset is covered with
+source-shaped vectors for default config initialization, frame-bit and bitrate
+math, low/high bitrate limiting, ancillary-rate validation, CBR and VBR
+multi-element QC-budget construction, transport bit-reservoir signaling, and
+the handoff from prepared config into `FDKaacEnc_QCInit`. Tests also verify
+malformed controls, no-cgo compilation, and zero steady-state allocation.
+
 The FDK `SineTable512` ROM used by the 64/128/256/512-point radix FFT path is
 also locked by source-derived sample entries, an FNV-1a checksum, output hashes
 for all four supported lengths, an unsupported-length transition test, and a

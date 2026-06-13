@@ -37,6 +37,7 @@ const (
 	acScalable = 0x000008
 	acELD      = 0x000010
 	acER       = 0x000040
+	acERVCB11  = 0x000001
 	acERRVLC   = 0x000002
 	acERHCR    = 0x000004
 
@@ -59,20 +60,26 @@ const (
 	ExtSBRData      = 0x0d
 	ExtSBRDataCRC   = 0x0e
 
-	AACEncOK                     = 0x0000
-	AACEncUnknown                = 0x0002
-	AACEncUnsupportedBitrateMode = 0x3028
-	AACEncUnsupportedChannelConf = 0x30e0
-	AACEncQuantError             = 0x4020
-	AACEncWrittenBitsError       = 0x4040
-	AACEncBitresTooLow           = 0x40a0
-	AACEncBitresTooHigh          = 0x40a1
-	AACEncInvalidChannelBitrate  = 0x4100
-	AACEncUnsupportedAOT         = 0x3000
-	AACEncInvalidElementInfoType = 0x4120
-	AACEncWriteScalError         = 0x41e0
-	AACEncWriteSecError          = 0x4200
-	AACEncWriteSpecError         = 0x4220
+	AACEncOK                      = 0x0000
+	AACEncUnknown                 = 0x0002
+	AACEncInvalidHandle           = 0x2020
+	AACEncInvalidFrameLength      = 0x2080
+	AACEncUnsupportedBitrate      = 0x3020
+	AACEncUnsupportedBitrateMode  = 0x3028
+	AACEncUnsupportedAncBitrate   = 0x3040
+	AACEncUnsupportedERFormat     = 0x30a0
+	AACEncUnsupportedChannelConf  = 0x30e0
+	AACEncUnsupportedSamplingRate = 0x3100
+	AACEncQuantError              = 0x4020
+	AACEncWrittenBitsError        = 0x4040
+	AACEncBitresTooLow            = 0x40a0
+	AACEncBitresTooHigh           = 0x40a1
+	AACEncInvalidChannelBitrate   = 0x4100
+	AACEncUnsupportedAOT          = 0x3000
+	AACEncInvalidElementInfoType  = 0x4120
+	AACEncWriteScalError          = 0x41e0
+	AACEncWriteSecError           = 0x4200
+	AACEncWriteSpecError          = 0x4220
 )
 
 type rbdID uint8

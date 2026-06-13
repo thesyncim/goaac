@@ -10,7 +10,11 @@ const (
 	AOTAACLC      AudioObjectType = 2
 	AOTAACSSR     AudioObjectType = 3
 	AOTAACLTP     AudioObjectType = 4
+	AOTERAACLD    AudioObjectType = 23
 	AOTEscape     AudioObjectType = 31
+	AOTERAACELD   AudioObjectType = 39
+	AOTMP2AACLC   AudioObjectType = 129
+	AOTMP2SBR     AudioObjectType = 132
 )
 
 type ChannelMode int
