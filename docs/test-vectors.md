@@ -310,9 +310,9 @@ steady-state allocation.
 The FDK AAC-LC threshold-adjustment wrapper subset is covered with CBR and VBR
 vectors for `FDKaacEnc_AdjustThresholds`. Tests compare the wrapper branch
 wiring against the already-ported inner CBR/VBR threshold adapters, verify
-post-adjustment threshold unweighting, malformed mapping/control rejection, the
-explicit unsupported guard for multi-element global inter-CBR reduction, no-cgo
-compilation, and zero steady-state allocation.
+post-adjustment threshold unweighting, malformed mapping/control rejection, a
+two-element global inter-CBR reduction vector, no-cgo compilation, and zero
+steady-state allocation.
 
 The FDK AAC-LC QC prepare wrapper subset is covered with a source-shaped SCE
 vector for `FDKaacEnc_QCMainPrepare`. Tests compare the wrapper against the

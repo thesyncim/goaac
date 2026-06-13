@@ -265,6 +265,52 @@ func TestFDKaacEncAdjustThresholdsCBRSingleElementVector(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncAdjustThresholdsCBRInterElementMultiVector(t *testing.T) {
+	var pe0, pe1 PEData
+	var psy0, psy1 PsyOutChannel
+	var qc0, qc1 QCOutChannel
+	var tools0, tools1 ToolsInfo
+	var elemState0, elemState1 ATSElement
+	var adjState0, adjState1 AdjThrState
+	var qcElement0, qcElement1 QCOutElement
+	var qcOut0, qcOut1 QCOut
+	var psyElement0, psyElement1 PsyOutElement
+	var cm0, cm1 ChannelMapping
+	fillAdjustThresholdsCBRCase(&pe0, &psy0, &qc0, &tools0, &elemState0, &adjState0, &qcElement0, &qcOut0, &psyElement0, &cm0, 160)
+	fillAdjustThresholdsCBRCase(&pe1, &psy1, &qc1, &tools1, &elemState1, &adjState1, &qcElement1, &qcOut1, &psyElement1, &cm1, 160)
+
+	adjState0.AdjThrStateElem[1] = &elemState1
+	cm0.NElements = 2
+	cm0.ElInfo[0].ChannelIndex[0] = 0
+	cm0.ElInfo[1] = ElementInfo{ElType: idSCE, NChannelsInEl: 1, ChannelIndex: [2]int{1, 0}}
+	qcOut0.TotalNoRedPe = int(qcElement0.PEData.Pe + qcElement1.PEData.Pe)
+	qcOut0.TotalGrantedPeCorr = 260
+	qcElements := [2]*QCOutElement{&qcElement0, &qcElement1}
+	psyElements := [2]*PsyOutElement{&psyElement0, &psyElement1}
+	var scratch AdjustThresholdsScratch
+
+	result := FDKaacEncAdjustThresholds(&adjState0, qcElements[:], &qcOut0, psyElements[:], 1, &cm0, &scratch)
+	want := AdjustThresholdsResult{AdaptedElements: 2, RedPe: 260, LastReductionValueM: 154368336}
+	if result != want {
+		t.Fatalf("multi-element inter-CBR result = %+v, want %+v", result, want)
+	}
+	if got, want := hashFixpDBL(qc0.SfbThresholdLdData[:8]), uint64(0xdc3cf7e4216d9d7b); got != want {
+		t.Fatalf("element0 threshold hash = %#016x, want %#016x", got, want)
+	}
+	if got, want := hashFixpDBL(qc1.SfbThresholdLdData[:8]), uint64(0xdc3cf7e4216d9d7b); got != want {
+		t.Fatalf("element1 threshold hash = %#016x, want %#016x", got, want)
+	}
+	if got, want := hashFixpDBL(qc0.SfbMinSnrLdData[:8]), uint64(0x0c8210784d8af5a5); got != want {
+		t.Fatalf("element0 min-SNR hash = %#016x, want %#016x", got, want)
+	}
+	if got, want := hashFixpDBL(qc1.SfbMinSnrLdData[:8]), uint64(0x0c8210784d8af5a5); got != want {
+		t.Fatalf("element1 min-SNR hash = %#016x, want %#016x", got, want)
+	}
+	if qcElement0.PEData.Pe != 130 || qcElement1.PEData.Pe != 130 {
+		t.Fatalf("multi-element PE = %d/%d, want 130/130", qcElement0.PEData.Pe, qcElement1.PEData.Pe)
+	}
+}
+
 func TestFDKaacEncAdjustThresholdsVBRSingleElementVector(t *testing.T) {
 	var directPsy PsyOutChannel
 	var directQC QCOutChannel
@@ -1642,29 +1688,6 @@ func TestFDKaacEncAdjustThresholdsRejectsInvalid(t *testing.T) {
 			psyElements := [1]*PsyOutElement{&psyElement}
 			FDKaacEncAdjustThresholds(&adjState, qcElements[:], &qcOut, psyElements[:], 1, &cm, nil)
 		}},
-		{"unsupported multi-element inter CBR", func() {
-			var pe0, pe1 PEData
-			var psy0, psy1 PsyOutChannel
-			var qc0, qc1 QCOutChannel
-			var tools0, tools1 ToolsInfo
-			var elemState0, elemState1 ATSElement
-			var adjState0, adjState1 AdjThrState
-			var qcElement0, qcElement1 QCOutElement
-			var qcOut0, qcOut1 QCOut
-			var psyElement0, psyElement1 PsyOutElement
-			var cm0, cm1 ChannelMapping
-			fillAdjustThresholdsCBRCase(&pe0, &psy0, &qc0, &tools0, &elemState0, &adjState0, &qcElement0, &qcOut0, &psyElement0, &cm0, 160)
-			fillAdjustThresholdsCBRCase(&pe1, &psy1, &qc1, &tools1, &elemState1, &adjState1, &qcElement1, &qcOut1, &psyElement1, &cm1, 160)
-			adjState0.AdjThrStateElem[1] = &elemState1
-			cm0.NElements = 2
-			cm0.ElInfo[1] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
-			qcOut0.TotalNoRedPe = int(qcElement0.PEData.Pe + qcElement1.PEData.Pe)
-			qcOut0.TotalGrantedPeCorr = 160
-			qcElements := [2]*QCOutElement{&qcElement0, &qcElement1}
-			psyElements := [2]*PsyOutElement{&psyElement0, &psyElement1}
-			var scratch AdjustThresholdsScratch
-			FDKaacEncAdjustThresholds(&adjState0, qcElements[:], &qcOut0, psyElements[:], 1, &cm0, &scratch)
-		}},
 		{"invalid element PE budget", func() {
 			var peData PEData
 			var psy PsyOutChannel
@@ -1731,25 +1754,46 @@ func TestFDKaacEncAdjThrInitAllocs(t *testing.T) {
 
 func TestFDKaacEncAdjustThresholdsAllocs(t *testing.T) {
 	var peData PEData
+	var peData1 PEData
 	var psy PsyOutChannel
+	var psy1 PsyOutChannel
 	var qc QCOutChannel
+	var qc1 QCOutChannel
 	var tools ToolsInfo
+	var tools1 ToolsInfo
 	var elemState ATSElement
+	var elemState1 ATSElement
 	var adjState AdjThrState
+	var adjState1 AdjThrState
 	var qcElement QCOutElement
+	var qcElement1 QCOutElement
 	var qcOut QCOut
+	var qcOut1 QCOut
 	var psyElement PsyOutElement
+	var psyElement1 PsyOutElement
 	var cm ChannelMapping
+	var cm1 ChannelMapping
 	var scratch AdjustThresholdsScratch
 	qcElements := [1]*QCOutElement{&qcElement}
 	psyElements := [1]*PsyOutElement{&psyElement}
+	qcElements2 := [2]*QCOutElement{&qcElement, &qcElement1}
+	psyElements2 := [2]*PsyOutElement{&psyElement, &psyElement1}
 
 	allocs := testing.AllocsPerRun(1000, func() {
 		scratch = AdjustThresholdsScratch{}
 		fillAdjustThresholdsCBRCase(&peData, &psy, &qc, &tools, &elemState, &adjState, &qcElement, &qcOut, &psyElement, &cm, 160)
 		result := FDKaacEncAdjustThresholds(&adjState, qcElements[:], &qcOut, psyElements[:], 1, &cm, &scratch)
+		fillAdjustThresholdsCBRCase(&peData, &psy, &qc, &tools, &elemState, &adjState, &qcElement, &qcOut, &psyElement, &cm, 160)
+		fillAdjustThresholdsCBRCase(&peData1, &psy1, &qc1, &tools1, &elemState1, &adjState1, &qcElement1, &qcOut1, &psyElement1, &cm1, 160)
+		adjState.AdjThrStateElem[1] = &elemState1
+		cm.NElements = 2
+		cm.ElInfo[0].ChannelIndex[0] = 0
+		cm.ElInfo[1] = ElementInfo{ElType: idSCE, NChannelsInEl: 1, ChannelIndex: [2]int{1, 0}}
+		qcOut.TotalNoRedPe = int(qcElement.PEData.Pe + qcElement1.PEData.Pe)
+		qcOut.TotalGrantedPeCorr = 260
+		multiResult := FDKaacEncAdjustThresholds(&adjState, qcElements2[:], &qcOut, psyElements2[:], 1, &cm, &scratch)
 		adjThrSink = qc.SfbThresholdLdData[0] + FixpDBL(result.RedPe)
-		adjThrHashSink = hashFixpDBL(qc.SfbThresholdLdData[:8])
+		adjThrHashSink = hashFixpDBL(qc.SfbThresholdLdData[:8]) ^ uint64(multiResult.RedPe)
 	})
 	if allocs != 0 {
 		t.Fatalf("adjust thresholds allocations = %v, want 0", allocs)

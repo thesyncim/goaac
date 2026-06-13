@@ -916,20 +916,22 @@ func FDKaacEncAdjustThresholds(
 
 		case BitDistributionModeInterElement:
 			if qcOut.TotalGrantedPeCorr < qcOut.TotalNoRedPe {
-				if fdkaacEncCountAdjustableElements(cm) != 1 {
-					panic("fdkaac: inter-element threshold adaptation is not ported")
-				}
-				elementID := fdkaacEncFirstAdjustableElement(cm)
-				res := fdkaacEncAdaptThresholdsToPeCBRElement(
-					qcElement[elementID],
-					psyOutElement[elementID],
-					adjThrState.AdjThrStateElem[elementID],
-					&scratch.CBR[elementID],
-					cm.ElInfo[elementID].NChannelsInEl,
+				res := fdkaacEncAdaptThresholdsToPeCBRRange(
+					adjThrState,
+					qcElement,
+					psyOutElement,
+					cm,
+					scratch,
 					qcOut.TotalGrantedPeCorr,
 					adjThrState.MaxIter2ndGuess,
+					cm.NElements,
+					0,
 				)
-				fdkaacEncMergeAdjustThresholdsResult(&result, res)
+				result.AdaptedElements += fdkaacEncCountAdjustableElements(cm)
+				result.Iterations += res.Iterations
+				result.RedPe += res.RedPe
+				result.LastReductionValueM = res.ReductionValueM
+				result.LastReductionValueE = res.ReductionValueE
 			} else {
 				for elementID := 0; elementID < cm.NElements; elementID++ {
 					if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
@@ -1001,6 +1003,583 @@ func fdkaacEncAdaptThresholdsToPeCBRElement(
 		desiredPe,
 		maxIter2ndGuess,
 	)
+}
+
+func fdkaacEncAdaptThresholdsToPeCBRRange(
+	adjThrState *AdjThrState,
+	qcElement []*QCOutElement,
+	psyOutElement []*PsyOutElement,
+	cm *ChannelMapping,
+	scratch *AdjustThresholdsScratch,
+	desiredPe int,
+	maxIter2ndGuess int,
+	processElements int,
+	elementOffset int,
+) AdaptThresholdsToPeResult {
+	if desiredPe <= 0 || maxIter2ndGuess < 0 {
+		panic("fdkaac: invalid threshold-adaptation PE target")
+	}
+	start, end := fdkaacEncElementRange(cm, processElements, elementOffset)
+
+	constPartGlobal := 0
+	noRedPeGlobal := 0
+	nActiveLinesGlobal := 0
+	processed := 0
+	for elementID := start; elementID < end; elementID++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			continue
+		}
+		nChannels := cm.ElInfo[elementID].NChannelsInEl
+		qcEl := qcElement[elementID]
+		psyEl := psyOutElement[elementID]
+		stateEl := adjThrState.AdjThrStateElem[elementID]
+		elemScratch := &scratch.CBR[elementID]
+
+		FDKaacEncCalcThresholdExp(&elemScratch.ThrExp, qcEl.QCOutChannel[:], psyEl.PsyOutChannel[:], nChannels)
+		FDKaacEncAdaptMinSnr(qcEl.QCOutChannel[:], psyEl.PsyOutChannel[:], &stateEl.MinSNRAdaptParam, nChannels)
+		FDKaacEncInitAvoidHoleFlag(qcEl.QCOutChannel[:], psyEl.PsyOutChannel[:], &elemScratch.AhFlag, &psyEl.ToolsInfo, nChannels, &stateEl.AHParam)
+
+		constPartGlobal += int(qcEl.PEData.ConstPart)
+		noRedPeGlobal += int(qcEl.PEData.Pe)
+		nActiveLinesGlobal += maxInt(int(qcEl.PEData.NActiveLines), 1)
+		processed++
+	}
+	if processed == 0 {
+		panic("fdkaac: missing adjustable threshold element")
+	}
+
+	reductionValueM, reductionValueE := fdkaacEncInitialReductionValue(
+		constPartGlobal,
+		noRedPeGlobal,
+		desiredPe,
+		nActiveLinesGlobal,
+	)
+
+	redPeGlobal := fdkaacEncReduceThresholdsCBRRange(qcElement, psyOutElement, cm, scratch, start, end, reductionValueM, reductionValueE)
+
+	iter := 0
+	for absInt(redPeGlobal-desiredPe) > FMultI(adaptThresholdPeTolerance05, desiredPe) && iter < maxIter2ndGuess {
+		redPeNoAHGlobal := 0
+		constPartNoAHGlobal := 0
+		nActiveLinesNoAHGlobal := 0
+		for elementID := start; elementID < end; elementID++ {
+			if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+				continue
+			}
+			nChannels := cm.ElInfo[elementID].NChannelsInEl
+			redPeNoAH, constPartNoAH, nActiveLinesNoAH :=
+				FDKaacEncCalcPENoAH(&qcElement[elementID].PEData, &scratch.CBR[elementID].AhFlag, psyOutElement[elementID].PsyOutChannel[:], nChannels)
+			redPeNoAHGlobal += redPeNoAH
+			constPartNoAHGlobal += constPartNoAH
+			nActiveLinesNoAHGlobal += nActiveLinesNoAH
+		}
+
+		if desiredPe < redPeGlobal {
+			desiredPeNoAHGlobal := desiredPe - (redPeGlobal - redPeNoAHGlobal)
+			desiredPeNoAHGlobal = maxInt(0, desiredPeNoAHGlobal)
+
+			if nActiveLinesNoAHGlobal > 0 {
+				reductionValueM, reductionValueE = fdkaacEncSecondGuessReductionValue(
+					reductionValueM,
+					reductionValueE,
+					constPartNoAHGlobal,
+					redPeNoAHGlobal,
+					desiredPeNoAHGlobal,
+					nActiveLinesNoAHGlobal,
+				)
+			}
+		} else {
+			divM, divE := fDivNormExp(FixpDBL(redPeGlobal), FixpDBL(desiredPe))
+			var multE int
+			reductionValueM, multE = fMultNorm(reductionValueM, divM)
+			reductionValueE += divE + multE
+			for elementID := start; elementID < end; elementID++ {
+				if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+					continue
+				}
+				nChannels := cm.ElInfo[elementID].NChannelsInEl
+				FDKaacEncResetAHFlags(&scratch.CBR[elementID].AhFlag, psyOutElement[elementID].PsyOutChannel[:], nChannels)
+			}
+		}
+
+		redPeGlobal = fdkaacEncReduceThresholdsCBRRange(qcElement, psyOutElement, cm, scratch, start, end, reductionValueM, reductionValueE)
+		iter++
+	}
+
+	if redPeGlobal > desiredPe {
+		fdkaacEncCorrectThresholdsRange(qcElement, psyOutElement, cm, scratch, start, end, reductionValueM, reductionValueE, desiredPe-redPeGlobal)
+		redPeGlobal = fdkaacEncCalcPERange(qcElement, psyOutElement, cm, start, end)
+	}
+
+	if redPeGlobal > desiredPe {
+		redPeLimit := FMultI(peCorrection015, desiredPe) + desiredPe
+		fdkaacEncReduceMinSnrRange(qcElement, psyOutElement, cm, scratch, start, end, redPeLimit, &redPeGlobal)
+		fdkaacEncAllowMoreHolesRange(adjThrState, qcElement, psyOutElement, cm, scratch, start, end, desiredPe, redPeGlobal)
+	}
+
+	return AdaptThresholdsToPeResult{
+		RedPe:           redPeGlobal,
+		Iterations:      iter,
+		ReductionValueM: reductionValueM,
+		ReductionValueE: reductionValueE,
+	}
+}
+
+func fdkaacEncElementRange(cm *ChannelMapping, processElements int, elementOffset int) (int, int) {
+	if processElements <= 0 || elementOffset < 0 || elementOffset >= cm.NElements {
+		panic("fdkaac: invalid threshold-adaptation element range")
+	}
+	end := elementOffset + processElements
+	if end > cm.NElements {
+		end = cm.NElements
+	}
+	return elementOffset, end
+}
+
+func fdkaacEncReduceThresholdsCBRRange(
+	qcElement []*QCOutElement,
+	psyOutElement []*PsyOutElement,
+	cm *ChannelMapping,
+	scratch *AdjustThresholdsScratch,
+	start int,
+	end int,
+	reductionValueM FixpDBL,
+	reductionValueE int,
+) int {
+	redPeGlobal := 0
+	for elementID := start; elementID < end; elementID++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			continue
+		}
+		nChannels := cm.ElInfo[elementID].NChannelsInEl
+		qcEl := qcElement[elementID]
+		psyEl := psyOutElement[elementID]
+		elemScratch := &scratch.CBR[elementID]
+		FDKaacEncReduceThresholdsCBR(qcEl.QCOutChannel[:], psyEl.PsyOutChannel[:], &elemScratch.AhFlag, &elemScratch.ThrExp, nChannels, reductionValueM, reductionValueE)
+		fdkaacEncCalcPE(psyEl.PsyOutChannel[:], qcEl.QCOutChannel[:], &qcEl.PEData, nChannels)
+		redPeGlobal += int(qcEl.PEData.Pe)
+	}
+	return redPeGlobal
+}
+
+func fdkaacEncCalcPERange(
+	qcElement []*QCOutElement,
+	psyOutElement []*PsyOutElement,
+	cm *ChannelMapping,
+	start int,
+	end int,
+) int {
+	redPeGlobal := 0
+	for elementID := start; elementID < end; elementID++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			continue
+		}
+		nChannels := cm.ElInfo[elementID].NChannelsInEl
+		qcEl := qcElement[elementID]
+		psyEl := psyOutElement[elementID]
+		fdkaacEncCalcPE(psyEl.PsyOutChannel[:], qcEl.QCOutChannel[:], &qcEl.PEData, nChannels)
+		redPeGlobal += int(qcEl.PEData.Pe)
+	}
+	return redPeGlobal
+}
+
+func fdkaacEncCorrectThresholdsRange(
+	qcElement []*QCOutElement,
+	psyOutElement []*PsyOutElement,
+	cm *ChannelMapping,
+	scratch *AdjustThresholdsScratch,
+	start int,
+	end int,
+	redValM FixpDBL,
+	redValE int,
+	deltaPe int,
+) {
+	if redValM < 0 || redValE < -DfractBits || redValE > DfractBits {
+		panic("fdkaac: invalid correct-threshold reduction value")
+	}
+
+	normFactorInt := 0
+	for elementID := start; elementID < end; elementID++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			continue
+		}
+		nChannels := cm.ElInfo[elementID].NChannelsInEl
+		elemScratch := &scratch.CBR[elementID]
+		for ch := 0; ch < nChannels; ch++ {
+			psyCh := psyOutElement[elementID].PsyOutChannel[ch]
+			peChanData := &qcElement[elementID].PEData.PEChannelData[ch]
+			for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+				for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+					idx := sfbGrp + sfb
+					if peChanData.SfbNActiveLines[idx] < 0 {
+						panic("fdkaac: invalid correct-threshold active lines")
+					}
+					nActiveLines := int(peChanData.SfbNActiveLines[idx])
+					if nActiveLines == 0 {
+						elemScratch.CorrectThreshold.SfbNActiveLinesLdData[ch][idx] = MinValDBL
+					} else {
+						elemScratch.CorrectThreshold.SfbNActiveLinesLdData[ch][idx] = CalcLdInt(nActiveLines)
+					}
+
+					if (elemScratch.AhFlag[ch][idx] < AvoidHoleActive || deltaPe > 0) && nActiveLines != 0 {
+						if elemScratch.ThrExp[ch][idx] > -redValM {
+							minScale := minInt(CountLeadingBits(elemScratch.ThrExp[ch][idx]), CountLeadingBits(redValM)-redValE) - 1
+							sumLd := CalcLdData(
+								ScaleValueDBL(elemScratch.ThrExp[ch][idx], minScale)+
+									ScaleValueDBL(redValM, redValE+minScale),
+							) - FixpDBL(minScale<<(DfractBits-1-ldDataShift))
+
+							if sumLd < 0 {
+								elemScratch.CorrectThreshold.SfbPEFactorsLdData[ch][idx] =
+									elemScratch.CorrectThreshold.SfbNActiveLinesLdData[ch][idx] - sumLd
+							} else if elemScratch.CorrectThreshold.SfbNActiveLinesLdData[ch][idx] > MinValDBL+sumLd {
+								elemScratch.CorrectThreshold.SfbPEFactorsLdData[ch][idx] =
+									elemScratch.CorrectThreshold.SfbNActiveLinesLdData[ch][idx] - sumLd
+							} else {
+								elemScratch.CorrectThreshold.SfbPEFactorsLdData[ch][idx] =
+									elemScratch.CorrectThreshold.SfbNActiveLinesLdData[ch][idx]
+							}
+
+							normFactorInt += int(CalcInvLdData(elemScratch.CorrectThreshold.SfbPEFactorsLdData[ch][idx]))
+						} else {
+							elemScratch.CorrectThreshold.SfbPEFactorsLdData[ch][idx] = MaxValDBL
+						}
+					} else {
+						elemScratch.CorrectThreshold.SfbPEFactorsLdData[ch][idx] = MinValDBL
+					}
+				}
+			}
+		}
+	}
+
+	normFactorLdData := FixpDBL(0)
+	if deltaPe != 0 {
+		if normFactorInt <= 0 {
+			panic("fdkaac: invalid correct-threshold norm factor")
+		}
+		normFactorLdData = CalcLdData(FixpDBL(absInt(deltaPe))) - CalcLdData(FixpDBL(normFactorInt))
+	}
+
+	for elementID := start; elementID < end; elementID++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			continue
+		}
+		nChannels := cm.ElInfo[elementID].NChannelsInEl
+		elemScratch := &scratch.CBR[elementID]
+		for ch := 0; ch < nChannels; ch++ {
+			qcCh := qcElement[elementID].QCOutChannel[ch]
+			psyCh := psyOutElement[elementID].PsyOutChannel[ch]
+			peChanData := &qcElement[elementID].PEData.PEChannelData[ch]
+			for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+				for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+					idx := sfbGrp + sfb
+					if peChanData.SfbNActiveLines[idx] <= 0 {
+						continue
+					}
+
+					thrFactorLdData := FixpDBL(0)
+					if elemScratch.CorrectThreshold.SfbPEFactorsLdData[ch][idx] != MinValDBL && deltaPe != 0 {
+						tmp := CalcInvLdData(
+							elemScratch.CorrectThreshold.SfbPEFactorsLdData[ch][idx] +
+								normFactorLdData -
+								elemScratch.CorrectThreshold.SfbNActiveLinesLdData[ch][idx] -
+								correctThreshLdShift,
+						)
+						if deltaPe >= 0 {
+							tmp = -tmp
+						}
+						thrFactorLdData = minFixpDBL(tmp, correctThreshMaxLd)
+					}
+
+					sfbThrLdData := qcCh.SfbThresholdLdData[idx]
+					sfbEnLdData := qcCh.SfbWeightedEnergyLdData[idx]
+					sfbThrReducedLdData := sfbThrLdData + thrFactorLdData
+					if thrFactorLdData < 0 && sfbThrLdData <= MinValDBL-thrFactorLdData {
+						sfbThrReducedLdData = MinValDBL
+					}
+
+					if sfbThrReducedLdData-sfbEnLdData > qcCh.SfbMinSnrLdData[idx] &&
+						elemScratch.AhFlag[ch][idx] == AvoidHoleInactive {
+						if sfbEnLdData > sfbThrLdData-qcCh.SfbMinSnrLdData[idx] {
+							sfbThrReducedLdData = qcCh.SfbMinSnrLdData[idx] + sfbEnLdData
+						} else {
+							sfbThrReducedLdData = sfbThrLdData
+						}
+						elemScratch.AhFlag[ch][idx] = AvoidHoleActive
+					}
+
+					qcCh.SfbThresholdLdData[idx] = sfbThrReducedLdData
+				}
+			}
+		}
+	}
+}
+
+func fdkaacEncReduceMinSnrRange(
+	qcElement []*QCOutElement,
+	psyOutElement []*PsyOutElement,
+	cm *ChannelMapping,
+	scratch *AdjustThresholdsScratch,
+	start int,
+	end int,
+	desiredPe int,
+	redPeGlobal *int,
+) {
+	if desiredPe < 0 || redPeGlobal == nil || *redPeGlobal < 0 {
+		panic("fdkaac: invalid reduce-min-SNR PE target")
+	}
+	newGlobalPe := *redPeGlobal
+	if newGlobalPe <= desiredPe {
+		return
+	}
+
+	globalMaxSfb := 0
+	for elementID := start; elementID < end; elementID++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			continue
+		}
+		for ch := 0; ch < cm.ElInfo[elementID].NChannelsInEl; ch++ {
+			globalMaxSfb = maxInt(globalMaxSfb, psyOutElement[elementID].PsyOutChannel[ch].MaxSfbPerGroup)
+		}
+	}
+
+	for newGlobalPe > desiredPe {
+		globalMaxSfb--
+		if globalMaxSfb < 0 {
+			break
+		}
+		for elementID := start; elementID < end; elementID++ {
+			if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+				continue
+			}
+			peData := &qcElement[elementID].PEData
+			for ch := 0; ch < cm.ElInfo[elementID].NChannelsInEl; ch++ {
+				qcCh := qcElement[elementID].QCOutChannel[ch]
+				psyCh := psyOutElement[elementID].PsyOutChannel[ch]
+				peChanData := &peData.PEChannelData[ch]
+				if globalMaxSfb < psyCh.MaxSfbPerGroup {
+					deltaPe := FixpDBL(0)
+					for sfb := globalMaxSfb; sfb < psyCh.SfbCnt; sfb += psyCh.SfbPerGroup {
+						if peChanData.SfbPe[sfb] < 0 ||
+							peChanData.SfbNLines[sfb] < 0 ||
+							peChanData.SfbNLines[sfb] > reduceMinSnrMaxNLines {
+							panic("fdkaac: invalid reduce-min-SNR PE band")
+						}
+						if scratch.CBR[elementID].AhFlag[ch][sfb] != AvoidHoleNone &&
+							qcCh.SfbMinSnrLdData[sfb] < snrLdFac &&
+							qcCh.SfbWeightedEnergyLdData[sfb] > qcCh.SfbThresholdLdData[sfb]-snrLdFac {
+							qcCh.SfbMinSnrLdData[sfb] = snrLdFac
+							qcCh.SfbThresholdLdData[sfb] = qcCh.SfbWeightedEnergyLdData[sfb] + snrLdFac
+
+							deltaPe -= peChanData.SfbPe[sfb]
+							peChanData.SfbPe[sfb] = FixpDBL((3 * peChanData.SfbNLines[sfb]) << (peConstPartShift - 1))
+							deltaPe += peChanData.SfbPe[sfb]
+						}
+					}
+					deltaPeInt := int(deltaPe >> peConstPartShift)
+					peData.Pe += FixpDBL(deltaPeInt)
+					peChanData.Pe += FixpDBL(deltaPeInt)
+					newGlobalPe += deltaPeInt
+				}
+				if newGlobalPe <= desiredPe {
+					*redPeGlobal = newGlobalPe
+					return
+				}
+			}
+		}
+	}
+
+	*redPeGlobal = newGlobalPe
+}
+
+func fdkaacEncAllowMoreHolesRange(
+	adjThrState *AdjThrState,
+	qcElement []*QCOutElement,
+	psyOutElement []*PsyOutElement,
+	cm *ChannelMapping,
+	scratch *AdjustThresholdsScratch,
+	start int,
+	end int,
+	desiredPe int,
+	currentPe int,
+) {
+	if desiredPe < 0 || currentPe < 0 {
+		panic("fdkaac: invalid allow-more-holes PE target")
+	}
+	actPe := currentPe
+	if actPe <= desiredPe {
+		return
+	}
+
+	for elementID := start; elementID < end; elementID++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			continue
+		}
+		nChannels := cm.ElInfo[elementID].NChannelsInEl
+		peData := &qcElement[elementID].PEData
+		for ch := 0; ch < nChannels; ch++ {
+			psyCh := psyOutElement[elementID].PsyOutChannel[ch]
+			for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+				for sfb := psyCh.MaxSfbPerGroup; sfb < psyCh.SfbPerGroup; sfb++ {
+					idx := sfbGrp + sfb
+					if peData.PEChannelData[ch].SfbPe[idx] < 0 {
+						panic("fdkaac: invalid allow-more-holes PE band")
+					}
+					peData.PEChannelData[ch].SfbPe[idx] = 0
+				}
+			}
+		}
+
+		if nChannels == 2 &&
+			psyOutElement[elementID].PsyOutChannel[0].LastWindowSequence == psyOutElement[elementID].PsyOutChannel[1].LastWindowSequence {
+			psy0 := psyOutElement[elementID].PsyOutChannel[0]
+			for sfb := psy0.MaxSfbPerGroup - 1; sfb >= 0; sfb-- {
+				for sfbGrp := 0; sfbGrp < psy0.SfbCnt; sfbGrp += psy0.SfbPerGroup {
+					idx := sfbGrp + sfb
+					if psyOutElement[elementID].ToolsInfo.MsMask[idx] == 0 {
+						continue
+					}
+					qcL := qcElement[elementID].QCOutChannel[0]
+					qcR := qcElement[elementID].QCOutChannel[1]
+					energyLdL := qcL.SfbWeightedEnergyLdData[idx]
+					energyLdR := qcR.SfbWeightedEnergyLdData[idx]
+					if scratch.CBR[elementID].AhFlag[1][idx] != AvoidHoleNone &&
+						((allowMoreHolesMsMargin>>1)+(qcL.SfbMinSnrLdData[idx]>>1)) > ((energyLdR>>1)-(energyLdL>>1)) {
+						checkAllowMoreHolesPEBand(peData.PEChannelData[1].SfbPe[idx])
+						scratch.CBR[elementID].AhFlag[1][idx] = AvoidHoleNone
+						qcR.SfbThresholdLdData[idx] = allowMoreHolesThrOffset + energyLdR
+						actPe -= int(peData.PEChannelData[1].SfbPe[idx] >> peConstPartShift)
+					} else if scratch.CBR[elementID].AhFlag[0][idx] != AvoidHoleNone &&
+						((allowMoreHolesMsMargin>>1)+(qcR.SfbMinSnrLdData[idx]>>1)) > ((energyLdL>>1)-(energyLdR>>1)) {
+						checkAllowMoreHolesPEBand(peData.PEChannelData[0].SfbPe[idx])
+						scratch.CBR[elementID].AhFlag[0][idx] = AvoidHoleNone
+						qcL.SfbThresholdLdData[idx] = allowMoreHolesThrOffset + energyLdL
+						actPe -= int(peData.PEChannelData[0].SfbPe[idx] >> peConstPartShift)
+					}
+				}
+				if actPe <= desiredPe {
+					return
+				}
+			}
+		}
+	}
+
+	if actPe <= desiredPe {
+		return
+	}
+
+	maxSfbSlots := 0
+	for elementID := start; elementID < end; elementID++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			continue
+		}
+		for ch := 0; ch < cm.ElInfo[elementID].NChannelsInEl; ch++ {
+			psyCh := psyOutElement[elementID].PsyOutChannel[ch]
+			for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+				maxSfbSlots += psyCh.MaxSfbPerGroup
+			}
+		}
+	}
+	avgEnE := DfractBits - FixNormZD(FixpDBL(maxInt(0, maxSfbSlots-1)))
+
+	var startSfb [maxChannelElements]int
+	var sfbCnt [maxChannelElements]int
+	var sfbPerGroup [maxChannelElements]int
+	var maxSfbPerGroup [maxChannelElements]int
+	maxSfb := 0
+	minSfb := maxGroupedSFB
+	avgEn := FixpDBL(0)
+	minEnLD64 := FixpDBL(0)
+	ahCnt := 0
+
+	for elementID := start; elementID < end; elementID++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			continue
+		}
+		for ch := 0; ch < cm.ElInfo[elementID].NChannelsInEl; ch++ {
+			chIdx := cm.ElInfo[elementID].ChannelIndex[ch]
+			if chIdx < 0 || chIdx >= maxChannelElements {
+				panic("fdkaac: invalid adjust-threshold channel index")
+			}
+			qcCh := qcElement[elementID].QCOutChannel[ch]
+			psyCh := psyOutElement[elementID].PsyOutChannel[ch]
+			maxSfbPerGroup[chIdx] = psyCh.MaxSfbPerGroup
+			sfbCnt[chIdx] = psyCh.SfbCnt
+			sfbPerGroup[chIdx] = psyCh.SfbPerGroup
+			maxSfb = maxInt(maxSfb, psyCh.MaxSfbPerGroup)
+			if psyCh.LastWindowSequence != ShortWindow {
+				startSfb[chIdx] = adjThrState.AdjThrStateElem[elementID].AHParam.StartSfbL
+			} else {
+				startSfb[chIdx] = adjThrState.AdjThrStateElem[elementID].AHParam.StartSfbS
+			}
+			minSfb = minInt(minSfb, startSfb[chIdx])
+
+			for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+				for sfb := startSfb[chIdx]; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+					idx := sfbGrp + sfb
+					if scratch.CBR[elementID].AhFlag[ch][idx] != AvoidHoleNone &&
+						qcCh.SfbWeightedEnergyLdData[idx] > qcCh.SfbThresholdLdData[idx] {
+						minEnLD64 = minFixpDBL(minEnLD64, qcCh.SfbEnergyLdData[idx])
+						avgEn += qcCh.SfbEnergy[idx] >> uint(avgEnE)
+						ahCnt++
+					}
+				}
+			}
+		}
+	}
+
+	avgEnLD64 := FixpDBL(0)
+	if avgEn != 0 && ahCnt != 0 {
+		avgEnLD64 = CalcLdData(avgEn) +
+			FixpDBL(avgEnE<<(DfractBits-1-ldDataShift)) -
+			CalcLdInt(ahCnt)
+	}
+
+	var enLD64 [allowMoreHolesNumEnergyLevels]FixpDBL
+	for i := 0; i < allowMoreHolesNumEnergyLevels-1; i++ {
+		enLD64[i] = minEnLD64 + FMultDD(avgEnLD64-minEnLD64, allowMoreHolesEnergyLevel[i])
+	}
+	enLD64[allowMoreHolesNumEnergyLevels-1] = minEnLD64 + (avgEnLD64 - minEnLD64)
+
+	done := false
+	enIdx := 0
+	sfb := maxSfb - 1
+	for !done {
+		for elementID := start; elementID < end; elementID++ {
+			if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+				continue
+			}
+			peData := &qcElement[elementID].PEData
+			for ch := 0; ch < cm.ElInfo[elementID].NChannelsInEl; ch++ {
+				chIdx := cm.ElInfo[elementID].ChannelIndex[ch]
+				qcCh := qcElement[elementID].QCOutChannel[ch]
+				if sfb >= startSfb[chIdx] && sfb < maxSfbPerGroup[chIdx] {
+					for sfbGrp := 0; sfbGrp < sfbCnt[chIdx]; sfbGrp += sfbPerGroup[chIdx] {
+						idx := sfbGrp + sfb
+						if scratch.CBR[elementID].AhFlag[ch][idx] != AvoidHoleNone &&
+							qcCh.SfbEnergyLdData[idx] < enLD64[enIdx] {
+							checkAllowMoreHolesPEBand(peData.PEChannelData[ch].SfbPe[idx])
+							scratch.CBR[elementID].AhFlag[ch][idx] = AvoidHoleNone
+							qcCh.SfbThresholdLdData[idx] = allowMoreHolesThrOffset + qcCh.SfbWeightedEnergyLdData[idx]
+							actPe -= int(peData.PEChannelData[ch].SfbPe[idx] >> peConstPartShift)
+						}
+						if actPe <= desiredPe {
+							return
+						}
+					}
+				}
+			}
+		}
+
+		sfb--
+		if sfb < minSfb {
+			sfb = maxSfb
+			enIdx++
+			if enIdx >= allowMoreHolesNumEnergyLevels {
+				done = true
+			}
+		}
+	}
 }
 
 func fdkaacEncMergeAdjustThresholdsResult(result *AdjustThresholdsResult, res AdaptThresholdsToPeResult) {
