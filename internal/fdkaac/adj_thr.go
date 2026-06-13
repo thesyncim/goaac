@@ -89,6 +89,9 @@ const (
 	vbrMinLdThresh        FixpDBL = -0x42000000
 	vbrLimitThrReduced    FixpDBL = 0x00008000
 	vbr282Over4           FixpDBL = 0x5a3d70a4
+
+	correctThreshLdShift FixpDBL = 0x0c000000
+	correctThreshMaxLd   FixpDBL = 0x28000000
 )
 
 var adjThrInvInt = [8]FixpDBL{
@@ -157,6 +160,11 @@ type AdjThrState struct {
 	BRESParamShort      BRESParam
 	BitDistributionMode int
 	MaxIter2ndGuess     int
+}
+
+type CorrectThresholdScratch struct {
+	SfbPEFactorsLdData    [2][maxGroupedSFB]FixpDBL
+	SfbNActiveLinesLdData [2][maxGroupedSFB]FixpDBL
 }
 
 func FDKaacEncInitBitresState(state *AdjThrState) {
@@ -643,6 +651,120 @@ func FDKaacEncReduceThresholdsVBR(
 					sfbThrReducedLdData = maxFixpDBL(vbrMinLdThresh, sfbThrReducedLdData)
 					qcCh.SfbThresholdLdData[idx] = sfbThrReducedLdData
 				}
+			}
+		}
+	}
+}
+
+func FDKaacEncCorrectThresholds(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	peData *PEData,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	thrExp *[2][maxGroupedSFB]FixpDBL,
+	scratch *CorrectThresholdScratch,
+	nChannels int,
+	redValM FixpDBL,
+	redValE int,
+	deltaPe int,
+) {
+	checkCorrectThresholdInputs(qcOutChannel, psyOutChannel, peData, ahFlag, thrExp, scratch, nChannels, redValM, redValE)
+
+	normFactorInt := 0
+	for ch := 0; ch < nChannels; ch++ {
+		psyCh := psyOutChannel[ch]
+		peChanData := &peData.PEChannelData[ch]
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				if peChanData.SfbNActiveLines[idx] < 0 {
+					panic("fdkaac: invalid correct-threshold active lines")
+				}
+				nActiveLines := int(peChanData.SfbNActiveLines[idx])
+				if nActiveLines == 0 {
+					scratch.SfbNActiveLinesLdData[ch][idx] = MinValDBL
+				} else {
+					scratch.SfbNActiveLinesLdData[ch][idx] = CalcLdInt(nActiveLines)
+				}
+
+				if (ahFlag[ch][idx] < AvoidHoleActive || deltaPe > 0) && nActiveLines != 0 {
+					if thrExp[ch][idx] > -redValM {
+						minScale := minInt(CountLeadingBits(thrExp[ch][idx]), CountLeadingBits(redValM)-redValE) - 1
+						sumLd := CalcLdData(
+							ScaleValueDBL(thrExp[ch][idx], minScale)+
+								ScaleValueDBL(redValM, redValE+minScale),
+						) - FixpDBL(minScale<<(DfractBits-1-ldDataShift))
+
+						if sumLd < 0 {
+							scratch.SfbPEFactorsLdData[ch][idx] = scratch.SfbNActiveLinesLdData[ch][idx] - sumLd
+						} else if scratch.SfbNActiveLinesLdData[ch][idx] > MinValDBL+sumLd {
+							scratch.SfbPEFactorsLdData[ch][idx] = scratch.SfbNActiveLinesLdData[ch][idx] - sumLd
+						} else {
+							scratch.SfbPEFactorsLdData[ch][idx] = scratch.SfbNActiveLinesLdData[ch][idx]
+						}
+
+						normFactorInt += int(CalcInvLdData(scratch.SfbPEFactorsLdData[ch][idx]))
+					} else {
+						scratch.SfbPEFactorsLdData[ch][idx] = MaxValDBL
+					}
+				} else {
+					scratch.SfbPEFactorsLdData[ch][idx] = MinValDBL
+				}
+			}
+		}
+	}
+
+	normFactorLdData := FixpDBL(0)
+	if deltaPe != 0 {
+		if normFactorInt <= 0 {
+			panic("fdkaac: invalid correct-threshold norm factor")
+		}
+		normFactorLdData = CalcLdData(FixpDBL(absInt(deltaPe))) - CalcLdData(FixpDBL(normFactorInt))
+	}
+
+	for ch := 0; ch < nChannels; ch++ {
+		qcCh := qcOutChannel[ch]
+		psyCh := psyOutChannel[ch]
+		peChanData := &peData.PEChannelData[ch]
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				if peChanData.SfbNActiveLines[idx] <= 0 {
+					continue
+				}
+
+				thrFactorLdData := FixpDBL(0)
+				if scratch.SfbPEFactorsLdData[ch][idx] != MinValDBL && deltaPe != 0 {
+					tmp := CalcInvLdData(
+						scratch.SfbPEFactorsLdData[ch][idx] +
+							normFactorLdData -
+							scratch.SfbNActiveLinesLdData[ch][idx] -
+							correctThreshLdShift,
+					)
+					if deltaPe >= 0 {
+						tmp = -tmp
+					}
+					thrFactorLdData = minFixpDBL(tmp, correctThreshMaxLd)
+				}
+
+				sfbThrLdData := qcCh.SfbThresholdLdData[idx]
+				sfbEnLdData := qcCh.SfbWeightedEnergyLdData[idx]
+				sfbThrReducedLdData := sfbThrLdData + thrFactorLdData
+				if thrFactorLdData < 0 && sfbThrLdData <= MinValDBL-thrFactorLdData {
+					sfbThrReducedLdData = MinValDBL
+				}
+
+				if sfbThrReducedLdData-sfbEnLdData > qcCh.SfbMinSnrLdData[idx] &&
+					ahFlag[ch][idx] == AvoidHoleInactive {
+					if sfbEnLdData > sfbThrLdData-qcCh.SfbMinSnrLdData[idx] {
+						sfbThrReducedLdData = qcCh.SfbMinSnrLdData[idx] + sfbEnLdData
+					} else {
+						sfbThrReducedLdData = sfbThrLdData
+					}
+					ahFlag[ch][idx] = AvoidHoleActive
+				}
+
+				qcCh.SfbThresholdLdData[idx] = sfbThrReducedLdData
 			}
 		}
 	}
@@ -1139,6 +1261,35 @@ func checkThresholdReductionVBRInputs(
 			}
 			groupCnt++
 		}
+	}
+}
+
+func checkCorrectThresholdInputs(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	peData *PEData,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	thrExp *[2][maxGroupedSFB]FixpDBL,
+	scratch *CorrectThresholdScratch,
+	nChannels int,
+	redValM FixpDBL,
+	redValE int,
+) {
+	checkThresholdAdjustmentInputs(qcOutChannel, psyOutChannel, nChannels)
+	if peData == nil {
+		panic("fdkaac: nil correct-threshold PE data")
+	}
+	if ahFlag == nil {
+		panic("fdkaac: nil correct-threshold avoid-hole flags")
+	}
+	if thrExp == nil {
+		panic("fdkaac: nil correct-threshold exponent scratch")
+	}
+	if scratch == nil {
+		panic("fdkaac: nil correct-threshold scratch")
+	}
+	if redValM < 0 || redValE < -DfractBits || redValE > DfractBits {
+		panic("fdkaac: invalid correct-threshold reduction value")
 	}
 }
 

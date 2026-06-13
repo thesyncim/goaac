@@ -455,6 +455,55 @@ func TestFDKaacEncReduceThresholdsVBRShortVector(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncCorrectThresholdsVectors(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		deltaPe       int
+		wantThreshold [8]FixpDBL
+		wantPEFactors [8]FixpDBL
+		thresholdHash uint64
+		factorHash    uint64
+	}{
+		{
+			name:          "negative delta",
+			deltaPe:       -34,
+			wantThreshold: [8]FixpDBL{-462798369, -444410394, -510000000, -530000000, -444410394, -505000000, -435243923, -481257449},
+			wantPEFactors: [8]FixpDBL{66016450, 117815144, MinValDBL, MinValDBL, 158831828, MinValDBL, 131010137, 154040199},
+			thresholdHash: 0x5b793ef08820a954,
+			factorHash:    0x0e7edda028d26d3e,
+		},
+		{
+			name:          "positive delta",
+			deltaPe:       29,
+			wantThreshold: [8]FixpDBL{-556590981, -535559795, -510000000, -567088414, -535559795, -540822049, -525026599, -577576684},
+			wantPEFactors: [8]FixpDBL{66016450, 117815144, MinValDBL, 144581084, 158831828, 98542766, 131010137, 154040199},
+			thresholdHash: 0x18c733ed143dd661,
+			factorHash:    0x21e09ec057373cb5,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var psyStorage PsyOutChannel
+			var qcStorage QCOutChannel
+			var peData PEData
+			var thrExp [2][maxGroupedSFB]FixpDBL
+			var ahFlag [2][maxGroupedSFB]uint8
+			var scratch CorrectThresholdScratch
+			fillCorrectThresholdCase(&psyStorage, &qcStorage, &peData, &thrExp, &ahFlag)
+			psy := [1]*PsyOutChannel{&psyStorage}
+			qc := [1]*QCOutChannel{&qcStorage}
+
+			FDKaacEncCorrectThresholds(qc[:], psy[:], &peData, &ahFlag, &thrExp, &scratch, 1, 0x18000000, 0, tt.deltaPe)
+
+			wantFlags := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone, AvoidHoleActive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, AvoidHoleInactive}
+			wantActiveLd := [...]FixpDBL{0, 53182516, MinValDBL, 77910978, 94199200, 33554432, 67108864, 86736948}
+			assertFixpDBLSlice(t, tt.name+" thresholds", qc[0].SfbThresholdLdData[:8], tt.wantThreshold[:], tt.thresholdHash)
+			assertFixpDBLSlice(t, tt.name+" PE factors", scratch.SfbPEFactorsLdData[0][:8], tt.wantPEFactors[:], tt.factorHash)
+			assertFixpDBLSlice(t, tt.name+" active-line LD", scratch.SfbNActiveLinesLdData[0][:8], wantActiveLd[:], 0xfa1e0c5c4038d0c3)
+			assertUint8Slice(t, tt.name+" avoid-hole flags", ahFlag[0][:8], wantFlags[:])
+		})
+	}
+}
+
 func TestFDKaacEncPECalculationRejectsInvalid(t *testing.T) {
 	peData, psy, qc, tools, state := buildAdjThrLongPatchCase()
 	for _, tt := range []struct {
@@ -610,6 +659,7 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 	qc := [1]*QCOutChannel{&qcStorage}
 	peData, pePsy, peFlags := buildPENoAHCase()
 	chaosOld := vbrChaosHalf
+	var correctScratch CorrectThresholdScratch
 
 	for _, tt := range []struct {
 		name string
@@ -641,6 +691,33 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 			fillVBRShortThresholdReductionCase(&shortPsy, &shortQC, &shortThrExp, &shortAHFlag)
 			shortPsy.GroupLen[0] = len(adjThrInvInt)
 			FDKaacEncReduceThresholdsVBR([]*QCOutChannel{&shortQC}, []*PsyOutChannel{&shortPsy}, &shortAHFlag, &shortThrExp, 1, peCorrectionHalf, &chaosOld)
+		}},
+		{"nil correct-threshold PE", func() {
+			FDKaacEncCorrectThresholds(qc[:], psy[:], nil, &ahFlag, &thrExp, &correctScratch, 1, 0x18000000, 0, -1)
+		}},
+		{"nil correct-threshold flags", func() {
+			FDKaacEncCorrectThresholds(qc[:], psy[:], &peData, nil, &thrExp, &correctScratch, 1, 0x18000000, 0, -1)
+		}},
+		{"nil correct-threshold exponent", func() {
+			FDKaacEncCorrectThresholds(qc[:], psy[:], &peData, &ahFlag, nil, &correctScratch, 1, 0x18000000, 0, -1)
+		}},
+		{"nil correct-threshold scratch", func() {
+			FDKaacEncCorrectThresholds(qc[:], psy[:], &peData, &ahFlag, &thrExp, nil, 1, 0x18000000, 0, -1)
+		}},
+		{"negative correct-threshold reduction", func() {
+			FDKaacEncCorrectThresholds(qc[:], psy[:], &peData, &ahFlag, &thrExp, &correctScratch, 1, -1, 0, -1)
+		}},
+		{"bad correct-threshold exponent", func() {
+			FDKaacEncCorrectThresholds(qc[:], psy[:], &peData, &ahFlag, &thrExp, &correctScratch, 1, 0x18000000, DfractBits+1, -1)
+		}},
+		{"negative correct-threshold active lines", func() {
+			badPE := peData
+			badPE.PEChannelData[0].SfbNActiveLines[0] = -1
+			FDKaacEncCorrectThresholds(qc[:], psy[:], &badPE, &ahFlag, &thrExp, &correctScratch, 1, 0x18000000, 0, -1)
+		}},
+		{"zero correct-threshold norm", func() {
+			var emptyPE PEData
+			FDKaacEncCorrectThresholds(qc[:], psy[:], &emptyPE, &ahFlag, &thrExp, &correctScratch, 1, 0x18000000, 0, 1)
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -805,6 +882,27 @@ func TestFDKaacEncVBRThresholdReductionAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("VBR threshold reduction allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncCorrectThresholdsAllocs(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var peData PEData
+	var thrExp [2][maxGroupedSFB]FixpDBL
+	var ahFlag [2][maxGroupedSFB]uint8
+	var scratch CorrectThresholdScratch
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		fillCorrectThresholdCase(&psyStorage, &qcStorage, &peData, &thrExp, &ahFlag)
+		FDKaacEncCorrectThresholds(qc[:], psy[:], &peData, &ahFlag, &thrExp, &scratch, 1, 0x18000000, 0, -34)
+		adjThrSink = qcStorage.SfbThresholdLdData[0] + scratch.SfbPEFactorsLdData[0][0] + scratch.SfbNActiveLinesLdData[0][1]
+		adjThrHashSink = hashFixpDBL(qcStorage.SfbThresholdLdData[:8])
+	})
+	if allocs != 0 {
+		t.Fatalf("correct-threshold allocations = %v, want 0", allocs)
 	}
 }
 
@@ -1060,6 +1158,43 @@ func fillVBRShortThresholdReductionCase(
 	*thrExp = [2][maxGroupedSFB]FixpDBL{}
 	*ahFlag = [2][maxGroupedSFB]uint8{}
 	flags := [...]uint8{AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, 0, AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, 0}
+	copy(ahFlag[0][:], flags[:])
+
+	psyLocal := [1]*PsyOutChannel{psy}
+	qcLocal := [1]*QCOutChannel{qc}
+	FDKaacEncCalcThresholdExp(thrExp, qcLocal[:], psyLocal[:], 1)
+}
+
+func fillCorrectThresholdCase(
+	psy *PsyOutChannel,
+	qc *QCOutChannel,
+	peData *PEData,
+	thrExp *[2][maxGroupedSFB]FixpDBL,
+	ahFlag *[2][maxGroupedSFB]uint8,
+) {
+	*psy = PsyOutChannel{
+		SfbCnt:             8,
+		SfbPerGroup:        4,
+		MaxSfbPerGroup:     4,
+		LastWindowSequence: LongWindow,
+	}
+	*qc = QCOutChannel{}
+	*peData = PEData{}
+	*thrExp = [2][maxGroupedSFB]FixpDBL{}
+	*ahFlag = [2][maxGroupedSFB]uint8{}
+	for i := 0; i <= 8; i++ {
+		psy.SfbOffsets[i] = i
+	}
+
+	threshold := [...]FixpDBL{-520000000, -500000000, -510000000, -530000000, -500000000, -505000000, -490000000, -540000000}
+	weighted := [...]FixpDBL{-300000000, -250000000, -280000000, -310000000, -260000000, -240000000, -200000000, -330000000}
+	minSnr := [...]FixpDBL{-90000000, -120000000, -150000000, -80000000, -70000000, -160000000, -110000000, -100000000}
+	activeLines := [...]FixpDBL{1, 3, 0, 5, 7, 2, 4, 6}
+	flags := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone, AvoidHoleActive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleNone, AvoidHoleInactive}
+	copy(qc.SfbThresholdLdData[:], threshold[:])
+	copy(qc.SfbWeightedEnergyLdData[:], weighted[:])
+	copy(qc.SfbMinSnrLdData[:], minSnr[:])
+	copy(peData.PEChannelData[0].SfbNActiveLines[:], activeLines[:])
 	copy(ahFlag[0][:], flags[:])
 
 	psyLocal := [1]*PsyOutChannel{psy}

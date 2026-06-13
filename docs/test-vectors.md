@@ -267,6 +267,12 @@ chaos smoothing/history, no-active chaos fallback, AH-active skips, AH
 activation and min-SNR clamping, short-window group scaling, malformed
 controls, no-cgo compilation, and zero steady-state allocation.
 
+The FDK AAC-LC correct-threshold subset is covered with source-shaped positive
+and negative PE-delta vectors for `FDKaacEnc_correctThresh`. Tests verify
+threshold correction, PE-factor scratch, active-line LD scratch, AH-inactive
+clamp controls, malformed prepared-state controls, no-cgo compilation, and zero
+steady-state allocation.
+
 The FDK AAC-LC PE threshold-adjustment subset is covered with source-derived
 vectors for normalized Schur division, `FDKaacEnc_preparePe`,
 `FDKaacEnc_calcWeighting`, `FDKaacEnc_calcPe`, and `FDKaacEnc_peCalculation`.
