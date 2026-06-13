@@ -36,6 +36,8 @@ const (
 	relBits005 FixpDBL = 0x06666668
 	relBits018 FixpDBL = 0x170a3d80
 	relBits004 FixpDBL = 0x051eb850
+	relBits055 FixpDBL = 0x46666680
+	invInt5    FixpDBL = 0x19999999
 )
 
 func FDKaacEncDetermineEncoderMode(mode *ChannelMode, nChannels int) int {
@@ -222,4 +224,197 @@ func fdkaacEncChannelMapValue(channelOrder ChannelOrder, chIdx int, mapIdx int) 
 		return channelMapDefault[mapIdx][chIdx]
 	}
 	return chIdx
+}
+
+func FDKaacEncInitElementBits(elementBits []*ElementBits, cm *ChannelMapping, bitrateTot int, averageBitsTot int, maxChannelBits int) int {
+	if cm == nil {
+		panic("fdkaac: nil element-bits channel mapping")
+	}
+	if bitrateTot < 0 || averageBitsTot < 0 || maxChannelBits < 0 {
+		panic("fdkaac: negative element-bits control")
+	}
+
+	nElements := fdkaacEncInitElementBitsCount(cm.EncMode)
+	if nElements < 0 {
+		return AACEncUnsupportedChannelConf
+	}
+	fdkaacEncCheckElementBits(elementBits, nElements)
+
+	scBrTot := CountLeadingBits(FixpDBL(bitrateTot))
+
+	switch cm.EncMode {
+	case Mode1:
+		elementBits[0].ChBitrateEl = bitrateTot
+		elementBits[0].MaxBitsEl = maxChannelBits
+		elementBits[0].RelativeBitsEl = cm.ElInfo[0].RelativeBits
+	case Mode2:
+		elementBits[0].ChBitrateEl = bitrateTot >> 1
+		elementBits[0].MaxBitsEl = 2 * maxChannelBits
+		elementBits[0].RelativeBitsEl = cm.ElInfo[0].RelativeBits
+	case Mode1_2:
+		elementBits[0].RelativeBitsEl = cm.ElInfo[0].RelativeBits
+		elementBits[1].RelativeBitsEl = cm.ElInfo[1].RelativeBits
+		sceRate := elementBits[0].RelativeBitsEl
+		cpeRate := elementBits[1].RelativeBitsEl
+		elementBits[0].ChBitrateEl = fdkaacEncInitElementBitrate(sceRate, bitrateTot, scBrTot, scBrTot)
+		elementBits[1].ChBitrateEl = fdkaacEncInitElementBitrate(cpeRate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[0].MaxBitsEl = maxChannelBits
+		elementBits[1].MaxBitsEl = 2 * maxChannelBits
+	case Mode1_2_1:
+		elementBits[0].RelativeBitsEl = cm.ElInfo[0].RelativeBits
+		elementBits[1].RelativeBitsEl = cm.ElInfo[1].RelativeBits
+		elementBits[2].RelativeBitsEl = cm.ElInfo[2].RelativeBits
+		sce1Rate := elementBits[0].RelativeBitsEl
+		cpeRate := elementBits[1].RelativeBitsEl
+		sce2Rate := elementBits[2].RelativeBitsEl
+		elementBits[0].ChBitrateEl = fdkaacEncInitElementBitrate(sce1Rate, bitrateTot, scBrTot, scBrTot)
+		elementBits[1].ChBitrateEl = fdkaacEncInitElementBitrate(cpeRate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[2].ChBitrateEl = fdkaacEncInitElementBitrate(sce2Rate, bitrateTot, scBrTot, scBrTot)
+		elementBits[0].MaxBitsEl = maxChannelBits
+		elementBits[1].MaxBitsEl = 2 * maxChannelBits
+		elementBits[2].MaxBitsEl = maxChannelBits
+	case Mode1_2_2:
+		elementBits[0].RelativeBitsEl = cm.ElInfo[0].RelativeBits
+		elementBits[1].RelativeBitsEl = cm.ElInfo[1].RelativeBits
+		elementBits[2].RelativeBitsEl = cm.ElInfo[2].RelativeBits
+		sceRate := elementBits[0].RelativeBitsEl
+		cpe1Rate := elementBits[1].RelativeBitsEl
+		cpe2Rate := elementBits[2].RelativeBitsEl
+		elementBits[0].ChBitrateEl = fdkaacEncInitElementBitrate(sceRate, bitrateTot, scBrTot, scBrTot)
+		elementBits[1].ChBitrateEl = fdkaacEncInitElementBitrate(cpe1Rate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[2].ChBitrateEl = fdkaacEncInitElementBitrate(cpe2Rate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[0].MaxBitsEl = maxChannelBits
+		elementBits[1].MaxBitsEl = 2 * maxChannelBits
+		elementBits[2].MaxBitsEl = 2 * maxChannelBits
+	case Mode1_2_2_1:
+		elementBits[0].RelativeBitsEl = cm.ElInfo[0].RelativeBits
+		elementBits[1].RelativeBitsEl = cm.ElInfo[1].RelativeBits
+		elementBits[2].RelativeBitsEl = cm.ElInfo[2].RelativeBits
+		elementBits[3].RelativeBitsEl = cm.ElInfo[3].RelativeBits
+		sceRate := elementBits[0].RelativeBitsEl
+		cpe1Rate := elementBits[1].RelativeBitsEl
+		cpe2Rate := elementBits[2].RelativeBitsEl
+		lfeRate := elementBits[3].RelativeBitsEl
+		maxLfeBits, maxBitsEl := fdkaacEncInitLFEElementBits(lfeRate, maxChannelBits, averageBitsTot, 5, true)
+		elementBits[0].ChBitrateEl = fdkaacEncInitElementBitrate(sceRate, bitrateTot, scBrTot, scBrTot)
+		elementBits[1].ChBitrateEl = fdkaacEncInitElementBitrate(cpe1Rate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[2].ChBitrateEl = fdkaacEncInitElementBitrate(cpe2Rate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[3].ChBitrateEl = fdkaacEncInitElementBitrate(lfeRate, bitrateTot, scBrTot, scBrTot)
+		elementBits[0].MaxBitsEl = maxBitsEl
+		elementBits[1].MaxBitsEl = 2 * maxBitsEl
+		elementBits[2].MaxBitsEl = 2 * maxBitsEl
+		elementBits[3].MaxBitsEl = maxLfeBits
+	case Mode6_1:
+		elementBits[0].RelativeBitsEl = cm.ElInfo[0].RelativeBits
+		elementBits[1].RelativeBitsEl = cm.ElInfo[1].RelativeBits
+		elementBits[2].RelativeBitsEl = cm.ElInfo[2].RelativeBits
+		elementBits[3].RelativeBitsEl = cm.ElInfo[3].RelativeBits
+		elementBits[4].RelativeBitsEl = cm.ElInfo[4].RelativeBits
+		sceRate := elementBits[0].RelativeBitsEl
+		cpe1Rate := elementBits[1].RelativeBitsEl
+		cpe2Rate := elementBits[2].RelativeBitsEl
+		sce2Rate := elementBits[3].RelativeBitsEl
+		lfeRate := elementBits[4].RelativeBitsEl
+		maxLfeBits, maxBitsEl := fdkaacEncInitLFEElementBits(lfeRate, maxChannelBits, averageBitsTot, 6, false)
+		elementBits[0].ChBitrateEl = fdkaacEncInitElementBitrate(sceRate, bitrateTot, scBrTot, scBrTot)
+		elementBits[1].ChBitrateEl = fdkaacEncInitElementBitrate(cpe1Rate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[2].ChBitrateEl = fdkaacEncInitElementBitrate(cpe2Rate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[3].ChBitrateEl = fdkaacEncInitElementBitrate(sce2Rate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[4].ChBitrateEl = fdkaacEncInitElementBitrate(lfeRate, bitrateTot, scBrTot, scBrTot)
+		elementBits[0].MaxBitsEl = maxBitsEl
+		elementBits[1].MaxBitsEl = 2 * maxBitsEl
+		elementBits[2].MaxBitsEl = 2 * maxBitsEl
+		elementBits[3].MaxBitsEl = maxBitsEl
+		elementBits[4].MaxBitsEl = maxLfeBits
+	case Mode1_2_2_2_1, Mode7_1Back, Mode7_1TopFront, Mode7_1RearSurround, Mode7_1FrontCenter:
+		cpe3Idx := 3
+		lfeIdx := 4
+		if cm.EncMode == Mode7_1TopFront {
+			cpe3Idx = 4
+			lfeIdx = 3
+		}
+		elementBits[0].RelativeBitsEl = cm.ElInfo[0].RelativeBits
+		elementBits[1].RelativeBitsEl = cm.ElInfo[1].RelativeBits
+		elementBits[2].RelativeBitsEl = cm.ElInfo[2].RelativeBits
+		elementBits[cpe3Idx].RelativeBitsEl = cm.ElInfo[cpe3Idx].RelativeBits
+		elementBits[lfeIdx].RelativeBitsEl = cm.ElInfo[lfeIdx].RelativeBits
+		sceRate := elementBits[0].RelativeBitsEl
+		cpe1Rate := elementBits[1].RelativeBitsEl
+		cpe2Rate := elementBits[2].RelativeBitsEl
+		cpe3Rate := elementBits[cpe3Idx].RelativeBitsEl
+		lfeRate := elementBits[lfeIdx].RelativeBitsEl
+		maxLfeBits, maxBitsEl := fdkaacEncInitLFEElementBits(lfeRate, maxChannelBits, averageBitsTot, 7, false)
+		elementBits[0].ChBitrateEl = fdkaacEncInitElementBitrate(sceRate, bitrateTot, scBrTot, scBrTot)
+		elementBits[1].ChBitrateEl = fdkaacEncInitElementBitrate(cpe1Rate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[2].ChBitrateEl = fdkaacEncInitElementBitrate(cpe2Rate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[cpe3Idx].ChBitrateEl = fdkaacEncInitElementBitrate(cpe3Rate, bitrateTot, scBrTot, scBrTot+1)
+		elementBits[lfeIdx].ChBitrateEl = fdkaacEncInitElementBitrate(lfeRate, bitrateTot, scBrTot, scBrTot)
+		elementBits[0].MaxBitsEl = maxBitsEl
+		elementBits[1].MaxBitsEl = 2 * maxBitsEl
+		elementBits[2].MaxBitsEl = 2 * maxBitsEl
+		elementBits[cpe3Idx].MaxBitsEl = 2 * maxBitsEl
+		elementBits[lfeIdx].MaxBitsEl = maxLfeBits
+	}
+
+	return AACEncOK
+}
+
+func fdkaacEncInitElementBitsCount(mode ChannelMode) int {
+	switch mode {
+	case Mode1, Mode2:
+		return 1
+	case Mode1_2:
+		return 2
+	case Mode1_2_1, Mode1_2_2:
+		return 3
+	case Mode1_2_2_1:
+		return 4
+	case Mode6_1, Mode1_2_2_2_1, Mode7_1Back, Mode7_1TopFront, Mode7_1RearSurround, Mode7_1FrontCenter:
+		return 5
+	default:
+		return -1
+	}
+}
+
+func fdkaacEncCheckElementBits(elementBits []*ElementBits, nElements int) {
+	if len(elementBits) < nElements {
+		panic("fdkaac: too few element-bits entries")
+	}
+	for i := 0; i < nElements; i++ {
+		if elementBits[i] == nil {
+			panic("fdkaac: nil element-bits entry")
+		}
+	}
+}
+
+func fdkaacEncInitElementBitrate(rate FixpDBL, bitrateTot int, scale int, postShift int) int {
+	return int(FMultDD(rate, fdkaacEncShiftedFixpDBL(bitrateTot, scale)) >> uint(postShift))
+}
+
+func fdkaacEncInitLFEElementBits(lfeRate FixpDBL, maxChannelBits int, averageBitsTot int, effectiveChannels int, reciprocal bool) (int, int) {
+	sc := CountLeadingBits(FixpDBL(maxInt(maxChannelBits, averageBitsTot)))
+	maxLfeBitsA := int(FMultDD(lfeRate, fdkaacEncShiftedFixpDBL(maxChannelBits, sc))>>uint(sc)) << 1
+	maxLfeBitsB := int((FMultDD(relBits055, FMultDD(lfeRate, fdkaacEncShiftedFixpDBL(averageBitsTot, sc))) << 1) >> uint(sc))
+	maxLfeBits := maxInt(maxLfeBitsA, maxLfeBitsB)
+
+	maxBitsTot := maxChannelBits * effectiveChannels
+	maxBitsEl := maxBitsTot - maxLfeBits
+	if reciprocal {
+		sc = CountLeadingBits(FixpDBL(maxBitsEl))
+		maxBitsEl = int(FMultDD(fdkaacEncShiftedFixpDBL(maxBitsEl, sc), invInt5) >> uint(sc))
+	} else {
+		maxBitsEl /= effectiveChannels
+	}
+	return maxLfeBits, maxBitsEl
+}
+
+func fdkaacEncShiftedFixpDBL(value int, scale int) FixpDBL {
+	if value < 0 || scale < 0 {
+		panic("fdkaac: invalid fixed-point shift")
+	}
+	shifted := value << uint(scale)
+	if shifted > int(MaxValDBL) {
+		panic("fdkaac: fixed-point shift overflow")
+	}
+	return FixpDBL(shifted)
 }

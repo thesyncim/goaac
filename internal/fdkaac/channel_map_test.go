@@ -223,6 +223,205 @@ func TestFDKaacEncInitChannelMappingRejectsInvalid(t *testing.T) {
 	})
 }
 
+func TestFDKaacEncInitElementBitsVectors(t *testing.T) {
+	const (
+		avgBits = 1024
+		maxBits = 6144
+	)
+	tests := []struct {
+		name    string
+		mode    ChannelMode
+		bitrate int
+		want    []elementBitsWant
+	}{
+		{
+			name:    "mono",
+			mode:    Mode1,
+			bitrate: 64000,
+			want: []elementBitsWant{
+				{chBitrate: 64000, maxBits: 6144, rel: MaxValDBL},
+			},
+		},
+		{
+			name:    "stereo",
+			mode:    Mode2,
+			bitrate: 128000,
+			want: []elementBitsWant{
+				{chBitrate: 64000, maxBits: 12288, rel: MaxValDBL},
+			},
+		},
+		{
+			name:    "3.0",
+			mode:    Mode1_2,
+			bitrate: 192000,
+			want: []elementBitsWant{
+				{chBitrate: 76800, maxBits: 6144, rel: relBits04},
+				{chBitrate: 57600, maxBits: 12288, rel: relBits06},
+			},
+		},
+		{
+			name:    "4.0",
+			mode:    Mode1_2_1,
+			bitrate: 256000,
+			want: []elementBitsWant{
+				{chBitrate: 76800, maxBits: 6144, rel: relBits03},
+				{chBitrate: 51200, maxBits: 12288, rel: relBits04},
+				{chBitrate: 76800, maxBits: 6144, rel: relBits03},
+			},
+		},
+		{
+			name:    "5.0",
+			mode:    Mode1_2_2,
+			bitrate: 320000,
+			want: []elementBitsWant{
+				{chBitrate: 83199, maxBits: 6144, rel: relBits026},
+				{chBitrate: 59200, maxBits: 12288, rel: relBits037},
+				{chBitrate: 59200, maxBits: 12288, rel: relBits037},
+			},
+		},
+		{
+			name:    "5.1 LFE reservoir exclusion",
+			mode:    Mode1_2_2_1,
+			bitrate: 320000,
+			want: []elementBitsWant{
+				{chBitrate: 76799, maxBits: 5996, rel: relBits024},
+				{chBitrate: 55999, maxBits: 11992, rel: relBits035},
+				{chBitrate: 55999, maxBits: 11992, rel: relBits035},
+				{chBitrate: 19199, maxBits: 736, rel: relBits006},
+			},
+		},
+		{
+			name:    "6.1 LFE reservoir exclusion",
+			mode:    Mode6_1,
+			bitrate: 384000,
+			want: []elementBitsWant{
+				{chBitrate: 76800, maxBits: 6041, rel: relBits02},
+				{chBitrate: 52800, maxBits: 12082, rel: relBits027},
+				{chBitrate: 52800, maxBits: 12082, rel: relBits027},
+				{chBitrate: 38400, maxBits: 6041, rel: relBits02},
+				{chBitrate: 19200, maxBits: 614, rel: relBits005},
+			},
+		},
+		{
+			name:    "7.1 back",
+			mode:    Mode7_1Back,
+			bitrate: 448000,
+			want: []elementBitsWant{
+				{chBitrate: 80640, maxBits: 6074, rel: relBits018},
+				{chBitrate: 58239, maxBits: 12148, rel: relBits026},
+				{chBitrate: 58239, maxBits: 12148, rel: relBits026},
+				{chBitrate: 58239, maxBits: 12148, rel: relBits026},
+				{chBitrate: 17919, maxBits: 490, rel: relBits004},
+			},
+		},
+		{
+			name:    "7.1 top-front LFE index",
+			mode:    Mode7_1TopFront,
+			bitrate: 448000,
+			want: []elementBitsWant{
+				{chBitrate: 80640, maxBits: 6074, rel: relBits018},
+				{chBitrate: 58239, maxBits: 12148, rel: relBits026},
+				{chBitrate: 58239, maxBits: 12148, rel: relBits026},
+				{chBitrate: 17919, maxBits: 490, rel: relBits004},
+				{chBitrate: 58239, maxBits: 12148, rel: relBits026},
+			},
+		},
+		{
+			name:    "7.1 front-center alias",
+			mode:    Mode7_1FrontCenter,
+			bitrate: 448000,
+			want: []elementBitsWant{
+				{chBitrate: 80640, maxBits: 6074, rel: relBits018},
+				{chBitrate: 58239, maxBits: 12148, rel: relBits026},
+				{chBitrate: 58239, maxBits: 12148, rel: relBits026},
+				{chBitrate: 58239, maxBits: 12148, rel: relBits026},
+				{chBitrate: 17919, maxBits: 490, rel: relBits004},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var cm ChannelMapping
+			if errCode := FDKaacEncInitChannelMapping(tt.mode, ChannelOrderWAV, &cm); errCode != AACEncOK {
+				t.Fatalf("mapping error = %#x", errCode)
+			}
+			elementBits, elementBitsPtrs := initializedElementBits()
+			if errCode := FDKaacEncInitElementBits(elementBitsPtrs[:], &cm, tt.bitrate, avgBits, maxBits); errCode != AACEncOK {
+				t.Fatalf("element bits error = %#x, want %#x", errCode, AACEncOK)
+			}
+			assertElementBits(t, elementBits[:], tt.want)
+		})
+	}
+}
+
+func TestFDKaacEncInitElementBitsRejectsInvalid(t *testing.T) {
+	t.Run("nil mapping", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic")
+			}
+		}()
+		elementBits, elementBitsPtrs := initializedElementBits()
+		_ = elementBits
+		_ = FDKaacEncInitElementBits(elementBitsPtrs[:], nil, 64000, 1024, 6144)
+	})
+
+	t.Run("negative controls", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic")
+			}
+		}()
+		var cm ChannelMapping
+		if errCode := FDKaacEncInitChannelMapping(Mode2, ChannelOrderMPEG, &cm); errCode != AACEncOK {
+			t.Fatalf("mapping error = %#x", errCode)
+		}
+		elementBits, elementBitsPtrs := initializedElementBits()
+		_ = elementBits
+		_ = FDKaacEncInitElementBits(elementBitsPtrs[:], &cm, -1, 1024, 6144)
+	})
+
+	t.Run("too few element entries", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic")
+			}
+		}()
+		var cm ChannelMapping
+		if errCode := FDKaacEncInitChannelMapping(Mode1_2, ChannelOrderMPEG, &cm); errCode != AACEncOK {
+			t.Fatalf("mapping error = %#x", errCode)
+		}
+		var bit0 ElementBits
+		_ = FDKaacEncInitElementBits([]*ElementBits{&bit0}, &cm, 192000, 1024, 6144)
+	})
+
+	t.Run("nil element entry", func(t *testing.T) {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("expected panic")
+			}
+		}()
+		var cm ChannelMapping
+		if errCode := FDKaacEncInitChannelMapping(Mode2, ChannelOrderMPEG, &cm); errCode != AACEncOK {
+			t.Fatalf("mapping error = %#x", errCode)
+		}
+		_ = FDKaacEncInitElementBits([]*ElementBits{nil}, &cm, 128000, 1024, 6144)
+	})
+
+	t.Run("unsupported mode", func(t *testing.T) {
+		var cm ChannelMapping
+		elementBits, elementBitsPtrs := initializedElementBits()
+		errCode := FDKaacEncInitElementBits(elementBitsPtrs[:], &cm, 128000, 1024, 6144)
+		if errCode != AACEncUnsupportedChannelConf {
+			t.Fatalf("error = %#x, want %#x", errCode, AACEncUnsupportedChannelConf)
+		}
+		if elementBits[0].ChBitrateEl != 0 || elementBits[0].MaxBitsEl != 0 || elementBits[0].RelativeBitsEl != 0 {
+			t.Fatalf("unsupported mode mutated element bits: %+v", elementBits[0])
+		}
+	})
+}
+
 func TestFDKaacEncChannelMappingAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		mode := ModeUnknown
@@ -239,6 +438,22 @@ func TestFDKaacEncChannelMappingAllocs(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncInitElementBitsAllocs(t *testing.T) {
+	var cm ChannelMapping
+	if errCode := FDKaacEncInitChannelMapping(Mode7_1TopFront, ChannelOrderWAV, &cm); errCode != AACEncOK {
+		t.Fatalf("mapping error = %#x", errCode)
+	}
+	elementBits, elementBitsPtrs := initializedElementBits()
+	allocs := testing.AllocsPerRun(1000, func() {
+		errCode := FDKaacEncInitElementBits(elementBitsPtrs[:], &cm, 448000, 1024, 6144)
+		channelMapIntSink = errCode + elementBits[3].MaxBitsEl
+		channelMapRelSink = elementBits[4].RelativeBitsEl
+	})
+	if allocs != 0 {
+		t.Fatalf("element-bits allocations = %v, want 0", allocs)
+	}
+}
+
 type channelMapElementWant struct {
 	elType int
 	tag    int
@@ -246,6 +461,12 @@ type channelMapElementWant struct {
 	ch0    int
 	ch1    int
 	rel    FixpDBL
+}
+
+type elementBitsWant struct {
+	chBitrate int
+	maxBits   int
+	rel       FixpDBL
 }
 
 func assertChannelMapping(t *testing.T, cm *ChannelMapping, wantMode ChannelMode, wantCh int, wantEffCh int, want []channelMapElementWant) {
@@ -265,6 +486,33 @@ func assertChannelMapping(t *testing.T, cm *ChannelMapping, wantMode ChannelMode
 			got.RelativeBits != w.rel {
 			t.Fatalf("element %d = %+v, want type %d tag %d nCh %d ch [%d %d] rel %#x",
 				i, got, w.elType, w.tag, w.nCh, w.ch0, w.ch1, int32(w.rel))
+		}
+	}
+}
+
+func initializedElementBits() (*[maxChannelElements]ElementBits, [maxChannelElements]*ElementBits) {
+	var elementBits [maxChannelElements]ElementBits
+	var elementBitsPtrs [maxChannelElements]*ElementBits
+	for i := range elementBits {
+		elementBits[i].BitResLevelEl = 700 + i
+		elementBits[i].MaxBitResBitsEl = 900 + i
+		elementBitsPtrs[i] = &elementBits[i]
+	}
+	return &elementBits, elementBitsPtrs
+}
+
+func assertElementBits(t *testing.T, got []ElementBits, want []elementBitsWant) {
+	t.Helper()
+	for i, w := range want {
+		if got[i].ChBitrateEl != w.chBitrate ||
+			got[i].MaxBitsEl != w.maxBits ||
+			got[i].RelativeBitsEl != w.rel {
+			t.Fatalf("element bits %d = %+v, want chBitrate %d maxBits %d rel %#x",
+				i, got[i], w.chBitrate, w.maxBits, int32(w.rel))
+		}
+		if got[i].BitResLevelEl != 700+i || got[i].MaxBitResBitsEl != 900+i {
+			t.Fatalf("element bits %d reservoir fields = %d/%d, want preserved %d/%d",
+				i, got[i].BitResLevelEl, got[i].MaxBitResBitsEl, 700+i, 900+i)
 		}
 	}
 }

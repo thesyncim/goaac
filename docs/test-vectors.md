@@ -56,11 +56,12 @@ again.
 The FDK encoder bandwidth/channel-control subset is covered with source-shaped
 vectors for `FDKaacEnc_DetermineBandWidth`, `FDKaacEnc_GetVBRBitrate`,
 `FDKaacEnc_AdjustVBRBitrateMode`, `FDKaacEnc_DetermineEncoderMode`, and
-`FDKaacEnc_InitChannelMapping`. Tests verify CBR/VBR table selection,
-proposed-bandwidth clipping, low-delay fixed-point interpolation, effective
-channel handling with LFE excluded, channel-mode selection, MPEG/WAV/WG4 channel
-order, relative-bit shares, 7.1 aliases, malformed controls, no-cgo
-compilation, and zero steady-state allocation.
+`FDKaacEnc_InitChannelMapping`, and `FDKaacEnc_InitElementBits`. Tests verify
+CBR/VBR table selection, proposed-bandwidth clipping, low-delay fixed-point
+interpolation, effective channel handling with LFE excluded, channel-mode
+selection, MPEG/WAV/WG4 channel order, relative-bit shares, 7.1 aliases,
+per-element bitrate, max-bit budgets, LFE reservoir exclusion, malformed
+controls, no-cgo compilation, and zero steady-state allocation.
 
 The FDK `SineTable512` ROM used by the 64/128/256/512-point radix FFT path is
 also locked by source-derived sample entries, an FNV-1a checksum, output hashes
