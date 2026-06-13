@@ -35,9 +35,8 @@ type QCMainQuantizeScratch struct {
 }
 
 type QCMainFrameScratch struct {
-	Adjust  AdjustThresholdsScratch
-	Quant   QCMainQuantizeScratch
-	Element [1][maxChannelElements]*QCOutElement
+	Adjust AdjustThresholdsScratch
+	Quant  QCMainQuantizeScratch
 }
 
 type ElementBits struct {
@@ -158,7 +157,33 @@ func FDKaacEncQCMainQuantizeFrame(
 ) (QCMainQuantizeResult, int) {
 	checkQCMainQuantizeFrameInputs(cm, psyOutElement, qcOut, qcElement, adjThrState, elementBits, scratch, maxIterations)
 
-	result := QCMainQuantizeResult{ConstraintsFulfilled: 1, DecreaseBitConsumption: -1}
+	fdkaacEncQCMainQuantizeSetup(cm, psyOutElement, qcOut, qcElement, scratch, invQuant, dZoneQuantEnable)
+	return fdkaacEncQCMainQuantizePass(
+		cm,
+		psyOutElement,
+		qcOut,
+		qcElement,
+		adjThrState,
+		elementBits,
+		scratch,
+		-1,
+		dZoneQuantEnable,
+		maxIterations,
+		aot,
+		syntaxFlags,
+		epConfig,
+	)
+}
+
+func fdkaacEncQCMainQuantizeSetup(
+	cm *ChannelMapping,
+	psyOutElement []*PsyOutElement,
+	qcOut *QCOut,
+	qcElement []*QCOutElement,
+	scratch *QCMainQuantizeScratch,
+	invQuant int,
+	dZoneQuantEnable int,
+) {
 	for i := 0; i < cm.NElements; i++ {
 		elInfo := cm.ElInfo[i]
 		if !fdkaacEncIsAdjustableElement(elInfo.ElType) {
@@ -177,6 +202,35 @@ func FDKaacEncQCMainQuantizeFrame(
 			scratch.ChConstraintsFulfilled[i][ch] = 1
 			scratch.CalculateQuant[i][ch] = 1
 		}
+	}
+	qcOut.UsedDynBits = -1
+}
+
+func fdkaacEncQCMainQuantizePass(
+	cm *ChannelMapping,
+	psyOutElement []*PsyOutElement,
+	qcOut *QCOut,
+	qcElement []*QCOutElement,
+	adjThrState *AdjThrState,
+	elementBits []*ElementBits,
+	scratch *QCMainQuantizeScratch,
+	decreaseBitConsumption int,
+	dZoneQuantEnable int,
+	maxIterations int,
+	aot int,
+	syntaxFlags uint32,
+	epConfig int8,
+) (QCMainQuantizeResult, int) {
+	result := QCMainQuantizeResult{ConstraintsFulfilled: 1, DecreaseBitConsumption: decreaseBitConsumption}
+	for i := 0; i < cm.NElements; i++ {
+		elInfo := cm.ElInfo[i]
+		if !fdkaacEncIsAdjustableElement(elInfo.ElType) {
+			continue
+		}
+
+		nChannels := elInfo.NChannelsInEl
+		psyChannels := psyOutElement[i].PsyOutChannel[:nChannels]
+		qcChannels := qcElement[i].QCOutChannel[:nChannels]
 
 		for {
 			if scratch.ConstraintsFulfilled[i] == 0 {
@@ -341,11 +395,12 @@ func FDKaacEncQCMainFrame(
 		return result, errCode
 	}
 
+	var frameElement [1][maxChannelElements]*QCOutElement
 	for i := 0; i < cm.NElements; i++ {
 		if fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
-			scratch.Element[0][i] = qcElement[0][i]
+			frameElement[0][i] = qcElement[0][i]
 		} else {
-			scratch.Element[0][i] = nil
+			frameElement[0][i] = nil
 		}
 	}
 
@@ -354,7 +409,7 @@ func FDKaacEncQCMainFrame(
 		adjThrState,
 		psyOutElement,
 		qcOut,
-		scratch.Element[:],
+		frameElement[:],
 		cm,
 		elementBits,
 		bitresAvgTotalBits,
@@ -365,53 +420,75 @@ func FDKaacEncQCMainFrame(
 	result.TotalAvailableBits = prepareResult.TotalAvailableBits
 	result.AvgTotalDynBits = prepareResult.AvgTotalDynBits
 
-	adjustResult := FDKaacEncAdjustThresholds(adjThrState, scratch.Element[0][:], qcOut[0], psyOutElement, isCBRAdjustment, cm, &scratch.Adjust)
+	adjustResult := FDKaacEncAdjustThresholds(adjThrState, frameElement[0][:], qcOut[0], psyOutElement, isCBRAdjustment, cm, &scratch.Adjust)
 	result.AdjustedElements = adjustResult.AdaptedElements
 	result.AdjustmentIterations = adjustResult.Iterations
 
-	quantResult, errCode := FDKaacEncQCMainQuantizeFrame(
-		cm,
-		psyOutElement,
-		qcOut[0],
-		scratch.Element[0][:],
-		adjThrState,
-		elementBits,
-		&scratch.Quant,
-		invQuant,
-		dZoneQuantEnable,
-		maxIterations,
-		aot,
-		syntaxFlags,
-		epConfig,
-	)
-	result.QuantizationPasses = 1
-	result.QuantizedElements = quantResult.QuantizedElements
-	result.SumDynBitsConsumed = quantResult.SumDynBitsConsumed
-	result.CrashRecoveryNeeded = quantResult.CrashRecoveryNeeded
-	if errCode != AACEncOK {
-		return result, errCode
-	}
+	fdkaacEncQCMainQuantizeSetup(cm, psyOutElement, qcOut[0], frameElement[0][:], &scratch.Quant, invQuant, dZoneQuantEnable)
+	decreaseBitConsumption := -1
+	for {
+		quantResult, errCode := fdkaacEncQCMainQuantizePass(
+			cm,
+			psyOutElement,
+			qcOut[0],
+			frameElement[0][:],
+			adjThrState,
+			elementBits,
+			&scratch.Quant,
+			decreaseBitConsumption,
+			dZoneQuantEnable,
+			maxIterations,
+			aot,
+			syntaxFlags,
+			epConfig,
+		)
+		result.QuantizationPasses++
+		result.QuantizedElements += quantResult.QuantizedElements
+		result.SumDynBitsConsumed = quantResult.SumDynBitsConsumed
+		if quantResult.CrashRecoveryNeeded != 0 {
+			result.CrashRecoveryNeeded = 1
+		}
+		if errCode != AACEncOK {
+			return result, errCode
+		}
 
-	decision := FDKaacEncQCMainQuantizationDecision(
-		qcKernel,
-		qcOut,
-		scratch.Element[:],
-		cm,
-		result.TotalAvailableBits,
-		result.AvgTotalDynBits,
-		quantResult.SumDynBitsConsumed,
-		quantResult.DecreaseBitConsumption,
-		scratch.Quant.Iterations[:],
-		maxIterations,
-	)
-	result.SumDynBitsConsumed = decision.SumDynBitsConsumed
-	result.SumBitsConsumed = decision.SumBitsConsumed
-	result.QuantizationDone = decision.QuantizationDone
-	result.DecreaseBitConsumption = decision.DecreaseBitConsumption
-	result.EmergencyIterations = decision.EmergencyIterations
-	result.DynBitsOvershoot = decision.DynBitsOvershoot
-	result.ConstraintsReset = decision.ConstraintsReset
+		decision := FDKaacEncQCMainQuantizationDecision(
+			qcKernel,
+			qcOut,
+			frameElement[:],
+			cm,
+			result.TotalAvailableBits,
+			result.AvgTotalDynBits,
+			quantResult.SumDynBitsConsumed,
+			quantResult.DecreaseBitConsumption,
+			scratch.Quant.Iterations[:],
+			maxIterations,
+		)
+		result.SumDynBitsConsumed = decision.SumDynBitsConsumed
+		result.SumBitsConsumed = decision.SumBitsConsumed
+		result.QuantizationDone = decision.QuantizationDone
+		result.DecreaseBitConsumption = decision.DecreaseBitConsumption
+		result.EmergencyIterations = decision.EmergencyIterations
+		result.DynBitsOvershoot = decision.DynBitsOvershoot
+		if decision.ConstraintsReset != 0 {
+			result.ConstraintsReset++
+			fdkaacEncQCMainResetConstraints(&scratch.Quant)
+		}
+		decreaseBitConsumption = decision.DecreaseBitConsumption
+		if decision.QuantizationDone != 0 {
+			break
+		}
+	}
 	return result, AACEncOK
+}
+
+func fdkaacEncQCMainResetConstraints(scratch *QCMainQuantizeScratch) {
+	for i := 0; i < maxChannelElements; i++ {
+		scratch.ConstraintsFulfilled[i] = 0
+		for ch := 0; ch < 2; ch++ {
+			scratch.ChConstraintsFulfilled[i][ch] = 0
+		}
+	}
 }
 
 func FDKaacEncQCMainQuantizationDecision(

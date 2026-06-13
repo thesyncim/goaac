@@ -47,6 +47,33 @@ func FDKaacEncBitCountScalefactorDelta(delta int) int {
 func FDKaacEncBitCount(values []int16, width int, maxVal int, bitCount []int) int {
 	checkBitCountInputs(values, width, maxVal, bitCount)
 
+	roundedWidth := fdkaacEncBitCountRoundedWidth(width, maxVal)
+	if roundedWidth == width {
+		fdkaacEncBitCountRaw(values, width, maxVal, bitCount)
+		return 0
+	}
+
+	align := 4
+	if maxVal >= codeBookEscLav {
+		align = 2
+	}
+	fullWidth := width &^ (align - 1)
+
+	var tailValues [4]int16
+	copy(tailValues[:], values[fullWidth:width])
+	var tailCount [codeBookEscNo + 1]int
+	fdkaacEncBitCountRaw(tailValues[:], align, maxVal, tailCount[:])
+	if fullWidth == 0 {
+		copy(bitCount, tailCount[:])
+		return 0
+	}
+
+	fdkaacEncBitCountRaw(values, fullWidth, maxVal, bitCount)
+	fdkaacEncBitCountAdd(bitCount, tailCount[:])
+	return 0
+}
+
+func fdkaacEncBitCountRaw(values []int16, width int, maxVal int, bitCount []int) {
 	if maxVal == 0 {
 		bitCount[0] = 0
 	} else {
@@ -69,7 +96,23 @@ func FDKaacEncBitCount(values []int16, width int, maxVal int, bitCount []int) in
 	default:
 		fdkaacEncCountEsc(values, width, bitCount)
 	}
-	return 0
+}
+
+func fdkaacEncBitCountRoundedWidth(width int, maxVal int) int {
+	if maxVal >= codeBookEscLav {
+		return (width + 1) &^ 1
+	}
+	return (width + 3) &^ 3
+}
+
+func fdkaacEncBitCountAdd(bitCount []int, tailCount []int) {
+	for i := 0; i <= codeBookEscNo; i++ {
+		if bitCount[i] >= invalidBitcount || tailCount[i] >= invalidBitcount {
+			bitCount[i] = invalidBitcount
+			continue
+		}
+		bitCount[i] += tailCount[i]
+	}
 }
 
 func FDKaacEncCountValues(values []int16, width int, codeBook int) int {
@@ -601,7 +644,7 @@ func fdkaacEncCountEsc(values []int16, width int, bitCount []int) {
 }
 
 func checkBitCountInputs(values []int16, width int, maxVal int, bitCount []int) {
-	if width < 0 || width%4 != 0 || maxVal < 0 {
+	if width < 0 || width > maxSpectralLines || maxVal < 0 {
 		panic("fdkaac: invalid spectral bit-count control")
 	}
 	if len(values) < width {

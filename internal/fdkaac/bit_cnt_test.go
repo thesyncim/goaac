@@ -193,6 +193,40 @@ func TestFDKaacEncBitCountVectors(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncBitCountShortBandVector(t *testing.T) {
+	values := [...]int16{0, 0, 7, -7}
+	got := [12]int{-99, -99, -99, -99, -99, -99, -99, -99, -99, -99, -99, -99}
+	FDKaacEncBitCount(values[:], 2, 0, got[:])
+	want := [12]int{0, 1, 3, 1, 4, 2, 8, 2, 10, 2, 12, 8}
+	if got != want {
+		t.Fatalf("short band bit counts = %v, want %v", got, want)
+	}
+}
+
+func TestFDKaacEncBitCountShortEscapeBandVector(t *testing.T) {
+	values := [...]int16{16, 99}
+	got := [12]int{-99, -99, -99, -99, -99, -99, -99, -99, -99, -99, -99, -99}
+	FDKaacEncBitCount(values[:], 1, 16, got[:])
+
+	want := [12]int{
+		invalidBitcount,
+		invalidBitcount,
+		invalidBitcount,
+		invalidBitcount,
+		invalidBitcount,
+		invalidBitcount,
+		invalidBitcount,
+		invalidBitcount,
+		invalidBitcount,
+		invalidBitcount,
+		invalidBitcount,
+		int(fdkaacEncHuffLtab11[16][0]) + 6,
+	}
+	if got != want {
+		t.Fatalf("short escape band bit counts = %v, want %v", got, want)
+	}
+}
+
 func TestFDKaacEncCountValuesVectors(t *testing.T) {
 	tests := []struct {
 		codeBook int
@@ -299,13 +333,14 @@ func TestFDKaacEncCodeScalefactorDeltaVectors(t *testing.T) {
 
 func TestFDKaacEncBitCountRejectsInvalid(t *testing.T) {
 	values := []int16{0, 0, 0, 0}
+	tooWideValues := make([]int16, maxSpectralLines+1)
 	var bitCount [12]int
 	for _, tc := range []struct {
 		name string
 		fn   func()
 	}{
 		{"negative width", func() { FDKaacEncBitCount(values, -4, 0, bitCount[:]) }},
-		{"unaligned width", func() { FDKaacEncBitCount(values, 2, 0, bitCount[:]) }},
+		{"too wide", func() { FDKaacEncBitCount(tooWideValues, maxSpectralLines+1, 0, bitCount[:]) }},
 		{"negative max", func() { FDKaacEncBitCount(values, 4, -1, bitCount[:]) }},
 		{"short values", func() { FDKaacEncBitCount(values[:3], 4, 0, bitCount[:]) }},
 		{"short bitcount", func() { FDKaacEncBitCount(values, 4, 0, bitCount[:11]) }},
@@ -365,6 +400,18 @@ func TestFDKaacEncSpectralBitCountAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("spectral bit-count allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncSpectralBitCountShortBandAllocs(t *testing.T) {
+	values := [4]int16{0, 0, 7, -7}
+	var bitCount [12]int
+	allocs := testing.AllocsPerRun(1000, func() {
+		FDKaacEncBitCount(values[:], 2, 0, bitCount[:])
+		bitCountHashSink = hashBandEnergyInts(bitCount[:])
+	})
+	if allocs != 0 {
+		t.Fatalf("short-band spectral bit-count allocations = %v, want 0", allocs)
 	}
 }
 

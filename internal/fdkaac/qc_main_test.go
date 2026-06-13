@@ -537,7 +537,7 @@ func TestFDKaacEncQCMainFrameOnePassVector(t *testing.T) {
 		qcOut.GrantedDynBits,
 		qcOut.UsedDynBits,
 		qcElement.GrantedDynBits,
-	}; got != [...]int{1, 720, 720, 1, 1, 1, 0, 691, 66, 691} {
+	}; got != [...]int{1, 720, 720, 1, 1, 1, 0, 691, 22, 691} {
 		t.Fatalf("QC main frame vector = %v", got)
 	}
 }
@@ -770,6 +770,66 @@ func TestFDKaacEncQCMainQuantizeFrameResetsRetryScratch(t *testing.T) {
 	}
 	if qcOut.UsedDynBits <= 0 || qcElement.DynBitsUsed != qcOut.UsedDynBits {
 		t.Fatalf("stale scratch dynamic bits = element %d frame %d", qcElement.DynBitsUsed, qcOut.UsedDynBits)
+	}
+}
+
+func TestFDKaacEncQCMainQuantizePassReentersAfterConstraintReset(t *testing.T) {
+	var cm ChannelMapping
+	var adj AdjThrState
+	var state ATSElement
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var psyElement PsyOutElement
+	var qcElement QCOutElement
+	var elementBits ElementBits
+	var qcOut QCOut
+	var scratch QCMainQuantizeScratch
+	fillQCMainQuantizeCase(&cm, &adj, &state, &psy, &qc, &psyElement, &qcElement, &elementBits, &qcOut)
+
+	psyElements := [1]*PsyOutElement{&psyElement}
+	qcElements := [1]*QCOutElement{&qcElement}
+	elementBitsSlice := [1]*ElementBits{&elementBits}
+	fdkaacEncQCMainQuantizeSetup(&cm, psyElements[:], &qcOut, qcElements[:], &scratch, 2, 0)
+	initialGain := qc.GlobalGain
+	fdkaacEncQCMainResetConstraints(&scratch)
+
+	result, errCode := fdkaacEncQCMainQuantizePass(
+		&cm,
+		psyElements[:],
+		&qcOut,
+		qcElements[:],
+		&adj,
+		elementBitsSlice[:],
+		&scratch,
+		1,
+		0,
+		4,
+		aotAACLC,
+		0,
+		-1,
+	)
+	if errCode != AACEncOK {
+		t.Fatalf("QC quantize re-entry error = %#x, want OK", errCode)
+	}
+	want := QCMainQuantizeResult{
+		QuantizedElements:      1,
+		DynBitsConsumed:        22,
+		SumDynBitsConsumed:     22,
+		MaxValueAll:            4,
+		DecreaseBitConsumption: 1,
+		ConstraintsFulfilled:   1,
+		ReductionIterations:    1,
+		GainAdjustments:        1,
+	}
+	if result != want {
+		t.Fatalf("QC quantize re-entry result = %+v, want %+v", result, want)
+	}
+	if scratch.Iterations[0] != 1 || qc.GlobalGain != initialGain+1 {
+		t.Fatalf("QC quantize re-entry controls gain=%d initial=%d iterations=%d",
+			qc.GlobalGain, initialGain, scratch.Iterations[0])
+	}
+	if qcOut.UsedDynBits != 22 || qcElement.DynBitsUsed != 22 {
+		t.Fatalf("QC quantize re-entry accounting frame=%d element=%d", qcOut.UsedDynBits, qcElement.DynBitsUsed)
 	}
 }
 
@@ -1219,19 +1279,45 @@ func TestFDKaacEncCrashRecoveryAllocs(t *testing.T) {
 }
 
 func TestFDKaacEncQCMainFrameAllocs(t *testing.T) {
+	var baseCM ChannelMapping
+	var baseAdj AdjThrState
+	var baseState ATSElement
+	var basePsy PsyOutChannel
+	var baseQC QCOutChannel
+	var basePsyElement PsyOutElement
+	var baseQCElement QCOutElement
+	var baseElementBits ElementBits
+	var baseQCOut QCOut
+	var baseKernel QCKernel
+	fillQCMainFrameCase(
+		&baseCM,
+		&baseAdj,
+		&baseState,
+		&basePsy,
+		&baseQC,
+		&basePsyElement,
+		&baseQCElement,
+		&baseElementBits,
+		&baseQCOut,
+		&baseKernel,
+	)
+
 	allocs := testing.AllocsPerRun(1000, func() {
-		var cm ChannelMapping
-		var adj AdjThrState
-		var state ATSElement
-		var psy PsyOutChannel
-		var qc QCOutChannel
-		var psyElement PsyOutElement
-		var qcElement QCOutElement
-		var elementBits ElementBits
-		var qcOut QCOut
-		var kernel QCKernel
+		cm := baseCM
+		adj := baseAdj
+		state := baseState
+		psy := basePsy
+		qc := baseQC
+		psyElement := basePsyElement
+		qcElement := baseQCElement
+		elementBits := baseElementBits
+		qcOut := baseQCOut
+		kernel := baseKernel
 		var scratch QCMainFrameScratch
-		fillQCMainFrameCase(&cm, &adj, &state, &psy, &qc, &psyElement, &qcElement, &elementBits, &qcOut, &kernel)
+		adj.AdjThrStateElem[0] = &state
+		psy.MdctSpectrum = qc.MdctSpectrum[:]
+		psyElement.PsyOutChannel[0] = &psy
+		qcElement.QCOutChannel[0] = &qc
 		psyElements := [1]*PsyOutElement{&psyElement}
 		qcOutFrames := [1]*QCOut{&qcOut}
 		var qcElements [1][maxChannelElements]*QCOutElement
@@ -1250,18 +1336,42 @@ func TestFDKaacEncQCMainFrameAllocs(t *testing.T) {
 }
 
 func TestFDKaacEncQCMainQuantizeAllocs(t *testing.T) {
+	var baseCM ChannelMapping
+	var baseAdj AdjThrState
+	var baseState ATSElement
+	var basePsy PsyOutChannel
+	var baseQC QCOutChannel
+	var basePsyElement PsyOutElement
+	var baseQCElement QCOutElement
+	var baseElementBits ElementBits
+	var baseQCOut QCOut
+	fillQCMainQuantizeCase(
+		&baseCM,
+		&baseAdj,
+		&baseState,
+		&basePsy,
+		&baseQC,
+		&basePsyElement,
+		&baseQCElement,
+		&baseElementBits,
+		&baseQCOut,
+	)
+
 	allocs := testing.AllocsPerRun(1000, func() {
-		var cm ChannelMapping
-		var adj AdjThrState
-		var state ATSElement
-		var psy PsyOutChannel
-		var qc QCOutChannel
-		var psyElement PsyOutElement
-		var qcElement QCOutElement
-		var elementBits ElementBits
-		var qcOut QCOut
+		cm := baseCM
+		adj := baseAdj
+		state := baseState
+		psy := basePsy
+		qc := baseQC
+		psyElement := basePsyElement
+		qcElement := baseQCElement
+		elementBits := baseElementBits
+		qcOut := baseQCOut
 		var scratch QCMainQuantizeScratch
-		fillQCMainQuantizeCase(&cm, &adj, &state, &psy, &qc, &psyElement, &qcElement, &elementBits, &qcOut)
+		adj.AdjThrStateElem[0] = &state
+		psy.MdctSpectrum = qc.MdctSpectrum[:]
+		psyElement.PsyOutChannel[0] = &psy
+		qcElement.QCOutChannel[0] = &qc
 		psyElements := [1]*PsyOutElement{&psyElement}
 		qcElements := [1]*QCOutElement{&qcElement}
 		elementBitsSlice := [1]*ElementBits{&elementBits}

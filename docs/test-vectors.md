@@ -116,8 +116,9 @@ invalid delta transitions, and zero steady-state allocation.
 
 The FDK spectral Huffman bit-count subset is covered with mechanically derived
 ROM checksums for the spectral length tables and source-derived vectors for
-zero spectra, LAV category transitions, escape lengths, fixed-codebook recounts,
-invalid controls, and zero steady-state allocation.
+zero spectra, LAV category transitions, escape lengths, short-band zero-tail
+counts, fixed-codebook recounts, invalid controls, and zero steady-state
+allocation.
 
 The FDK Huffman codeword emission subset is covered with mechanically derived
 codeword ROM checksums and source-derived byte vectors for spectral codebooks
@@ -327,7 +328,9 @@ dynamic noiseless bit count, `dynBitsLast` seeding, and frame dynamic-bit
 summing sequence. The crash-recovery vector verifies high-band trimming to
 zero spectrum, TNS/tool clearing, static side-info recounting, dynamic-budget
 rebasing, retry scheduling, malformed controls, no-cgo compilation, and zero
-steady-state allocation.
+steady-state allocation. A constraint-reset re-entry vector verifies the next
+quantize pass increments gain and iteration state exactly once after the frame
+decision clears the constraint flags.
 
 The FDK AAC-LC QC fill/finalize/reservoir accounting subset is covered with
 source-shaped vectors for `FDKaacEnc_getTotalConsumedBits`,
@@ -347,12 +350,13 @@ negative dynamic-grant transition, low/high reservoir error returns, malformed
 controls, no-cgo compilation, and zero steady-state allocation.
 
 The FDK AAC-LC QC one-frame control wrapper subset is covered with
-source-shaped vectors for `FDKaacEnc_QCMain` setup and post-quantization
-decision logic. Tests verify the CBR/full-reservoir mode switch, reservoir
-redistribution, bit distribution, threshold adjustment, quantize/count handoff,
-under-budget exit, over-budget saving, dynamic-bit overshoot, emergency
-iteration spending, the pinned no-op `checkMinFrameBitsDemand` behavior,
-malformed controls, no-cgo compilation, and zero steady-state allocation.
+source-shaped vectors for `FDKaacEnc_QCMain` setup, repeated quantize/count
+staging, constraint reset, and post-quantization decision logic. Tests verify
+the CBR/full-reservoir mode switch, reservoir redistribution, bit distribution,
+threshold adjustment, quantize/count handoff, under-budget exit, over-budget
+saving, dynamic-bit overshoot, emergency iteration spending, the pinned no-op
+`checkMinFrameBitsDemand` behavior, malformed controls, no-cgo compilation,
+and zero steady-state allocation.
 
 The FDK AAC-LC bit-reservoir PE distribution subset is covered with
 source-derived vectors for `FDKaacEnc_bitresCalcBitFac`,
