@@ -99,6 +99,7 @@ func FDKaacEncGroupShortData(
 	groupShortEnergy(sfbSpreadEnergy.Long[:], &sfbSpreadEnergy.Short, sfbCnt, sfbActive, noOfGroups, groupLen)
 
 	tmpSpectrum := scratch.Spectrum[:granuleLength]
+	clear(tmpSpectrum)
 	wnd := 0
 	i = 0
 	for grp := 0; grp < noOfGroups; grp++ {
@@ -173,8 +174,8 @@ func checkGroupShortInputs(
 	if sfbCnt <= 0 || sfbCnt > maxSFBShort {
 		panic("fdkaac: invalid short sfb count")
 	}
-	if sfbActive != sfbCnt {
-		panic("fdkaac: inactive short grouping bands unsupported")
+	if sfbActive < 0 || sfbActive > sfbCnt {
+		panic("fdkaac: invalid short active sfb count")
 	}
 	if len(sfbOffset) < sfbCnt+1 {
 		panic("fdkaac: short sfb offsets")

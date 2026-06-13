@@ -155,8 +155,9 @@ malformed controls, no-cgo compilation, and zero steady-state allocation.
 
 The FDK AAC-LC short grouping subset is covered with source-derived grouped
 offset and min-SNR vectors, saturating threshold/energy/MS/spread-energy sums,
-max-SFB scan and zero-spectrum floor checks, spectrum-regroup hashes, invalid
-grouping/control transitions, and zero steady-state allocation.
+max-SFB scan and zero-spectrum floor checks, active and inactive-band
+spectrum-regroup hashes, invalid grouping/control transitions, and zero
+steady-state allocation.
 
 The FDK AAC-LC threshold spreading subset is covered with a source-derived
 bidirectional spreading vector over scalefactor-band energy/threshold data,

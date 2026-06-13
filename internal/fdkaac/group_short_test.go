@@ -85,7 +85,71 @@ func TestFDKaacEncGroupShortDataMaxSFBFloor(t *testing.T) {
 	}
 }
 
-func TestFDKaacEncGroupShortDataRejectsUnsupported(t *testing.T) {
+func TestFDKaacEncGroupShortDataInactiveBandVector(t *testing.T) {
+	var mdctSpectrum [160]FixpDBL
+	var sfbThreshold SFBThreshold
+	var sfbEnergy SFBEnergy
+	var sfbEnergyMS SFBEnergy
+	var sfbSpreadEnergy SFBEnergy
+	var groupedSfbOffset [21]int
+	var groupedSfbMinSnrLdData [20]FixpDBL
+	var scratch GroupShortScratch
+
+	fillGroupShortVector(mdctSpectrum[:], &sfbThreshold, &sfbEnergy, &sfbEnergyMS, &sfbSpreadEnergy)
+	for i := range groupedSfbMinSnrLdData {
+		groupedSfbMinSnrLdData[i] = -7777
+	}
+	for i := range scratch.Spectrum {
+		scratch.Spectrum[i] = 1234567
+	}
+
+	maxSfbPerGroup := -1
+	callGroupShortInactiveVector(mdctSpectrum[:], &sfbThreshold, &sfbEnergy, &sfbEnergyMS, &sfbSpreadEnergy, groupedSfbOffset[:], &maxSfbPerGroup, groupedSfbMinSnrLdData[:], &scratch)
+
+	if maxSfbPerGroup != 4 {
+		t.Fatalf("inactive maxSfbPerGroup = %d, want 4", maxSfbPerGroup)
+	}
+
+	wantGroupedSfbOffset := [...]int{0, 6, 15, 27, 42, 60, 66, 75, 87, 102, 120, 122, 125, 129, 134, 140, 142, 145, 149, 154, 160}
+	if groupedSfbOffset != wantGroupedSfbOffset {
+		t.Fatalf("inactive grouped sfb offsets = %v, want %v", groupedSfbOffset, wantGroupedSfbOffset)
+	}
+	wantGroupedMinSnr := [...]FixpDBL{-1000, -2000, -3000, -4000, -7777, -1000, -2000, -3000, -4000, -7777, -1000, -2000, -3000, -4000, -7777, -1000, -2000, -3000, -4000, -7777}
+	assertFixpDBLSlice(t, "inactive grouped min-snr", groupedSfbMinSnrLdData[:], wantGroupedMinSnr[:], 0x86cd6b7d29a64d25)
+
+	wantThreshold := [...]FixpDBL{12582912, 18874368, 25165824, 31457280, -10001, 31457280, 47185920, 62914560, 78643200, -10001, 14680064, 22020096, 29360128, 36700160, -10001, 16777216, 25165824, 33554432, 41943040, -10001}
+	assertFixpDBLSlice(t, "inactive threshold", sfbThreshold.Long[:20], wantThreshold[:], 0x0945a881b42e8b10)
+
+	wantEnergy := [...]FixpDBL{4718592, 9437184, 14155776, 18874368, -10002, 9437184, 18874368, MaxValDBL, 37748736, -10002, 4194304, 8388608, 12582912, 16777216, -10002, 4718592, 9437184, 14155776, 18874368, -10002}
+	assertFixpDBLSlice(t, "inactive energy", sfbEnergy.Long[:20], wantEnergy[:], 0xee1fcb21c7c68e87)
+
+	wantEnergyMS := [...]FixpDBL{6291456, 9437184, 12582912, 15728640, -10003, 11010048, 16515072, 22020096, 27525120, -10003, 4718592, 7077888, 9437184, 11796480, -10003, 5242880, 7864320, 10485760, 13107200, -10003}
+	assertFixpDBLSlice(t, "inactive energyMS", sfbEnergyMS.Long[:20], wantEnergyMS[:], 0x8a8bf3c6a1e23a65)
+
+	wantSpreadEnergy := [...]FixpDBL{5898240, 7864320, 9830400, 11796480, -10004, 9437184, 12582912, 15728640, 18874368, -10004, 3932160, 5242880, 6553600, 7864320, -10004, 4325376, 5767168, 7208960, 8650752, -10004}
+	assertFixpDBLSlice(t, "inactive spread energy", sfbSpreadEnergy.Long[:20], wantSpreadEnergy[:], 0x85db8549db19e942)
+
+	wantSpectrumFirst60 := [...]FixpDBL{
+		-2000, -1993, -1000, -993, 0, 7,
+		-1986, -1979, -1972, -986, -979, -972, 14, 21, 28,
+		-1965, -1958, -1951, -1944, -965, -958, -951, -944, 35, 42, 49, 56,
+		-1937, -1930, -1923, -1916, -1909, -937, -930, -923, -916, -909, 63, 70, 77, 84, 91,
+		0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+	}
+	assertFixpDBLSlice(t, "inactive spectrum first60", mdctSpectrum[:60], wantSpectrumFirst60[:], 0x7e9ba8babe625a46)
+	for _, span := range [...][2]int{{42, 60}, {102, 120}, {134, 140}, {154, 160}} {
+		for i := span[0]; i < span[1]; i++ {
+			if mdctSpectrum[i] != 0 {
+				t.Fatalf("inactive spectrum[%d] = %d, want zero", i, mdctSpectrum[i])
+			}
+		}
+	}
+	if got, want := hashFixpDBL(mdctSpectrum[:]), uint64(0x0e1fee5eef478ea1); got != want {
+		t.Fatalf("inactive spectrum hash = %#016x, want %#016x", got, want)
+	}
+}
+
+func TestFDKaacEncGroupShortDataRejectsInvalid(t *testing.T) {
 	var mdctSpectrum [160]FixpDBL
 	var sfbThreshold SFBThreshold
 	var sfbEnergy SFBEnergy
@@ -114,8 +178,8 @@ func TestFDKaacEncGroupShortDataRejectsUnsupported(t *testing.T) {
 		{name: "nil scratch", fn: func() {
 			FDKaacEncGroupShortData(mdctSpectrum[:], &sfbThreshold, &sfbEnergy, &sfbEnergyMS, &sfbSpreadEnergy, 5, 5, sfbOffset[:], sfbMinSnr[:], groupedSfbOffset[:], &maxSfbPerGroup, groupedSfbMinSnrLdData[:], 4, groupLen[:], len(mdctSpectrum), nil)
 		}},
-		{name: "inactive bands", fn: func() {
-			FDKaacEncGroupShortData(mdctSpectrum[:], &sfbThreshold, &sfbEnergy, &sfbEnergyMS, &sfbSpreadEnergy, 5, 4, sfbOffset[:], sfbMinSnr[:], groupedSfbOffset[:], &maxSfbPerGroup, groupedSfbMinSnrLdData[:], 4, groupLen[:], len(mdctSpectrum), &scratch)
+		{name: "bad active count", fn: func() {
+			FDKaacEncGroupShortData(mdctSpectrum[:], &sfbThreshold, &sfbEnergy, &sfbEnergyMS, &sfbSpreadEnergy, 5, 6, sfbOffset[:], sfbMinSnr[:], groupedSfbOffset[:], &maxSfbPerGroup, groupedSfbMinSnrLdData[:], 4, groupLen[:], len(mdctSpectrum), &scratch)
 		}},
 		{name: "bad offsets", fn: func() {
 			badOffset := [...]int{0, 2, 5, 4, 14, 20}
@@ -163,6 +227,8 @@ func TestFDKaacEncGroupShortDataAllocs(t *testing.T) {
 		fillGroupShortVector(mdctSpectrum[:], &sfbThreshold, &sfbEnergy, &sfbEnergyMS, &sfbSpreadEnergy)
 		maxSfbPerGroup := 0
 		callGroupShortVector(mdctSpectrum[:], &sfbThreshold, &sfbEnergy, &sfbEnergyMS, &sfbSpreadEnergy, groupedSfbOffset[:], &maxSfbPerGroup, groupedSfbMinSnrLdData[:], &scratch)
+		fillGroupShortVector(mdctSpectrum[:], &sfbThreshold, &sfbEnergy, &sfbEnergyMS, &sfbSpreadEnergy)
+		callGroupShortInactiveVector(mdctSpectrum[:], &sfbThreshold, &sfbEnergy, &sfbEnergyMS, &sfbSpreadEnergy, groupedSfbOffset[:], &maxSfbPerGroup, groupedSfbMinSnrLdData[:], &scratch)
 
 		groupShortSink = mdctSpectrum[0] + sfbThreshold.Long[0] + sfbEnergy.Long[7] + sfbEnergyMS.Long[19] + sfbSpreadEnergy.Long[14] + groupedSfbMinSnrLdData[19]
 		groupShortIntSink = maxSfbPerGroup + groupedSfbOffset[20]
@@ -226,6 +292,40 @@ func callGroupShortVector(
 		sfbSpreadEnergy,
 		5,
 		5,
+		sfbOffset[:],
+		sfbMinSnrLdData[:],
+		groupedSfbOffset,
+		maxSfbPerGroup,
+		groupedSfbMinSnrLdData,
+		4,
+		groupLen[:],
+		len(mdctSpectrum),
+		scratch,
+	)
+}
+
+func callGroupShortInactiveVector(
+	mdctSpectrum []FixpDBL,
+	sfbThreshold *SFBThreshold,
+	sfbEnergy *SFBEnergy,
+	sfbEnergyMS *SFBEnergy,
+	sfbSpreadEnergy *SFBEnergy,
+	groupedSfbOffset []int,
+	maxSfbPerGroup *int,
+	groupedSfbMinSnrLdData []FixpDBL,
+	scratch *GroupShortScratch,
+) {
+	sfbOffset := [...]int{0, 2, 5, 9, 14, 20}
+	sfbMinSnrLdData := [...]FixpDBL{-1000, -2000, -3000, -4000, -5000}
+	groupLen := [...]int{3, 3, 1, 1}
+	FDKaacEncGroupShortData(
+		mdctSpectrum,
+		sfbThreshold,
+		sfbEnergy,
+		sfbEnergyMS,
+		sfbSpreadEnergy,
+		5,
+		4,
 		sfbOffset[:],
 		sfbMinSnrLdData[:],
 		groupedSfbOffset,
