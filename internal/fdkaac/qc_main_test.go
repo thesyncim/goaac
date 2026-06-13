@@ -184,6 +184,94 @@ func TestFDKaacEncFinalizeAndBitresVectors(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncElementBitDistributionVectors(t *testing.T) {
+	cm := ChannelMapping{NElements: 3}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+	cm.ElInfo[1] = ElementInfo{ElType: idCPE, NChannelsInEl: 2}
+	cm.ElInfo[2] = ElementInfo{ElType: idDSE}
+	el0 := QCOutElement{}
+	el1 := QCOutElement{}
+	qcElements := [maxChannelElements]*QCOutElement{&el0, &el1}
+	bits0 := ElementBits{RelativeBitsEl: 0x40000000}
+	bits1 := ElementBits{RelativeBitsEl: 0}
+	elementBits := [maxChannelElements]*ElementBits{&bits0, &bits1}
+
+	if errCode := FDKaacEncDistributeElementDynBits(qcElements[:], &cm, elementBits[:], 1000); errCode != AACEncOK {
+		t.Fatalf("element bit distribution error = %#x, want OK", errCode)
+	}
+	if el0.GrantedDynBits != 500 || el1.GrantedDynBits != 500 {
+		t.Fatalf("distributed bits = %d,%d want 500,500", el0.GrantedDynBits, el1.GrantedDynBits)
+	}
+}
+
+func TestFDKaacEncBitResRedistributionVectors(t *testing.T) {
+	cm := ChannelMapping{NElements: 2}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+	cm.ElInfo[1] = ElementInfo{ElType: idCPE, NChannelsInEl: 2}
+	kernel := QCKernel{MaxBitsPerFrame: 2000, BitResTot: 800, BitResTotMax: 1200}
+	bits0 := ElementBits{RelativeBitsEl: 0x20000000}
+	bits1 := ElementBits{RelativeBitsEl: 0x60000000}
+	elementBits := [maxChannelElements]*ElementBits{&bits0, &bits1}
+
+	if errCode := FDKaacEncBitResRedistribution(&kernel, &cm, elementBits[:], 1000); errCode != AACEncOK {
+		t.Fatalf("bit reservoir redistribution error = %#x, want OK", errCode)
+	}
+	if got := [...]int{bits0.BitResLevelEl, bits1.BitResLevelEl, bits0.MaxBitResBitsEl, bits1.MaxBitResBitsEl}; got != [...]int{200, 600, 250, 750} {
+		t.Fatalf("redistributed reservoir = %v, want [200 600 250 750]", got)
+	}
+
+	low := QCKernel{MaxBitsPerFrame: 2000, BitResTot: -1, BitResTotMax: 1200}
+	if errCode := FDKaacEncBitResRedistribution(&low, &cm, elementBits[:], 1000); errCode != AACEncBitresTooLow {
+		t.Fatalf("low reservoir error = %#x, want %#x", errCode, AACEncBitresTooLow)
+	}
+	high := QCKernel{MaxBitsPerFrame: 2000, BitResTot: 1300, BitResTotMax: 1200}
+	if errCode := FDKaacEncBitResRedistribution(&high, &cm, elementBits[:], 1000); errCode != AACEncBitresTooHigh {
+		t.Fatalf("high reservoir error = %#x, want %#x", errCode, AACEncBitresTooHigh)
+	}
+}
+
+func TestFDKaacEncPrepareBitDistributionVector(t *testing.T) {
+	var state AdjThrState
+	FDKaacEncInitBitresState(&state)
+	elementState := buildBitresElementWithHistory(420, 650)
+	state.AdjThrStateElem[0] = &elementState
+
+	psy := PsyOutChannel{LastWindowSequence: LongWindow}
+	psyElement := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{&psy}}
+	qcElement := QCOutElement{PEData: PEData{Pe: 430}}
+	qcOut := QCOut{}
+	cm := ChannelMapping{NElements: 1}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+	elBits := ElementBits{RelativeBitsEl: 0x40000000, BitResLevelEl: 500, MaxBitResBitsEl: 1200}
+	kernel := QCKernel{MaxBitsPerFrame: 2000, MaxBitFac: MaxValDBL, BitResMode: BitresModeFull}
+	psyElements := [1]*PsyOutElement{&psyElement}
+	qcOutFrames := [1]*QCOut{&qcOut}
+	var qcElements [1][maxChannelElements]*QCOutElement
+	qcElements[0][0] = &qcElement
+	elementBits := [maxChannelElements]*ElementBits{&elBits}
+
+	result, errCode := FDKaacEncPrepareBitDistribution(&kernel, &state, psyElements[:], qcOutFrames[:], qcElements[:], &cm, elementBits[:], 720)
+	if errCode != AACEncOK {
+		t.Fatalf("prepare bit distribution error = %#x, want OK", errCode)
+	}
+	if got := [...]int{
+		result.TotalAvailableBits,
+		result.AvgTotalDynBits,
+		result.DistributedBits,
+		result.DistributedElements,
+		result.TotalGrantedPeCorr,
+		qcOut.GrantedDynBits,
+		qcOut.MaxDynBits,
+		qcElement.GrantedDynBits,
+		qcElement.GrantedPe,
+		qcElement.GrantedPeCorr,
+		elementState.PeMin,
+		elementState.PeMax,
+	}; got != [...]int{1220, 0, 720, 1, 798, 720, 2000, 720, 798, 798, 255, 607} {
+		t.Fatalf("prepare bit distribution vector = %v", got)
+	}
+}
+
 func TestFDKaacEncQCMainPrepareSCEVector(t *testing.T) {
 	var directElement ElementInfo
 	var directState ATSElement
@@ -620,6 +708,96 @@ func TestFDKaacEncQCAccountingRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncBitDistributionRejectsInvalid(t *testing.T) {
+	var cm ChannelMapping
+	cm.NElements = 1
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+	var qcElement QCOutElement
+	var bits ElementBits
+	qcElements := [maxChannelElements]*QCOutElement{&qcElement}
+	elementBits := [maxChannelElements]*ElementBits{&bits}
+	var state AdjThrState
+	FDKaacEncInitBitresState(&state)
+	elementState := buildBitresElementWithHistory(420, 650)
+	state.AdjThrStateElem[0] = &elementState
+	var psy PsyOutChannel
+	psy.LastWindowSequence = LongWindow
+	psyElement := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{&psy}}
+	var qcOut QCOut
+	psyElements := [1]*PsyOutElement{&psyElement}
+	qcOutFrames := [1]*QCOut{&qcOut}
+	var qcElementFrames [1][maxChannelElements]*QCOutElement
+	qcElementFrames[0][0] = &qcElement
+	kernel := QCKernel{MaxBitsPerFrame: 1024, MaxBitFac: MaxValDBL, BitResMode: BitresModeFull}
+
+	for _, tt := range []struct {
+		name string
+		fn   func()
+	}{
+		{"nil distribute mapping", func() {
+			FDKaacEncDistributeElementDynBits(qcElements[:], nil, elementBits[:], 100)
+		}},
+		{"nil distribute element", func() {
+			badElements := qcElements
+			badElements[0] = nil
+			FDKaacEncDistributeElementDynBits(badElements[:], &cm, elementBits[:], 100)
+		}},
+		{"nil distribute element bits", func() {
+			badBits := elementBits
+			badBits[0] = nil
+			FDKaacEncDistributeElementDynBits(qcElements[:], &cm, badBits[:], 100)
+		}},
+		{"nil redistribution kernel", func() {
+			FDKaacEncBitResRedistribution(nil, &cm, elementBits[:], 100)
+		}},
+		{"nil redistribution mapping", func() {
+			FDKaacEncBitResRedistribution(&kernel, nil, elementBits[:], 100)
+		}},
+		{"nil prepare kernel", func() {
+			FDKaacEncPrepareBitDistribution(nil, &state, psyElements[:], qcOutFrames[:], qcElementFrames[:], &cm, elementBits[:], 720)
+		}},
+		{"nil prepare state", func() {
+			FDKaacEncPrepareBitDistribution(&kernel, nil, psyElements[:], qcOutFrames[:], qcElementFrames[:], &cm, elementBits[:], 720)
+		}},
+		{"nil prepare frame", func() {
+			FDKaacEncPrepareBitDistribution(&kernel, &state, psyElements[:], nil, qcElementFrames[:], &cm, elementBits[:], 720)
+		}},
+		{"nil prepare psy element", func() {
+			badPsy := psyElements
+			badPsy[0] = nil
+			FDKaacEncPrepareBitDistribution(&kernel, &state, badPsy[:], qcOutFrames[:], qcElementFrames[:], &cm, elementBits[:], 720)
+		}},
+		{"bad prepare bitres mode", func() {
+			badKernel := kernel
+			badKernel.BitResMode = BitresMode(99)
+			FDKaacEncPrepareBitDistribution(&badKernel, &state, psyElements[:], qcOutFrames[:], qcElementFrames[:], &cm, elementBits[:], 720)
+		}},
+		{"bad prepare element max reservoir", func() {
+			badBits := bits
+			badBits.MaxBitResBitsEl = 0
+			badElementBits := [maxChannelElements]*ElementBits{&badBits}
+			FDKaacEncPrepareBitDistribution(&kernel, &state, psyElements[:], qcOutFrames[:], qcElementFrames[:], &cm, badElementBits[:], 720)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		})
+	}
+
+	lowKernel := QCKernel{GlobHdrBits: 800, MaxBitsPerFrame: 1024, BitResTot: 0, MaxBitFac: MaxValDBL, BitResMode: BitresModeFull}
+	bits = ElementBits{RelativeBitsEl: 0x40000000, BitResLevelEl: 500, MaxBitResBitsEl: 1200}
+	elementBits = [maxChannelElements]*ElementBits{&bits}
+	_, errCode := FDKaacEncPrepareBitDistribution(&lowKernel, &state, psyElements[:], qcOutFrames[:], qcElementFrames[:], &cm, elementBits[:], 720)
+	if errCode != AACEncBitresTooLow {
+		t.Fatalf("low prepare reservoir error = %#x, want %#x", errCode, AACEncBitresTooLow)
+	}
+}
+
 func TestFDKaacEncQCAccountingAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		cm := ChannelMapping{NElements: 1}
@@ -655,6 +833,37 @@ func TestFDKaacEncQCAccountingAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("QC accounting allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncBitDistributionAllocs(t *testing.T) {
+	allocs := testing.AllocsPerRun(1000, func() {
+		var state AdjThrState
+		FDKaacEncInitBitresState(&state)
+		elementState := buildBitresElementWithHistory(420, 650)
+		state.AdjThrStateElem[0] = &elementState
+		psy := PsyOutChannel{LastWindowSequence: LongWindow}
+		psyElement := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{&psy}}
+		qcElement := QCOutElement{PEData: PEData{Pe: 430}}
+		qcOut := QCOut{}
+		cm := ChannelMapping{NElements: 1}
+		cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+		elBits := ElementBits{RelativeBitsEl: 0x40000000, BitResLevelEl: 500, MaxBitResBitsEl: 1200}
+		kernel := QCKernel{MaxBitsPerFrame: 2000, MaxBitFac: MaxValDBL, BitResMode: BitresModeFull}
+		psyElements := [1]*PsyOutElement{&psyElement}
+		qcOutFrames := [1]*QCOut{&qcOut}
+		var qcElements [1][maxChannelElements]*QCOutElement
+		qcElements[0][0] = &qcElement
+		elementBits := [maxChannelElements]*ElementBits{&elBits}
+
+		result, errCode := FDKaacEncPrepareBitDistribution(&kernel, &state, psyElements[:], qcOutFrames[:], qcElements[:], &cm, elementBits[:], 720)
+		if errCode != AACEncOK {
+			t.Fatalf("prepare bit distribution error = %#x", errCode)
+		}
+		qcMainPrepareSink = result.TotalAvailableBits + result.TotalGrantedPeCorr + qcElement.GrantedDynBits
+	})
+	if allocs != 0 {
+		t.Fatalf("bit distribution allocations = %v, want 0", allocs)
 	}
 }
 

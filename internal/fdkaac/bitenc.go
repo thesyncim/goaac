@@ -59,6 +59,8 @@ const (
 	AACEncOK                     = 0x0000
 	AACEncUnknown                = 0x0002
 	AACEncQuantError             = 0x4020
+	AACEncBitresTooLow           = 0x40a0
+	AACEncBitresTooHigh          = 0x40a1
 	AACEncUnsupportedAOT         = 0x3000
 	AACEncInvalidElementInfoType = 0x4120
 	AACEncWriteScalError         = 0x41e0

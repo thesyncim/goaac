@@ -390,7 +390,7 @@ func TestFDKaacEncDistributeBitsVectors(t *testing.T) {
 			pe:            320,
 			grantedDyn:    0,
 			bitresBits:    0,
-			maxBitresBits: 1200,
+			maxBitresBits: 0,
 			element:       buildBitresElementWithHistory(0, -1),
 			want:          [8]int{0, 0, 180, 620, 0, -1, int(lowBitresCorrectionMin), 1},
 		},

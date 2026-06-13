@@ -327,6 +327,14 @@ CBR fill-bit math, fill-extension sizing, byte alignment, static transport
 header correction, CBR/VBR reservoir updates, malformed controls, no-cgo
 compilation, and zero steady-state allocation.
 
+The FDK AAC-LC QC bit-distribution/reservoir redistribution subset is covered
+with source-shaped vectors for `FDKaacEnc_distributeElementDynBits`,
+`FDKaacEnc_BitResRedistribution`, and `FDKaacEnc_prepareBitDistribution`.
+Tests verify per-element dynamic-bit rounding compensation, one-subframe
+reservoir level redistribution, PE grant handoff through the existing
+bit-reservoir helper, low/high reservoir error returns, malformed controls,
+no-cgo compilation, and zero steady-state allocation.
+
 The FDK AAC-LC bit-reservoir PE distribution subset is covered with
 source-derived vectors for `FDKaacEnc_bitresCalcBitFac`,
 `FDKaacEnc_DistributeBits`, and the high/low bit-reservoir PE-correction

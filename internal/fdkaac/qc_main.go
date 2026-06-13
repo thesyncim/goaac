@@ -19,8 +19,10 @@ type QCKernel struct {
 	MaxBitsPerFrame int
 	MinBitsPerFrame int
 	BitrateMode     QCBitrateMode
+	BitResMode      BitresMode
 	BitResTot       int
 	BitResTotMax    int
+	MaxBitFac       FixpDBL
 }
 
 type QCMainQuantizeScratch struct {
@@ -59,6 +61,14 @@ type QCMainReduceBitConsumptionResult struct {
 	MaxIterationsHit    int
 	CrashRecoveryNeeded int
 	BitsToSave          int
+}
+
+type QCPrepareBitDistributionResult struct {
+	TotalAvailableBits  int
+	AvgTotalDynBits     int
+	DistributedBits     int
+	DistributedElements int
+	TotalGrantedPeCorr  int
 }
 
 func FDKaacEncQCMainPrepare(
@@ -345,6 +355,148 @@ func FDKaacEncGetTotalConsumedDynBits(qcOut []*QCOut, nSubFrames int) int {
 		totalBits += qcOut[c].UsedDynBits
 	}
 	return totalBits
+}
+
+func FDKaacEncDistributeElementDynBits(qcElement []*QCOutElement, cm *ChannelMapping, elementBits []*ElementBits, codeBits int) int {
+	checkDistributeElementDynBitsInputs(qcElement, cm, elementBits)
+
+	totalBits := 0
+	firstAudio := -1
+	for i := cm.NElements - 1; i >= 0; i-- {
+		if fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+			if firstAudio < 0 {
+				firstAudio = i
+			}
+			qcElement[i].GrantedDynBits = maxInt(0, FMultI(elementBits[i].RelativeBitsEl, codeBits))
+			totalBits += qcElement[i].GrantedDynBits
+		}
+	}
+	if firstAudio < 0 {
+		return AACEncOK
+	}
+
+	if codeBits != totalBits {
+		elMaxBits := firstAudio
+		elMinBits := firstAudio
+		for i := cm.NElements - 1; i >= 0; i-- {
+			if fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+				if qcElement[i].GrantedDynBits > qcElement[elMaxBits].GrantedDynBits {
+					elMaxBits = i
+				}
+				if qcElement[i].GrantedDynBits < qcElement[elMinBits].GrantedDynBits {
+					elMinBits = i
+				}
+			}
+		}
+		if codeBits-totalBits > 0 {
+			qcElement[elMinBits].GrantedDynBits += codeBits - totalBits
+		} else {
+			qcElement[elMaxBits].GrantedDynBits += codeBits - totalBits
+		}
+	}
+	return AACEncOK
+}
+
+func FDKaacEncBitResRedistribution(qcKernel *QCKernel, cm *ChannelMapping, elementBits []*ElementBits, avgTotalBits int) int {
+	checkBitResRedistributionInputs(qcKernel, cm, elementBits)
+
+	if qcKernel.BitResTot < 0 {
+		return AACEncBitresTooLow
+	}
+	if qcKernel.BitResTot > qcKernel.BitResTotMax {
+		return AACEncBitresTooHigh
+	}
+
+	totalBits := 0
+	totalBitsMax := 0
+	totalBitreservoir := minInt(qcKernel.BitResTot, qcKernel.MaxBitsPerFrame-avgTotalBits)
+	totalBitreservoirMax := minInt(qcKernel.BitResTotMax, qcKernel.MaxBitsPerFrame-avgTotalBits)
+
+	for i := cm.NElements - 1; i >= 0; i-- {
+		if fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+			elementBits[i].BitResLevelEl = FMultI(elementBits[i].RelativeBitsEl, totalBitreservoir)
+			totalBits += elementBits[i].BitResLevelEl
+
+			elementBits[i].MaxBitResBitsEl = FMultI(elementBits[i].RelativeBitsEl, totalBitreservoirMax)
+			totalBitsMax += elementBits[i].MaxBitResBitsEl
+		}
+	}
+
+	for i := 0; i < cm.NElements; i++ {
+		if fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+			deltaBits := maxInt(totalBitreservoir-totalBits, -elementBits[i].BitResLevelEl)
+			elementBits[i].BitResLevelEl += deltaBits
+			totalBits += deltaBits
+
+			deltaBits = maxInt(totalBitreservoirMax-totalBitsMax, -elementBits[i].MaxBitResBitsEl)
+			elementBits[i].MaxBitResBitsEl += deltaBits
+			totalBitsMax += deltaBits
+		}
+	}
+	return AACEncOK
+}
+
+func FDKaacEncPrepareBitDistribution(
+	qcKernel *QCKernel,
+	adjThrState *AdjThrState,
+	psyOutElement []*PsyOutElement,
+	qcOut []*QCOut,
+	qcElement [][maxChannelElements]*QCOutElement,
+	cm *ChannelMapping,
+	elementBits []*ElementBits,
+	avgTotalBits int,
+) (QCPrepareBitDistributionResult, int) {
+	checkPrepareBitDistributionInputs(qcKernel, adjThrState, psyOutElement, qcOut, qcElement, cm, elementBits, avgTotalBits)
+
+	result := QCPrepareBitDistributionResult{}
+	qcOut[0].GrantedDynBits = (minInt(qcKernel.MaxBitsPerFrame, avgTotalBits) - qcKernel.GlobHdrBits) &^ 7
+	qcOut[0].GrantedDynBits -= qcOut[0].GlobalExtBits + qcOut[0].StaticBits + qcOut[0].ElementExtBits
+	qcOut[0].MaxDynBits = (qcKernel.MaxBitsPerFrame &^ 7) - (qcOut[0].GlobalExtBits + qcOut[0].StaticBits + qcOut[0].ElementExtBits)
+
+	if qcOut[0].GrantedDynBits+qcKernel.BitResTot < 0 {
+		return result, AACEncBitresTooLow
+	}
+	if qcOut[0].GrantedDynBits < 0 {
+		return result, AACEncBitresTooLow
+	}
+
+	FDKaacEncDistributeElementDynBits(qcElement[0][:], cm, elementBits, qcOut[0].GrantedDynBits)
+
+	result.AvgTotalDynBits = 0
+	result.TotalAvailableBits = avgTotalBits
+	qcOut[0].TotalGrantedPeCorr = 0
+
+	for i := 0; i < cm.NElements; i++ {
+		elInfo := cm.ElInfo[i]
+		if !fdkaacEncIsAdjustableElement(elInfo.ElType) {
+			continue
+		}
+		nChannels := elInfo.NChannelsInEl
+		psyChannels := psyOutElement[i].PsyOutChannel[:nChannels]
+		grantedPe, grantedPeCorr := FDKaacEncDistributeBits(
+			adjThrState,
+			adjThrState.AdjThrStateElem[i],
+			psyChannels,
+			&qcElement[0][i].PEData,
+			nChannels,
+			psyOutElement[i].CommonWindow,
+			qcElement[0][i].GrantedDynBits,
+			elementBits[i].BitResLevelEl,
+			elementBits[i].MaxBitResBitsEl,
+			qcKernel.MaxBitFac,
+			qcKernel.BitResMode,
+		)
+		qcElement[0][i].GrantedPe = grantedPe
+		qcElement[0][i].GrantedPeCorr = grantedPeCorr
+		result.TotalAvailableBits += elementBits[i].BitResLevelEl
+		qcOut[0].TotalGrantedPeCorr += grantedPeCorr
+		result.DistributedElements++
+	}
+
+	result.TotalAvailableBits = minInt(qcKernel.MaxBitsPerFrame, result.TotalAvailableBits)
+	result.DistributedBits = qcOut[0].GrantedDynBits
+	result.TotalGrantedPeCorr = qcOut[0].TotalGrantedPeCorr
+	return result, AACEncOK
 }
 
 func FDKaacEncGetTotalConsumedBits(qcOut []*QCOut, qcElement [][maxChannelElements]*QCOutElement, cm *ChannelMapping, globHdrBits int, nSubFrames int) int {
@@ -665,6 +817,130 @@ func checkGetTotalConsumedDynBitsInputs(qcOut []*QCOut, nSubFrames int) {
 	for i := 0; i < nSubFrames; i++ {
 		if qcOut[i] == nil {
 			panic("fdkaac: nil consumed dynamic-bit frame")
+		}
+	}
+}
+
+func checkDistributeElementDynBitsInputs(qcElement []*QCOutElement, cm *ChannelMapping, elementBits []*ElementBits) {
+	if cm == nil {
+		panic("fdkaac: nil element-bit channel mapping")
+	}
+	if cm.NElements < 0 || cm.NElements > maxChannelElements {
+		panic("fdkaac: invalid element-bit element count")
+	}
+	if len(qcElement) < cm.NElements || len(elementBits) < cm.NElements {
+		panic("fdkaac: short element-bit inputs")
+	}
+	for i := 0; i < cm.NElements; i++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+			continue
+		}
+		if qcElement[i] == nil {
+			panic("fdkaac: nil element-bit output element")
+		}
+		if elementBits[i] == nil {
+			panic("fdkaac: nil element-bit weights")
+		}
+		if elementBits[i].RelativeBitsEl < 0 {
+			panic("fdkaac: invalid element-bit relative weight")
+		}
+	}
+}
+
+func checkBitResRedistributionInputs(qcKernel *QCKernel, cm *ChannelMapping, elementBits []*ElementBits) {
+	if qcKernel == nil {
+		panic("fdkaac: nil bit-reservoir redistribution kernel")
+	}
+	if qcKernel.MaxBitsPerFrame < 0 || qcKernel.BitResTotMax < 0 {
+		panic("fdkaac: invalid bit-reservoir redistribution kernel")
+	}
+	if cm == nil {
+		panic("fdkaac: nil bit-reservoir redistribution mapping")
+	}
+	if cm.NElements < 0 || cm.NElements > maxChannelElements || len(elementBits) < cm.NElements {
+		panic("fdkaac: invalid bit-reservoir redistribution element count")
+	}
+	for i := 0; i < cm.NElements; i++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+			continue
+		}
+		if elementBits[i] == nil {
+			panic("fdkaac: nil bit-reservoir redistribution element")
+		}
+		if elementBits[i].RelativeBitsEl < 0 {
+			panic("fdkaac: invalid bit-reservoir redistribution relative weight")
+		}
+	}
+}
+
+func checkPrepareBitDistributionInputs(
+	qcKernel *QCKernel,
+	adjThrState *AdjThrState,
+	psyOutElement []*PsyOutElement,
+	qcOut []*QCOut,
+	qcElement [][maxChannelElements]*QCOutElement,
+	cm *ChannelMapping,
+	elementBits []*ElementBits,
+	avgTotalBits int,
+) {
+	if qcKernel == nil {
+		panic("fdkaac: nil bit-distribution kernel")
+	}
+	if adjThrState == nil {
+		panic("fdkaac: nil bit-distribution threshold state")
+	}
+	if cm == nil {
+		panic("fdkaac: nil bit-distribution channel mapping")
+	}
+	if avgTotalBits < 0 || qcKernel.MaxBitsPerFrame < 0 || qcKernel.GlobHdrBits < 0 || qcKernel.MaxBitFac < 0 {
+		panic("fdkaac: invalid bit-distribution kernel levels")
+	}
+	if qcKernel.BitResMode != BitresModeFull && qcKernel.BitResMode != BitresModeReduced && qcKernel.BitResMode != BitresModeDisabled {
+		panic("fdkaac: invalid bit-distribution reservoir mode")
+	}
+	if cm.NElements < 0 || cm.NElements > maxChannelElements ||
+		len(psyOutElement) < cm.NElements || len(qcOut) < 1 || len(qcElement) < 1 ||
+		len(elementBits) < cm.NElements {
+		panic("fdkaac: invalid bit-distribution element count")
+	}
+	if qcOut[0] == nil {
+		panic("fdkaac: nil bit-distribution frame")
+	}
+	if qcOut[0].GlobalExtBits < 0 || qcOut[0].StaticBits < 0 || qcOut[0].ElementExtBits < 0 {
+		panic("fdkaac: invalid bit-distribution frame sizes")
+	}
+	for i := 0; i < cm.NElements; i++ {
+		if !fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+			continue
+		}
+		if cm.ElInfo[i].NChannelsInEl != channelElementCount(cm.ElInfo[i].ElType) {
+			panic("fdkaac: invalid bit-distribution channel count")
+		}
+		if psyOutElement[i] == nil {
+			panic("fdkaac: nil bit-distribution psy element")
+		}
+		if qcElement[0][i] == nil {
+			panic("fdkaac: nil bit-distribution QC element")
+		}
+		if elementBits[i] == nil {
+			panic("fdkaac: nil bit-distribution element bits")
+		}
+		if adjThrState.AdjThrStateElem[i] == nil {
+			panic("fdkaac: nil bit-distribution threshold element")
+		}
+		if elementBits[i].RelativeBitsEl < 0 || elementBits[i].BitResLevelEl < 0 || elementBits[i].MaxBitResBitsEl < 0 {
+			panic("fdkaac: invalid bit-distribution element bits")
+		}
+		if qcKernel.BitResMode == BitresModeFull && elementBits[i].MaxBitResBitsEl <= 0 {
+			panic("fdkaac: invalid bit-distribution reservoir maximum")
+		}
+		for ch := 0; ch < cm.ElInfo[i].NChannelsInEl; ch++ {
+			if psyOutElement[i].PsyOutChannel[ch] == nil {
+				panic("fdkaac: nil bit-distribution psy channel")
+			}
+		}
+		if qcElement[0][i].PEData.Pe < 0 {
+			panic("fdkaac: invalid bit-distribution PE data")
 		}
 	}
 }

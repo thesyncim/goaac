@@ -2409,11 +2409,14 @@ func checkDistributeBitsInputs(
 			panic("fdkaac: invalid bit distribution block type")
 		}
 	}
-	if peData.Pe < 0 || grantedDynBits < 0 || bitresBits < 0 || maxBitresBits <= 0 || maxBitFac < 0 {
+	if peData.Pe < 0 || grantedDynBits < 0 || bitresBits < 0 || maxBitresBits < 0 || maxBitFac < 0 {
 		panic("fdkaac: invalid bit distribution level")
 	}
 	if bitResMode != BitresModeFull && bitResMode != BitresModeReduced && bitResMode != BitresModeDisabled {
 		panic("fdkaac: invalid bit reservoir mode")
+	}
+	if bitResMode == BitresModeFull && maxBitresBits <= 0 {
+		panic("fdkaac: invalid bit reservoir maximum")
 	}
 	if adjThrStateElement.Bits2PeFactorM <= 0 || adjThrStateElement.Bits2PeFactorE < 0 || adjThrStateElement.Bits2PeFactorE > qAvgBits {
 		panic("fdkaac: invalid bits-to-PE factor")
