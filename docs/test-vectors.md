@@ -246,6 +246,13 @@ threshold exponent scratch output, default `MINSNR_ADAPT_PARAM` constants,
 low-energy min-SNR reduction, zero-energy no-op behavior, malformed controls,
 and zero steady-state allocation.
 
+The FDK AAC-LC avoid-hole initialization subset is covered with source-derived
+vectors for `FDKaacEnc_initAvoidHoleFlag`. Tests verify long-window spread
+attenuation and peak/valley min-SNR edits, short-window spread scaling with
+inactive grouped bands preserved, stereo MS min-SNR/spread coupling, avoid-hole
+flag states, malformed controls, no-cgo compilation, and zero steady-state
+allocation.
+
 The FDK AAC-LC PE threshold-adjustment subset is covered with source-derived
 vectors for normalized Schur division, `FDKaacEnc_preparePe`,
 `FDKaacEnc_calcWeighting`, `FDKaacEnc_calcPe`, and `FDKaacEnc_peCalculation`.

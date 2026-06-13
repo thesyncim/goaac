@@ -233,6 +233,97 @@ func TestFDKaacEncAdaptMinSnrVector(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncInitAvoidHoleFlagLongVector(t *testing.T) {
+	if got, want := [...]uint8{AvoidHoleNone, AvoidHoleInactive, AvoidHoleActive}, [...]uint8{0, 1, 2}; got != want {
+		t.Fatalf("avoid-hole constants = %v, want %v", got, want)
+	}
+
+	psyStorage, qcStorage := buildMinSnrAdaptCase()
+	copy(qcStorage.SfbEnergy[:], psyStorage.SfbEnergy[:])
+	spreadEnergy := [...]FixpDBL{100000000, 2000000, 10000000, 200000000, 50000000, 3000000, 2000000, 40000000}
+	copy(qcStorage.SfbSpreadEnergy[:], spreadEnergy[:])
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+	var tools ToolsInfo
+	var ahFlag [2][maxGroupedSFB]uint8
+	ahParam := AHParam{ModifyMinSnr: 1}
+
+	FDKaacEncInitAvoidHoleFlag(qc[:], psy[:], &ahFlag, &tools, 1, &ahParam)
+
+	wantSpread := [...]FixpDBL{50000000, 1000000, 5000000, 100000000, 25000000, 1500000, 1000000, 20000000}
+	wantMinSnr := [...]FixpDBL{-90000000, -64302174, -94302174, -80000000, -70000000, -104302174, -54302174, -100000000}
+	wantFlags := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone, AvoidHoleNone, AvoidHoleInactive, AvoidHoleNone, AvoidHoleInactive, AvoidHoleInactive}
+	assertFixpDBLSlice(t, "long avoid-hole spread", qc[0].SfbSpreadEnergy[:8], wantSpread[:], 0x753349bb575847e5)
+	assertFixpDBLSlice(t, "long avoid-hole min-SNR", qc[0].SfbMinSnrLdData[:8], wantMinSnr[:], 0xd66b4eb205740560)
+	assertUint8Slice(t, "long avoid-hole flags", ahFlag[0][:8], wantFlags[:])
+}
+
+func TestFDKaacEncInitAvoidHoleFlagShortVector(t *testing.T) {
+	psyStorage, qcStorage := buildMinSnrAdaptCase()
+	psyStorage.LastWindowSequence = ShortWindow
+	psyStorage.MaxSfbPerGroup = 3
+	copy(qcStorage.SfbEnergy[:], psyStorage.SfbEnergy[:])
+	spreadEnergy := [...]FixpDBL{400000000, 3000000, 2000000, 123456789, 40000000, 1000000, 200000000, 987654321}
+	copy(qcStorage.SfbSpreadEnergy[:], spreadEnergy[:])
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+	var tools ToolsInfo
+	var ahFlag [2][maxGroupedSFB]uint8
+	ahFlag[0][3] = AvoidHoleActive
+	ahFlag[0][7] = AvoidHoleActive
+	ahParam := AHParam{ModifyMinSnr: 0}
+
+	FDKaacEncInitAvoidHoleFlag(qc[:], psy[:], &ahFlag, &tools, 1, &ahParam)
+
+	wantSpread := [...]FixpDBL{251999998, 1889999, 1259999, 123456789, 25199999, 629999, 125999999, 987654321}
+	wantMinSnr := [...]FixpDBL{-90000000, -120000000, -150000000, -80000000, -70000000, -160000000, -110000000, -100000000}
+	wantFlags := [...]uint8{AvoidHoleNone, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone, AvoidHoleActive}
+	assertFixpDBLSlice(t, "short avoid-hole spread", qc[0].SfbSpreadEnergy[:8], wantSpread[:], 0xfdf217b5498431a2)
+	assertFixpDBLSlice(t, "short avoid-hole min-SNR", qc[0].SfbMinSnrLdData[:8], wantMinSnr[:], 0xe3f3bae079921845)
+	assertUint8Slice(t, "short avoid-hole flags", ahFlag[0][:8], wantFlags[:])
+}
+
+func TestFDKaacEncInitAvoidHoleFlagStereoMSVector(t *testing.T) {
+	leftPsy, leftQC := buildMinSnrAdaptCase()
+	rightPsy := leftPsy
+	var rightQC QCOutChannel
+
+	rightEnergy := [...]FixpDBL{100000000, 8000000, 6000000, 20000000, 160000000, 500000, 6000000, 10000000}
+	rightEnergyLd := [...]FixpDBL{-148464108, -270731634, -284657976, -226374761, -125711465, -404949362, -284657976, -259929193}
+	leftSpread := [...]FixpDBL{20000000, 12000000, 100000000, 10000000, 400000000, 2000000, 1000000, 300000000}
+	rightSpread := [...]FixpDBL{50000000, 1000000, 2000000, 80000000, 60000000, 1000000, 10000000, 20000000}
+	rightMinSnr := [...]FixpDBL{-95000000, -100000000, -130000000, -60000000, -85000000, -140000000, -90000000, -75000000}
+
+	copy(leftQC.SfbEnergy[:], leftPsy.SfbEnergy[:])
+	copy(leftQC.SfbSpreadEnergy[:], leftSpread[:])
+	copy(rightPsy.SfbEnergy[:], rightEnergy[:])
+	copy(rightQC.SfbEnergy[:], rightEnergy[:])
+	copy(rightQC.SfbEnergyLdData[:], rightEnergyLd[:])
+	copy(rightQC.SfbMinSnrLdData[:], rightMinSnr[:])
+	copy(rightQC.SfbSpreadEnergy[:], rightSpread[:])
+
+	psy := [2]*PsyOutChannel{&leftPsy, &rightPsy}
+	qc := [2]*QCOutChannel{&leftQC, &rightQC}
+	tools := ToolsInfo{MsMask: [maxGroupedSFB]int{1, 0, 1, 0, 1, 1, 0, 1}}
+	var ahFlag [2][maxGroupedSFB]uint8
+	ahParam := AHParam{ModifyMinSnr: 0}
+
+	FDKaacEncInitAvoidHoleFlag(qc[:], psy[:], &ahFlag, &tools, 2, &ahParam)
+
+	wantLeftSpread := [...]FixpDBL{179999995, 6000000, 1799999, 5000000, 161999995, 1000000, 500000, 150000000}
+	wantRightSpread := [...]FixpDBL{89999997, 500000, 1000000, 40000000, 30000000, 500000, 5000000, 10000000}
+	wantLeftMinSnr := [...]FixpDBL{-90000000, -120000000, -150000000, -80000000, -70000000, -160000000, -110000000, -100000000}
+	wantRightMinSnr := [...]FixpDBL{-95000000, -100000000, -130000000, -60000000, -85000000, -140000000, -90000000, -60744127}
+	wantLeftFlags := [...]uint8{AvoidHoleInactive, AvoidHoleNone, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone}
+	wantRightFlags := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleInactive}
+	assertFixpDBLSlice(t, "stereo avoid-hole left spread", qc[0].SfbSpreadEnergy[:8], wantLeftSpread[:], 0x4182af6c7e1a8aa3)
+	assertFixpDBLSlice(t, "stereo avoid-hole right spread", qc[1].SfbSpreadEnergy[:8], wantRightSpread[:], 0x8f718c737e7686a3)
+	assertFixpDBLSlice(t, "stereo avoid-hole left min-SNR", qc[0].SfbMinSnrLdData[:8], wantLeftMinSnr[:], 0xe3f3bae079921845)
+	assertFixpDBLSlice(t, "stereo avoid-hole right min-SNR", qc[1].SfbMinSnrLdData[:8], wantRightMinSnr[:], 0xc4ec53be2857d015)
+	assertUint8Slice(t, "stereo avoid-hole left flags", ahFlag[0][:8], wantLeftFlags[:])
+	assertUint8Slice(t, "stereo avoid-hole right flags", ahFlag[1][:8], wantRightFlags[:])
+}
+
 func TestFDKaacEncPECalculationRejectsInvalid(t *testing.T) {
 	peData, psy, qc, tools, state := buildAdjThrLongPatchCase()
 	for _, tt := range []struct {
@@ -311,6 +402,60 @@ func TestFDKaacEncMinSnrAdjustmentRejectsInvalid(t *testing.T) {
 			badPsy.SfbPerGroup = 3
 			bad := [1]*PsyOutChannel{&badPsy}
 			FDKaacEncAdaptMinSnr(qc[:], bad[:], &param, 1)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		})
+	}
+}
+
+func TestFDKaacEncInitAvoidHoleFlagRejectsInvalid(t *testing.T) {
+	psyStorage, qcStorage := buildMinSnrAdaptCase()
+	copy(qcStorage.SfbEnergy[:], psyStorage.SfbEnergy[:])
+	copy(qcStorage.SfbSpreadEnergy[:], psyStorage.SfbEnergy[:])
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+	var ahFlag [2][maxGroupedSFB]uint8
+	var tools ToolsInfo
+	ahParam := AHParam{ModifyMinSnr: 1}
+
+	rightPsy := psyStorage
+	rightQC := qcStorage
+	stereoPsy := [2]*PsyOutChannel{&psyStorage, &rightPsy}
+	stereoQC := [2]*QCOutChannel{&qcStorage, &rightQC}
+
+	for _, tt := range []struct {
+		name string
+		fn   func()
+	}{
+		{"nil flag scratch", func() { FDKaacEncInitAvoidHoleFlag(qc[:], psy[:], nil, &tools, 1, &ahParam) }},
+		{"nil tools", func() { FDKaacEncInitAvoidHoleFlag(qc[:], psy[:], &ahFlag, nil, 1, &ahParam) }},
+		{"nil parameter", func() { FDKaacEncInitAvoidHoleFlag(qc[:], psy[:], &ahFlag, &tools, 1, nil) }},
+		{"bad channel count", func() { FDKaacEncInitAvoidHoleFlag(qc[:], psy[:], &ahFlag, &tools, 0, &ahParam) }},
+		{"short inputs", func() { FDKaacEncInitAvoidHoleFlag(qc[:0], psy[:], &ahFlag, &tools, 1, &ahParam) }},
+		{"nil qc", func() {
+			bad := [1]*QCOutChannel{nil}
+			FDKaacEncInitAvoidHoleFlag(bad[:], psy[:], &ahFlag, &tools, 1, &ahParam)
+		}},
+		{"nil psy", func() {
+			bad := [1]*PsyOutChannel{nil}
+			FDKaacEncInitAvoidHoleFlag(qc[:], bad[:], &ahFlag, &tools, 1, &ahParam)
+		}},
+		{"bad band shape", func() {
+			badPsy := psyStorage
+			badPsy.SfbPerGroup = 3
+			bad := [1]*PsyOutChannel{&badPsy}
+			FDKaacEncInitAvoidHoleFlag(qc[:], bad[:], &ahFlag, &tools, 1, &ahParam)
+		}},
+		{"mismatched stereo bands", func() {
+			rightPsy.MaxSfbPerGroup = 3
+			FDKaacEncInitAvoidHoleFlag(stereoQC[:], stereoPsy[:], &ahFlag, &tools, 2, &ahParam)
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -412,6 +557,30 @@ func TestFDKaacEncMinSnrAdjustmentAllocs(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncAvoidHoleAllocs(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var tools ToolsInfo
+	var ahFlag [2][maxGroupedSFB]uint8
+	ahParam := AHParam{ModifyMinSnr: 1}
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+	spreadEnergy := [...]FixpDBL{100000000, 2000000, 10000000, 200000000, 50000000, 3000000, 2000000, 40000000}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		ahFlag = [2][maxGroupedSFB]uint8{}
+		psyStorage, qcStorage = buildMinSnrAdaptCase()
+		copy(qcStorage.SfbEnergy[:], psyStorage.SfbEnergy[:])
+		copy(qcStorage.SfbSpreadEnergy[:], spreadEnergy[:])
+		FDKaacEncInitAvoidHoleFlag(qc[:], psy[:], &ahFlag, &tools, 1, &ahParam)
+		adjThrSink = qcStorage.SfbSpreadEnergy[2] + qcStorage.SfbMinSnrLdData[6]
+		adjThrHashSink = uint64(ahFlag[0][2])
+	})
+	if allocs != 0 {
+		t.Fatalf("avoid-hole allocations = %v, want 0", allocs)
+	}
+}
+
 func TestFDKaacEncPECalculationAllocs(t *testing.T) {
 	var peData PEData
 	var psyStorage PsyOutChannel
@@ -463,6 +632,18 @@ func TestFDKaacEncDistributeBitsAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("bit distribution allocations = %v, want 0", allocs)
+	}
+}
+
+func assertUint8Slice(t *testing.T, name string, got []uint8, want []uint8) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s length = %d, want %d", name, len(got), len(want))
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s[%d] = %d, want %d; got %v want %v", name, i, got[i], want[i], got, want)
+		}
 	}
 }
 

@@ -11,6 +11,12 @@ const (
 )
 
 const (
+	AvoidHoleNone     uint8 = 0
+	AvoidHoleInactive uint8 = 1
+	AvoidHoleActive   uint8 = 2
+)
+
+const (
 	qBitFac  = 24
 	qAvgBits = 17
 
@@ -51,6 +57,17 @@ const (
 	minSnrAdaptDefaultStartRatio          = FixpDBL(0x06a4d3c0)
 	minSnrAdaptDefaultRedRatioFac         = FixpDBL(-0x30000000)
 	minSnrAdaptDefaultRedOffs             = FixpDBL(0x02c00000)
+
+	snrLdMin1 FixpDBL = -0x0352f221
+	snrLdMin2 FixpDBL = 0x0351e1a2
+	snrLdFac  FixpDBL = -0x00a4d3c2
+	snrLdMin3 FixpDBL = -0x02000000
+	snrLdMin4 FixpDBL = 0x02000000
+	snrLdMin5 FixpDBL = -0x04000000
+
+	avoidHoleShortSpreadFac FixpDBL = 0x50a3d700
+	avoidHoleMsSpreadFac    FixpDBL = 0x73333300
+	avoidHoleNegHalf        FixpDBL = -0x40000000
 )
 
 type BitresMode int
@@ -217,6 +234,139 @@ func FDKaacEncAdaptMinSnr(
 				minSnrRed = minFixpDBL(minSnrLimitLD64, minSnrRed)
 				if update {
 					qcCh.SfbMinSnrLdData[idx] = minSnrRed
+				}
+			}
+		}
+	}
+}
+
+func FDKaacEncInitAvoidHoleFlag(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	toolsInfo *ToolsInfo,
+	nChannels int,
+	ahParam *AHParam,
+) {
+	checkAvoidHoleInputs(qcOutChannel, psyOutChannel, ahFlag, toolsInfo, nChannels, ahParam)
+
+	for ch := 0; ch < nChannels; ch++ {
+		qcCh := qcOutChannel[ch]
+		psyCh := psyOutChannel[ch]
+		if psyCh.LastWindowSequence != ShortWindow {
+			for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+				for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+					qcCh.SfbSpreadEnergy[sfbGrp+sfb] >>= 1
+				}
+			}
+		} else {
+			for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+				for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+					idx := sfbGrp + sfb
+					qcCh.SfbSpreadEnergy[idx] = FMultDD(avoidHoleShortSpreadFac, qcCh.SfbSpreadEnergy[idx])
+				}
+			}
+		}
+	}
+
+	if ahParam.ModifyMinSnr != 0 {
+		for ch := 0; ch < nChannels; ch++ {
+			qcCh := qcOutChannel[ch]
+			psyCh := psyOutChannel[ch]
+			for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+				for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+					idx := sfbGrp + sfb
+					sfbEnM1 := qcCh.SfbEnergy[idx]
+					if sfb > 0 {
+						sfbEnM1 = qcCh.SfbEnergy[idx-1]
+					}
+					sfbEnP1 := qcCh.SfbEnergy[idx]
+					if sfb < psyCh.MaxSfbPerGroup-1 {
+						sfbEnP1 = qcCh.SfbEnergy[idx+1]
+					}
+
+					avgEn := (sfbEnM1 >> 1) + (sfbEnP1 >> 1)
+					avgEnLdData := CalcLdData(avgEn)
+					sfbEn := qcCh.SfbEnergy[idx]
+					sfbEnLdData := qcCh.SfbEnergyLdData[idx]
+
+					if sfbEn > avgEn {
+						tmpMinSnrLdData := FixpDBL(0)
+						if psyCh.LastWindowSequence == LongWindow {
+							tmpMinSnrLdData = snrLdFac + maxFixpDBL(avgEnLdData-sfbEnLdData, snrLdMin1-snrLdFac)
+						} else {
+							tmpMinSnrLdData = snrLdFac + maxFixpDBL(avgEnLdData-sfbEnLdData, snrLdMin3-snrLdFac)
+						}
+						qcCh.SfbMinSnrLdData[idx] = minFixpDBL(qcCh.SfbMinSnrLdData[idx], tmpMinSnrLdData)
+					}
+
+					if sfbEnLdData+snrLdMin4 < avgEnLdData && sfbEn > 0 {
+						tmpMinSnrLdData := avgEnLdData - sfbEnLdData - snrLdMin4 + qcCh.SfbMinSnrLdData[idx]
+						tmpMinSnrLdData = minFixpDBL(snrLdFac, tmpMinSnrLdData)
+						qcCh.SfbMinSnrLdData[idx] = minFixpDBL(tmpMinSnrLdData, qcCh.SfbMinSnrLdData[idx]+snrLdMin2)
+					}
+				}
+			}
+		}
+	}
+
+	if nChannels == 2 {
+		qcOutChanM := qcOutChannel[0]
+		qcOutChanS := qcOutChannel[1]
+		psyOutChanM := psyOutChannel[0]
+		for sfbGrp := 0; sfbGrp < psyOutChanM.SfbCnt; sfbGrp += psyOutChanM.SfbPerGroup {
+			for sfb := 0; sfb < psyOutChanM.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				if toolsInfo.MsMask[idx] == 0 {
+					continue
+				}
+
+				maxSfbEnLd := maxFixpDBL(qcOutChanM.SfbEnergyLdData[idx], qcOutChanS.SfbEnergyLdData[idx])
+				maxThrLd := FixpDBL(0)
+				if ((snrLdMin5 >> 1) + (maxSfbEnLd >> 1) + (qcOutChanM.SfbMinSnrLdData[idx] >> 1)) <= avoidHoleNegHalf {
+					maxThrLd = MinValDBL
+				} else {
+					maxThrLd = snrLdMin5 + maxSfbEnLd + qcOutChanM.SfbMinSnrLdData[idx]
+				}
+
+				sfbMinSnrTmpLd := FixpDBL(0)
+				if qcOutChanM.SfbEnergy[idx] > 0 {
+					sfbMinSnrTmpLd = maxThrLd - qcOutChanM.SfbEnergyLdData[idx]
+				}
+				qcOutChanM.SfbMinSnrLdData[idx] = maxFixpDBL(qcOutChanM.SfbMinSnrLdData[idx], sfbMinSnrTmpLd)
+				if qcOutChanM.SfbMinSnrLdData[idx] <= 0 {
+					qcOutChanM.SfbMinSnrLdData[idx] = minFixpDBL(qcOutChanM.SfbMinSnrLdData[idx], snrLdFac)
+				}
+
+				sfbMinSnrTmpLd = 0
+				if qcOutChanS.SfbEnergy[idx] > 0 {
+					sfbMinSnrTmpLd = maxThrLd - qcOutChanS.SfbEnergyLdData[idx]
+				}
+				qcOutChanS.SfbMinSnrLdData[idx] = maxFixpDBL(qcOutChanS.SfbMinSnrLdData[idx], sfbMinSnrTmpLd)
+				if qcOutChanS.SfbMinSnrLdData[idx] <= 0 {
+					qcOutChanS.SfbMinSnrLdData[idx] = minFixpDBL(qcOutChanS.SfbMinSnrLdData[idx], snrLdFac)
+				}
+
+				if qcOutChanM.SfbEnergy[idx] > qcOutChanM.SfbSpreadEnergy[idx] {
+					qcOutChanS.SfbSpreadEnergy[idx] = FMultDD(qcOutChanS.SfbEnergy[idx], avoidHoleMsSpreadFac)
+				}
+				if qcOutChanS.SfbEnergy[idx] > qcOutChanS.SfbSpreadEnergy[idx] {
+					qcOutChanM.SfbSpreadEnergy[idx] = FMultDD(qcOutChanM.SfbEnergy[idx], avoidHoleMsSpreadFac)
+				}
+			}
+		}
+	}
+
+	for ch := 0; ch < nChannels; ch++ {
+		qcCh := qcOutChannel[ch]
+		psyCh := psyOutChannel[ch]
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				if qcCh.SfbSpreadEnergy[idx] > qcCh.SfbEnergy[idx] || qcCh.SfbMinSnrLdData[idx] > 0 {
+					ahFlag[ch][idx] = AvoidHoleNone
+				} else {
+					ahFlag[ch][idx] = AvoidHoleInactive
 				}
 			}
 		}
@@ -598,6 +748,33 @@ func checkThresholdAdjustmentInputs(qcOutChannel []*QCOutChannel, psyOutChannel 
 			panic("fdkaac: nil threshold adjustment psy output")
 		}
 		checkPEChannelShape(psyOutChannel[ch])
+	}
+}
+
+func checkAvoidHoleInputs(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	toolsInfo *ToolsInfo,
+	nChannels int,
+	ahParam *AHParam,
+) {
+	checkThresholdAdjustmentInputs(qcOutChannel, psyOutChannel, nChannels)
+	if ahFlag == nil {
+		panic("fdkaac: nil avoid-hole flag scratch")
+	}
+	if toolsInfo == nil {
+		panic("fdkaac: nil avoid-hole tools info")
+	}
+	if ahParam == nil {
+		panic("fdkaac: nil avoid-hole parameter")
+	}
+	if nChannels == 2 {
+		left := psyOutChannel[0]
+		right := psyOutChannel[1]
+		if left.SfbCnt != right.SfbCnt || left.SfbPerGroup != right.SfbPerGroup || left.MaxSfbPerGroup != right.MaxSfbPerGroup {
+			panic("fdkaac: mismatched avoid-hole stereo bands")
+		}
 	}
 }
 
