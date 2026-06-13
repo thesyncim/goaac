@@ -15,14 +15,43 @@ const (
 )
 
 type QCKernel struct {
-	GlobHdrBits     int
-	MaxBitsPerFrame int
-	MinBitsPerFrame int
-	BitrateMode     QCBitrateMode
-	BitResMode      BitresMode
-	BitResTot       int
-	BitResTotMax    int
-	MaxBitFac       FixpDBL
+	GlobHdrBits      int
+	MaxBitsPerFrame  int
+	MinBitsPerFrame  int
+	NElements        int
+	BitrateMode      QCBitrateMode
+	BitResMode       BitresMode
+	BitResTot        int
+	BitResTotMax     int
+	MaxIterations    int
+	InvQuant         int
+	VBRQualFactor    FixpDBL
+	MaxBitFac        FixpDBL
+	DZoneQuantEnable int
+	PaddingRest      int
+}
+
+type QCInit struct {
+	ChannelMapping      *ChannelMapping
+	SceCpe              int
+	MaxBits             int
+	AverageBits         int
+	BitRes              int
+	SampleRate          int
+	IsLowDelay          int
+	StaticBits          int
+	BitrateMode         QCBitrateMode
+	MeanPe              int
+	ChBitrate           int
+	InvQuant            int
+	MaxIterations       int
+	MaxBitFac           FixpDBL
+	Bitrate             int
+	NSubFrames          int
+	MinBits             int
+	BitResMode          BitresMode
+	BitDistributionMode int
+	PaddingRest         int
 }
 
 type QCMainQuantizeScratch struct {
@@ -115,6 +144,108 @@ type QCMainQuantizationDecisionResult struct {
 	EmergencyIterations    int
 	DynBitsOvershoot       int
 	ConstraintsReset       int
+}
+
+const (
+	aacencDZQBitrateThreshold = 32000
+	vbrQualFactor1            = FixpDBL(0x13333340)
+	vbrQualFactor2            = FixpDBL(0x14bc6a80)
+	vbrQualFactor3            = FixpDBL(0x16872b00)
+	vbrQualFactor4            = FixpDBL(0x0f5c28f0)
+	vbrQualFactor5            = FixpDBL(0x08f5c290)
+)
+
+type qcVBRQualFactorEntry struct {
+	BitrateMode   QCBitrateMode
+	VBRQualFactor FixpDBL
+}
+
+var qcVBRQualFactor = [...]qcVBRQualFactorEntry{
+	{QCBitrateModeVBR1, vbrQualFactor1},
+	{QCBitrateModeVBR2, vbrQualFactor2},
+	{QCBitrateModeVBR3, vbrQualFactor3},
+	{QCBitrateModeVBR4, vbrQualFactor4},
+	{QCBitrateModeVBR5, vbrQualFactor5},
+}
+
+func FDKaacEncQCInit(qcKernel *QCKernel, adjThrState *AdjThrState, elementBits []*ElementBits, init *QCInit, initFlags uint32) int {
+	checkQCInitInputs(qcKernel, adjThrState, elementBits, init)
+
+	cm := init.ChannelMapping
+	qcKernel.MaxBitsPerFrame = init.MaxBits
+	qcKernel.MinBitsPerFrame = init.MinBits
+	qcKernel.NElements = cm.NElements
+	if initFlags != 0 || (init.BitrateMode != QCBitrateModeFF && qcKernel.BitResTotMax != init.BitRes) {
+		qcKernel.BitResTot = init.BitRes
+	}
+	qcKernel.BitResTotMax = init.BitRes
+	qcKernel.MaxBitFac = init.MaxBitFac
+	qcKernel.BitrateMode = init.BitrateMode
+	qcKernel.InvQuant = init.InvQuant
+	qcKernel.MaxIterations = init.MaxIterations
+	qcKernel.BitResMode = init.BitResMode
+	qcKernel.PaddingRest = init.PaddingRest
+	qcKernel.GlobHdrBits = init.StaticBits
+
+	errCode := FDKaacEncInitElementBits(
+		elementBits,
+		cm,
+		init.Bitrate,
+		(init.AverageBits/init.NSubFrames)-qcKernel.GlobHdrBits,
+		qcKernel.MaxBitsPerFrame/cm.NChannelsEff,
+	)
+	if errCode != AACEncOK {
+		return errCode
+	}
+
+	qcKernel.VBRQualFactor = fdkaacEncVBRQualFactor(qcKernel.BitrateMode)
+	if cm.NChannelsEff == 1 && init.Bitrate/cm.NChannelsEff < aacencDZQBitrateThreshold && init.IsLowDelay != 0 {
+		qcKernel.DZoneQuantEnable = 1
+	} else {
+		qcKernel.DZoneQuantEnable = 0
+	}
+
+	FDKaacEncInitAdjThrState(adjThrState, cm.NElements, init.IsLowDelay, init.BitDistributionMode)
+	for i := 0; i < cm.NElements; i++ {
+		if adjThrState.AdjThrStateElem[i] == nil {
+			panic("fdkaac: nil QC init threshold element")
+		}
+		elInfo := cm.ElInfo[i]
+		bitrateInElement := init.Bitrate
+		if elInfo.RelativeBits != MaxValDBL {
+			bitrateInElement = fdkaacEncFMultNormInt(elInfo.RelativeBits, init.Bitrate)
+		}
+		FDKaacEncInitATSElement(
+			adjThrState.AdjThrStateElem[i],
+			init.MeanPe,
+			bitrateInElement,
+			elInfo.NChannelsInEl,
+			init.SampleRate,
+			init.IsLowDelay,
+			qcKernel.DZoneQuantEnable,
+			qcKernel.InvQuant,
+			qcKernel.VBRQualFactor,
+		)
+	}
+
+	return AACEncOK
+}
+
+func fdkaacEncVBRQualFactor(mode QCBitrateMode) FixpDBL {
+	for _, entry := range qcVBRQualFactor {
+		if entry.BitrateMode == mode {
+			return entry.VBRQualFactor
+		}
+	}
+	return 0
+}
+
+func fdkaacEncFMultNormInt(rate FixpDBL, value int) int {
+	if rate < 0 || value < 0 {
+		panic("fdkaac: invalid normalized integer multiply")
+	}
+	m, e := fMultNorm(rate, FixpDBL(value))
+	return int(ScaleValueSaturateDBL(m, e))
 }
 
 func FDKaacEncQCMainPrepare(
@@ -1077,6 +1208,40 @@ func FDKaacEncUpdateBitres(qcKernel *QCKernel, qcOut []*QCOut) {
 
 func fdkaacEncIsConstantBitrateMode(bitrateMode QCBitrateMode) bool {
 	return bitrateMode == QCBitrateModeCBR || bitrateMode == QCBitrateModeSFR || bitrateMode == QCBitrateModeFF
+}
+
+func checkQCInitInputs(qcKernel *QCKernel, adjThrState *AdjThrState, elementBits []*ElementBits, init *QCInit) {
+	if qcKernel == nil {
+		panic("fdkaac: nil QC init kernel")
+	}
+	if adjThrState == nil {
+		panic("fdkaac: nil QC init threshold state")
+	}
+	if init == nil {
+		panic("fdkaac: nil QC init configuration")
+	}
+	if init.ChannelMapping == nil {
+		panic("fdkaac: nil QC init channel mapping")
+	}
+	cm := init.ChannelMapping
+	if cm.NElements <= 0 || cm.NElements > maxChannelElements || cm.NChannelsEff <= 0 || len(elementBits) < cm.NElements {
+		panic("fdkaac: invalid QC init channel mapping")
+	}
+	for i := 0; i < cm.NElements; i++ {
+		if elementBits[i] == nil {
+			panic("fdkaac: nil QC init element bits")
+		}
+		if cm.ElInfo[i].NChannelsInEl <= 0 {
+			panic("fdkaac: invalid QC init element channel count")
+		}
+	}
+	if init.NSubFrames <= 0 || init.AverageBits < 0 || init.MaxBits < 0 || init.MinBits < 0 || init.BitRes < 0 ||
+		init.StaticBits < 0 || init.Bitrate <= 0 || init.SampleRate <= 0 || init.MeanPe <= 0 || init.MaxBitFac < 0 {
+		panic("fdkaac: invalid QC init configuration")
+	}
+	if init.BitResMode != BitresModeFull && init.BitResMode != BitresModeReduced && init.BitResMode != BitresModeDisabled {
+		panic("fdkaac: invalid QC init reservoir mode")
+	}
 }
 
 func checkQCMainFrameInputs(

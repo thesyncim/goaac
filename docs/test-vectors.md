@@ -330,6 +330,13 @@ direct form-factor, PE-calculation, and static channel-element dry-run sequence,
 verify the nil-QC static side-info bit count, malformed controls, no-cgo
 compilation, and zero steady-state allocation.
 
+The FDK AAC-LC QC initialization subset is covered with source-shaped vectors
+for `FDKaacEnc_QCInit`. Tests verify CBR kernel budget/reservoir transfer, VBR
+multi-element relative-bit traversal, VBR quality-factor selection, FF reservoir
+preservation and reset controls, element-bit initialization, threshold-state
+seeding, malformed controls, no-cgo compilation, and zero steady-state
+allocation.
+
 The FDK AAC-LC QC quantize/reduce-loop subset is covered with a source-shaped
 `FDKaacEnc_calcMaxValueInSfb` vector, `FDKaacEnc_reduceBitConsumption` normal
 and max-iteration vectors, a source-shaped `FDKaacEnc_crashRecovery` vector,

@@ -5,6 +5,217 @@ import "testing"
 var qcMainPrepareSink int
 var qcMainPrepareHashSink uint64
 
+func TestFDKaacEncQCInitCBRVector(t *testing.T) {
+	var cm ChannelMapping
+	if errCode := FDKaacEncInitChannelMapping(Mode2, ChannelOrderMPEG, &cm); errCode != AACEncOK {
+		t.Fatalf("mapping error = %#x", errCode)
+	}
+	elementBits, elementBitsPtrs := initializedElementBits()
+	adjState, _ := initializedQCInitAdjThrState()
+	kernel := QCKernel{BitResTot: 222, BitResTotMax: 111}
+	init := QCInit{
+		ChannelMapping:      &cm,
+		MaxBits:             12288,
+		AverageBits:         1024,
+		BitRes:              4096,
+		SampleRate:          48000,
+		StaticBits:          56,
+		BitrateMode:         QCBitrateModeCBR,
+		MeanPe:              1000,
+		MaxIterations:       5,
+		MaxBitFac:           MaxValDBL,
+		Bitrate:             128000,
+		NSubFrames:          1,
+		BitResMode:          BitresModeFull,
+		BitDistributionMode: BitDistributionModeIntraElement,
+		PaddingRest:         48000,
+	}
+
+	if errCode := FDKaacEncQCInit(&kernel, adjState, elementBitsPtrs[:], &init, 0); errCode != AACEncOK {
+		t.Fatalf("QC init error = %#x, want %#x", errCode, AACEncOK)
+	}
+	wantKernel := QCKernel{
+		GlobHdrBits:      56,
+		MaxBitsPerFrame:  12288,
+		NElements:        1,
+		BitrateMode:      QCBitrateModeCBR,
+		BitResMode:       BitresModeFull,
+		BitResTot:        4096,
+		BitResTotMax:     4096,
+		MaxIterations:    5,
+		MaxBitFac:        MaxValDBL,
+		DZoneQuantEnable: 0,
+		PaddingRest:      48000,
+	}
+	if kernel != wantKernel {
+		t.Fatalf("QC kernel = %+v, want %+v", kernel, wantKernel)
+	}
+	assertElementBits(t, elementBits[:], []elementBitsWant{
+		{chBitrate: 64000, maxBits: 12288, rel: MaxValDBL},
+	})
+	assertQCInitAdjState(t, adjState, BitDistributionModeIntraElement, 1)
+	el := adjState.AdjThrStateElem[0]
+	if el.PeMin != 400 || el.PeMax != 600 || el.PeOffset != 0 ||
+		el.AHParam.ModifyMinSnr != adjThrTrue || el.AHParam.StartSfbL != 15 || el.AHParam.StartSfbS != 3 ||
+		el.VBRQualFactor != 0 || el.DynBitsLast != -1 {
+		t.Fatalf("CBR threshold element = %+v", *el)
+	}
+}
+
+func TestFDKaacEncQCInitVBRMultiElementVector(t *testing.T) {
+	var cm ChannelMapping
+	if errCode := FDKaacEncInitChannelMapping(Mode1_2_2_1, ChannelOrderWAV, &cm); errCode != AACEncOK {
+		t.Fatalf("mapping error = %#x", errCode)
+	}
+	elementBits, elementBitsPtrs := initializedElementBits()
+	adjState, _ := initializedQCInitAdjThrState()
+	kernel := QCKernel{BitResTot: 17, BitResTotMax: 19}
+	init := QCInit{
+		ChannelMapping:      &cm,
+		MaxBits:             30720,
+		AverageBits:         1088,
+		BitRes:              29632,
+		SampleRate:          48000,
+		StaticBits:          64,
+		BitrateMode:         QCBitrateModeVBR3,
+		MeanPe:              1000,
+		MaxIterations:       5,
+		MaxBitFac:           vbrChaosHalf,
+		Bitrate:             320000,
+		NSubFrames:          1,
+		BitResMode:          BitresModeFull,
+		BitDistributionMode: BitDistributionModeInterElement,
+		PaddingRest:         48000,
+	}
+
+	if errCode := FDKaacEncQCInit(&kernel, adjState, elementBitsPtrs[:], &init, 0); errCode != AACEncOK {
+		t.Fatalf("QC init error = %#x, want %#x", errCode, AACEncOK)
+	}
+	if kernel.GlobHdrBits != 64 ||
+		kernel.MaxBitsPerFrame != 30720 ||
+		kernel.NElements != 4 ||
+		kernel.BitrateMode != QCBitrateModeVBR3 ||
+		kernel.BitResTot != 29632 ||
+		kernel.BitResTotMax != 29632 ||
+		kernel.VBRQualFactor != vbrQualFactor3 ||
+		kernel.MaxBitFac != vbrChaosHalf {
+		t.Fatalf("VBR QC kernel = %+v", kernel)
+	}
+	assertElementBits(t, elementBits[:], []elementBitsWant{
+		{chBitrate: 76799, maxBits: 5996, rel: relBits024},
+		{chBitrate: 55999, maxBits: 11992, rel: relBits035},
+		{chBitrate: 55999, maxBits: 11992, rel: relBits035},
+		{chBitrate: 19199, maxBits: 736, rel: relBits006},
+	})
+	assertQCInitAdjState(t, adjState, BitDistributionModeInterElement, 3)
+	if adjState.AdjThrStateElem[1].AHParam.ModifyMinSnr != adjThrTrue ||
+		adjState.AdjThrStateElem[1].VBRQualFactor != vbrQualFactor3 {
+		t.Fatalf("VBR CPE threshold element = %+v", *adjState.AdjThrStateElem[1])
+	}
+	lfe := adjState.AdjThrStateElem[3]
+	if lfe.PeOffset != 50 || lfe.AHParam.ModifyMinSnr != adjThrFalse ||
+		lfe.VBRQualFactor != vbrQualFactor3 || lfe.Bits2PeFactorM != adjThrDefaultBits2PEFactorM {
+		t.Fatalf("VBR LFE threshold element = %+v", *lfe)
+	}
+}
+
+func TestFDKaacEncQCInitFFReservoirPreserveVector(t *testing.T) {
+	var cm ChannelMapping
+	if errCode := FDKaacEncInitChannelMapping(Mode2, ChannelOrderMPEG, &cm); errCode != AACEncOK {
+		t.Fatalf("mapping error = %#x", errCode)
+	}
+	_, elementBitsPtrs := initializedElementBits()
+	adjState, _ := initializedQCInitAdjThrState()
+	kernel := QCKernel{BitResTot: 777, BitResTotMax: 3000}
+	init := QCInit{
+		ChannelMapping:      &cm,
+		MaxBits:             12288,
+		AverageBits:         1024,
+		BitRes:              3000,
+		SampleRate:          48000,
+		StaticBits:          56,
+		BitrateMode:         QCBitrateModeFF,
+		MeanPe:              1000,
+		MaxIterations:       5,
+		MaxBitFac:           MaxValDBL,
+		Bitrate:             128000,
+		NSubFrames:          1,
+		BitResMode:          BitresModeFull,
+		BitDistributionMode: BitDistributionModeIntraElement,
+		PaddingRest:         48000,
+	}
+
+	if errCode := FDKaacEncQCInit(&kernel, adjState, elementBitsPtrs[:], &init, 0); errCode != AACEncOK {
+		t.Fatalf("QC init error = %#x, want %#x", errCode, AACEncOK)
+	}
+	if kernel.BitResTot != 777 || kernel.BitResTotMax != 3000 {
+		t.Fatalf("FF reservoir = %d/%d, want preserved current 777 and max 3000", kernel.BitResTot, kernel.BitResTotMax)
+	}
+	if errCode := FDKaacEncQCInit(&kernel, adjState, elementBitsPtrs[:], &init, 1); errCode != AACEncOK {
+		t.Fatalf("QC init reset error = %#x, want %#x", errCode, AACEncOK)
+	}
+	if kernel.BitResTot != 3000 {
+		t.Fatalf("FF reservoir after reset = %d, want 3000", kernel.BitResTot)
+	}
+}
+
+func TestFDKaacEncQCInitRejectsInvalid(t *testing.T) {
+	var cm ChannelMapping
+	if errCode := FDKaacEncInitChannelMapping(Mode2, ChannelOrderMPEG, &cm); errCode != AACEncOK {
+		t.Fatalf("mapping error = %#x", errCode)
+	}
+	elementBits, elementBitsPtrs := initializedElementBits()
+	adjState, _ := initializedQCInitAdjThrState()
+	valid := QCInit{
+		ChannelMapping:      &cm,
+		MaxBits:             12288,
+		AverageBits:         1024,
+		BitRes:              4096,
+		SampleRate:          48000,
+		StaticBits:          56,
+		BitrateMode:         QCBitrateModeCBR,
+		MeanPe:              1000,
+		MaxIterations:       5,
+		MaxBitFac:           MaxValDBL,
+		Bitrate:             128000,
+		NSubFrames:          1,
+		BitResMode:          BitresModeFull,
+		BitDistributionMode: BitDistributionModeIntraElement,
+	}
+
+	tests := []struct {
+		name string
+		run  func()
+	}{
+		{name: "nil kernel", run: func() { _ = FDKaacEncQCInit(nil, adjState, elementBitsPtrs[:], &valid, 0) }},
+		{name: "nil threshold state", run: func() { _ = FDKaacEncQCInit(&QCKernel{}, nil, elementBitsPtrs[:], &valid, 0) }},
+		{name: "nil init", run: func() { _ = FDKaacEncQCInit(&QCKernel{}, adjState, elementBitsPtrs[:], nil, 0) }},
+		{name: "nil mapping", run: func() {
+			bad := valid
+			bad.ChannelMapping = nil
+			_ = FDKaacEncQCInit(&QCKernel{}, adjState, elementBitsPtrs[:], &bad, 0)
+		}},
+		{name: "bad subframes", run: func() {
+			bad := valid
+			bad.NSubFrames = 0
+			_ = FDKaacEncQCInit(&QCKernel{}, adjState, elementBitsPtrs[:], &bad, 0)
+		}},
+		{name: "short element bits", run: func() { _ = FDKaacEncQCInit(&QCKernel{}, adjState, nil, &valid, 0) }},
+		{name: "nil threshold element", run: func() {
+			badState, _ := initializedQCInitAdjThrState()
+			badState.AdjThrStateElem[0] = nil
+			_ = FDKaacEncQCInit(&QCKernel{}, badState, elementBitsPtrs[:], &valid, 0)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectQCInitPanic(t, tt.run)
+		})
+	}
+	_ = elementBits
+}
+
 func TestFDKaacEncCalcMaxValueInSfbVector(t *testing.T) {
 	quant := [...]int16{0, -2, 5, -7, 4, 1, 12, -3}
 	offsets := [...]int{0, 3, 6, 8, 8}
@@ -1223,6 +1434,40 @@ func TestFDKaacEncQCAccountingAllocs(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncQCInitAllocs(t *testing.T) {
+	var cm ChannelMapping
+	if errCode := FDKaacEncInitChannelMapping(Mode1_2_2_1, ChannelOrderWAV, &cm); errCode != AACEncOK {
+		t.Fatalf("mapping error = %#x", errCode)
+	}
+	elementBits, elementBitsPtrs := initializedElementBits()
+	adjState, _ := initializedQCInitAdjThrState()
+	kernel := QCKernel{}
+	init := QCInit{
+		ChannelMapping:      &cm,
+		MaxBits:             30720,
+		AverageBits:         1088,
+		BitRes:              29632,
+		SampleRate:          48000,
+		StaticBits:          64,
+		BitrateMode:         QCBitrateModeVBR3,
+		MeanPe:              1000,
+		MaxIterations:       5,
+		MaxBitFac:           vbrChaosHalf,
+		Bitrate:             320000,
+		NSubFrames:          1,
+		BitResMode:          BitresModeFull,
+		BitDistributionMode: BitDistributionModeInterElement,
+		PaddingRest:         48000,
+	}
+	allocs := testing.AllocsPerRun(1000, func() {
+		errCode := FDKaacEncQCInit(&kernel, adjState, elementBitsPtrs[:], &init, 0)
+		qcMainPrepareSink = errCode + kernel.BitResTot + elementBits[3].MaxBitsEl + adjState.AdjThrStateElem[3].PeOffset
+	})
+	if allocs != 0 {
+		t.Fatalf("QC init allocations = %v, want 0", allocs)
+	}
+}
+
 func TestFDKaacEncBitDistributionAllocs(t *testing.T) {
 	allocs := testing.AllocsPerRun(1000, func() {
 		var state AdjThrState
@@ -1648,6 +1893,39 @@ func fillQCMainPrepareCase(
 	*qcElement = QCOutElement{
 		QCOutChannel: [2]*QCOutChannel{qc},
 	}
+}
+
+func initializedQCInitAdjThrState() (*AdjThrState, *[maxChannelElements]ATSElement) {
+	var state AdjThrState
+	var elements [maxChannelElements]ATSElement
+	for i := range elements {
+		elements[i].ChaosMeasureEnFac[0] = FixpDBL(100 + i)
+		elements[i].LastEnFacPatch[0] = 10 + i
+		state.AdjThrStateElem[i] = &elements[i]
+	}
+	return &state, &elements
+}
+
+func assertQCInitAdjState(t *testing.T, state *AdjThrState, wantMode int, wantIter int) {
+	t.Helper()
+	if state.BitDistributionMode != wantMode || state.MaxIter2ndGuess != wantIter {
+		t.Fatalf("threshold state mode/iter = %d/%d, want %d/%d", state.BitDistributionMode, state.MaxIter2ndGuess, wantMode, wantIter)
+	}
+	if state.BRESParamLong.ClipSaveLow != 0x1999999a ||
+		state.BRESParamLong.ClipSpendHigh != 0x7999999a ||
+		state.BRESParamShort.MaxBitSpend != 0x40000000 {
+		t.Fatalf("threshold bit-reservoir params = %+v / %+v", state.BRESParamLong, state.BRESParamShort)
+	}
+}
+
+func expectQCInitPanic(t *testing.T, run func()) {
+	t.Helper()
+	defer func() {
+		if recover() == nil {
+			t.Fatal("expected panic")
+		}
+	}()
+	run()
 }
 
 func hashInt16(x []int16) uint64 {
