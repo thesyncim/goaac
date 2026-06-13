@@ -81,6 +81,7 @@ const (
 	AACEncWriteScalError          = 0x41e0
 	AACEncWriteSecError           = 0x4200
 	AACEncWriteSpecError          = 0x4220
+	AACEncPNSTableError           = 0x4060
 )
 
 type rbdID uint8

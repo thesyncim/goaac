@@ -360,6 +360,14 @@ threshold/order/filter-direction flags, long/short ACF window hashes,
 low-bitrate inactive controls, malformed controls, no-cgo compilation, and zero
 steady-state allocation.
 
+The FDK AAC-LC PNS configuration subset is covered with source-shaped vectors
+for `FDKaacEnc_lookUpPnsUse`, `FDKaacEnc_GetPnsParam`, and
+`FDKaacEnc_InitPnsConfiguration`. Tests verify low-complexity PNS auto-level
+selection, enabled and disabled AAC-LC configurations, start-SFB rounding,
+reference power and tonality, TNS gain thresholds, low-complexity flags, PSD
+correction-curve hashing, malformed controls, no-cgo compilation, and zero
+steady-state allocation.
+
 The FDK AAC-LC QC lifecycle subset is covered with source-shaped vectors for
 `FDKaacEnc_QCNew`, `FDKaacEnc_QCOutNew`, and `FDKaacEnc_QCOutInit`. Tests verify
 fresh fixed-state pointer linking, 5.1 WAV channel-to-element traversal,

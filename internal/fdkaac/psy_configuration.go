@@ -35,6 +35,7 @@ type PsyConfiguration struct {
 	SfbMaskHighFactorSprEn      [maxSFB]FixpDBL
 	SfbMinSnrLdData             [maxSFB]FixpDBL
 	TnsConf                     TNSConfig
+	PnsConf                     PNSConfig
 	GranuleLength               int
 	AllowIS                     bool
 	AllowMS                     bool
