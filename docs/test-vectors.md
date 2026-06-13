@@ -124,6 +124,11 @@ codeword ROM checksums and source-derived byte vectors for spectral codebooks
 0-11, pair-width codebooks, escape extensions, scalefactor deltas, invalid
 controls, and zero steady-state allocation.
 
+The FDK dynamic noiseless bit-count subset is covered with source-derived
+long-window, ER-VCB11, short-grouped, PNS, and intensity vectors. Tests verify
+greedy section merges, section layout hashes, Huffman/side-info/scalefactor/noise
+totals, malformed controls, and zero steady-state allocation.
+
 The FDK AAC-LC short grouping subset is covered with source-derived grouped
 offset and min-SNR vectors, saturating threshold/energy/MS/spread-energy sums,
 max-SFB scan and zero-spectrum floor checks, spectrum-regroup hashes, invalid

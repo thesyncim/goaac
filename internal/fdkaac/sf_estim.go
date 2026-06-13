@@ -34,6 +34,7 @@ type QCOutChannel struct {
 	MaxValueInSfb       [maxGroupedSFB]uint32
 	Scf                 [maxGroupedSFB]int
 	GlobalGain          int
+	SectionData         SectionData
 	SfbFormFactorLdData [maxGroupedSFB]FixpDBL
 	SfbEnergyLdData     [maxGroupedSFB]FixpDBL
 	SfbThresholdLdData  [maxGroupedSFB]FixpDBL
