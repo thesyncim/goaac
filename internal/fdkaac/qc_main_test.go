@@ -105,6 +105,85 @@ func TestFDKaacEncReduceBitConsumptionCrashRecoveryBoundary(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncQCAccountingVectors(t *testing.T) {
+	cm := ChannelMapping{NElements: 3}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+	cm.ElInfo[1] = ElementInfo{ElType: idDSE}
+	cm.ElInfo[2] = ElementInfo{ElType: idCPE, NChannelsInEl: 2}
+	qcOut0 := QCOut{GlobalExtBits: 5}
+	el0 := QCOutElement{DynBitsUsed: 101, StaticBitsUsed: 29, ExtBitsUsed: 6}
+	el2 := QCOutElement{DynBitsUsed: 201, StaticBitsUsed: 44, ExtBitsUsed: 8}
+	qcOutFrames := [1]*QCOut{&qcOut0}
+	var qcElements [1][maxChannelElements]*QCOutElement
+	qcElements[0][0] = &el0
+	qcElements[0][2] = &el2
+
+	if got := FDKaacEncGetTotalConsumedBits(qcOutFrames[:], qcElements[:], &cm, 56, 1); got != 456 {
+		t.Fatalf("total consumed bits = %d, want 456", got)
+	}
+
+	vbrKernel := QCKernel{BitrateMode: QCBitrateModeVBR3, MinBitsPerFrame: 900}
+	vbrOut := QCOut{GrantedDynBits: 1000, UsedDynBits: 813, StaticBits: 50, ElementExtBits: 3, GlobalExtBits: 5}
+	vbrFrames := [1]*QCOut{&vbrOut}
+	if errCode := FDKaacEncUpdateFillBits(&vbrKernel, vbrFrames[:]); errCode != AACEncOK {
+		t.Fatalf("VBR fill error = %#x, want OK", errCode)
+	}
+	if vbrOut.TotFillBits != 35 || vbrOut.TotalBits != 874 {
+		t.Fatalf("VBR fill = %d total = %d, want 35 and source-shaped pre-extra total 874", vbrOut.TotFillBits, vbrOut.TotalBits)
+	}
+
+	cbrKernel := QCKernel{BitrateMode: QCBitrateModeCBR, BitResTotMax: 400, BitResTot: 360}
+	cbrOut := QCOut{GrantedDynBits: 1000, UsedDynBits: 920, StaticBits: 60, ElementExtBits: 4, GlobalExtBits: 2}
+	cbrFrames := [1]*QCOut{&cbrOut}
+	if errCode := FDKaacEncUpdateFillBits(&cbrKernel, cbrFrames[:]); errCode != AACEncOK {
+		t.Fatalf("CBR fill error = %#x, want OK", errCode)
+	}
+	if cbrOut.TotFillBits != 48 || cbrOut.TotalBits != 1034 {
+		t.Fatalf("CBR fill = %d total = %d, want 48 and 1034", cbrOut.TotFillBits, cbrOut.TotalBits)
+	}
+}
+
+func TestFDKaacEncFinalizeAndBitresVectors(t *testing.T) {
+	kernel := QCKernel{
+		GlobHdrBits:     64,
+		MaxBitsPerFrame: 1024,
+		BitrateMode:     QCBitrateModeCBR,
+		BitResTot:       100,
+		BitResTotMax:    1000,
+	}
+	qcOut := QCOut{
+		GrantedDynBits: 500,
+		StaticBits:     29,
+		UsedDynBits:    211,
+		TotFillBits:    31,
+		ElementExtBits: 4,
+		GlobalExtBits:  6,
+	}
+	if errCode := FDKaacEncFinalizeBitConsumption(&kernel, &qcOut, 56, aotAACLC, 0, -1); errCode != AACEncOK {
+		t.Fatalf("finalize error = %#x, want OK", errCode)
+	}
+	if kernel.GlobHdrBits != 56 || kernel.BitResTot != 108 {
+		t.Fatalf("finalize kernel = %+v, want header 56 bitres 108", kernel)
+	}
+	if qcOut.TotFillBits != 27 || qcOut.AlignBits != 3 || qcOut.TotalBits != 280 || qcOut.GrantedDynBits != 500 {
+		t.Fatalf("finalized frame = %+v, want fill 27 align 3 total 280 granted 500", qcOut)
+	}
+
+	frames := [1]*QCOut{&qcOut}
+	FDKaacEncUpdateBitres(&kernel, frames[:])
+	if kernel.BitResTot != 367 {
+		t.Fatalf("CBR bit reservoir = %d, want 367", kernel.BitResTot)
+	}
+
+	vbrKernel := QCKernel{BitrateMode: QCBitrateModeVBR5, MaxBitsPerFrame: 700, BitResTotMax: 650}
+	vbrOut := QCOut{UsedDynBits: 200}
+	vbrFrames := [1]*QCOut{&vbrOut}
+	FDKaacEncUpdateBitres(&vbrKernel, vbrFrames[:])
+	if vbrKernel.BitResTot != 650 {
+		t.Fatalf("VBR bit reservoir = %d, want 650", vbrKernel.BitResTot)
+	}
+}
+
 func TestFDKaacEncQCMainPrepareSCEVector(t *testing.T) {
 	var directElement ElementInfo
 	var directState ATSElement
@@ -460,6 +539,122 @@ func TestFDKaacEncReduceBitConsumptionRejectsInvalid(t *testing.T) {
 			}()
 			tt.fn()
 		})
+	}
+}
+
+func TestFDKaacEncQCAccountingRejectsInvalid(t *testing.T) {
+	var cm ChannelMapping
+	cm.NElements = 1
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+	var qcOut QCOut
+	var qcElement QCOutElement
+	qcOutFrames := [1]*QCOut{&qcOut}
+	var qcElements [1][maxChannelElements]*QCOutElement
+	qcElements[0][0] = &qcElement
+	kernel := QCKernel{MaxBitsPerFrame: 1024, BitResTotMax: 1000}
+	for _, tt := range []struct {
+		name string
+		fn   func()
+	}{
+		{"nil consumed mapping", func() {
+			FDKaacEncGetTotalConsumedBits(qcOutFrames[:], qcElements[:], nil, 56, 1)
+		}},
+		{"negative consumed header", func() {
+			FDKaacEncGetTotalConsumedBits(qcOutFrames[:], qcElements[:], &cm, -1, 1)
+		}},
+		{"nil consumed element", func() {
+			badElements := qcElements
+			badElements[0][0] = nil
+			FDKaacEncGetTotalConsumedBits(qcOutFrames[:], badElements[:], &cm, 56, 1)
+		}},
+		{"nil fill kernel", func() {
+			FDKaacEncUpdateFillBits(nil, qcOutFrames[:])
+		}},
+		{"nil fill frame", func() {
+			FDKaacEncUpdateFillBits(&kernel, nil)
+		}},
+		{"negative fill bits", func() {
+			bad := QCOut{UsedDynBits: -1}
+			badFrames := [1]*QCOut{&bad}
+			FDKaacEncUpdateFillBits(&kernel, badFrames[:])
+		}},
+		{"nil finalize kernel", func() {
+			FDKaacEncFinalizeBitConsumption(nil, &qcOut, 56, aotAACLC, 0, -1)
+		}},
+		{"nil finalize frame", func() {
+			FDKaacEncFinalizeBitConsumption(&kernel, nil, 56, aotAACLC, 0, -1)
+		}},
+		{"negative finalize transport", func() {
+			FDKaacEncFinalizeBitConsumption(&kernel, &qcOut, -1, aotAACLC, 0, -1)
+		}},
+		{"transport header grew", func() {
+			cbrKernel := QCKernel{GlobHdrBits: 40, MaxBitsPerFrame: 1024, BitrateMode: QCBitrateModeCBR}
+			FDKaacEncFinalizeBitConsumption(&cbrKernel, &qcOut, 56, aotAACLC, 0, -1)
+		}},
+		{"nil bitres kernel", func() {
+			FDKaacEncUpdateBitres(nil, qcOutFrames[:])
+		}},
+		{"nil bitres frame", func() {
+			FDKaacEncUpdateBitres(&kernel, nil)
+		}},
+		{"negative bitres frame", func() {
+			bad := QCOut{UsedDynBits: -1}
+			badFrames := [1]*QCOut{&bad}
+			FDKaacEncUpdateBitres(&kernel, badFrames[:])
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		})
+	}
+
+	overflowKernel := QCKernel{MaxBitsPerFrame: 100, MinBitsPerFrame: 0}
+	overflowOut := QCOut{StaticBits: 80, UsedDynBits: 80}
+	if errCode := FDKaacEncFinalizeBitConsumption(&overflowKernel, &overflowOut, 56, aotAACLC, 0, -1); errCode != AACEncQuantError {
+		t.Fatalf("overflow finalize error = %#x, want quant error", errCode)
+	}
+}
+
+func TestFDKaacEncQCAccountingAllocs(t *testing.T) {
+	allocs := testing.AllocsPerRun(1000, func() {
+		cm := ChannelMapping{NElements: 1}
+		cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+		qcOut := QCOut{
+			GrantedDynBits: 500,
+			StaticBits:     29,
+			UsedDynBits:    211,
+			TotFillBits:    31,
+			ElementExtBits: 4,
+			GlobalExtBits:  6,
+		}
+		element := QCOutElement{DynBitsUsed: 211, StaticBitsUsed: 29, ExtBitsUsed: 4}
+		frames := [1]*QCOut{&qcOut}
+		var elements [1][maxChannelElements]*QCOutElement
+		elements[0][0] = &element
+		kernel := QCKernel{
+			GlobHdrBits:     64,
+			MaxBitsPerFrame: 1024,
+			BitrateMode:     QCBitrateModeCBR,
+			BitResTot:       100,
+			BitResTotMax:    1000,
+		}
+		qcMainPrepareSink = FDKaacEncGetTotalConsumedBits(frames[:], elements[:], &cm, 56, 1)
+		if errCode := FDKaacEncUpdateFillBits(&kernel, frames[:]); errCode != AACEncOK {
+			t.Fatalf("fill error = %#x", errCode)
+		}
+		if errCode := FDKaacEncFinalizeBitConsumption(&kernel, &qcOut, 56, aotAACLC, 0, -1); errCode != AACEncOK {
+			t.Fatalf("finalize error = %#x", errCode)
+		}
+		FDKaacEncUpdateBitres(&kernel, frames[:])
+		qcMainPrepareSink += qcOut.TotalBits + kernel.BitResTot
+	})
+	if allocs != 0 {
+		t.Fatalf("QC accounting allocations = %v, want 0", allocs)
 	}
 }
 

@@ -208,7 +208,15 @@ type QCOutElement struct {
 type QCOut struct {
 	TotalNoRedPe       int
 	TotalGrantedPeCorr int
+	MaxDynBits         int
+	GrantedDynBits     int
+	TotFillBits        int
+	ElementExtBits     int
+	GlobalExtBits      int
+	StaticBits         int
 	UsedDynBits        int
+	AlignBits          int
+	TotalBits          int
 }
 
 type CorrectThresholdScratch struct {

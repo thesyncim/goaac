@@ -1,5 +1,28 @@
 package fdkaac
 
+type QCBitrateMode int
+
+const (
+	QCBitrateModeInvalid QCBitrateMode = -1
+	QCBitrateModeCBR     QCBitrateMode = 0
+	QCBitrateModeVBR1    QCBitrateMode = 1
+	QCBitrateModeVBR2    QCBitrateMode = 2
+	QCBitrateModeVBR3    QCBitrateMode = 3
+	QCBitrateModeVBR4    QCBitrateMode = 4
+	QCBitrateModeVBR5    QCBitrateMode = 5
+	QCBitrateModeFF      QCBitrateMode = 6
+	QCBitrateModeSFR     QCBitrateMode = 7
+)
+
+type QCKernel struct {
+	GlobHdrBits     int
+	MaxBitsPerFrame int
+	MinBitsPerFrame int
+	BitrateMode     QCBitrateMode
+	BitResTot       int
+	BitResTotMax    int
+}
+
 type QCMainQuantizeScratch struct {
 	BitCounter             BitCounterState
 	QuantSpecTmp           [maxSpectralLines]int16
@@ -324,6 +347,116 @@ func FDKaacEncGetTotalConsumedDynBits(qcOut []*QCOut, nSubFrames int) int {
 	return totalBits
 }
 
+func FDKaacEncGetTotalConsumedBits(qcOut []*QCOut, qcElement [][maxChannelElements]*QCOutElement, cm *ChannelMapping, globHdrBits int, nSubFrames int) int {
+	checkGetTotalConsumedBitsInputs(qcOut, qcElement, cm, globHdrBits, nSubFrames)
+
+	totalUsedBits := 0
+	for c := 0; c < nSubFrames; c++ {
+		dataBits := 0
+		for i := 0; i < cm.NElements; i++ {
+			if fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+				dataBits += qcElement[c][i].DynBitsUsed + qcElement[c][i].StaticBitsUsed + qcElement[c][i].ExtBitsUsed
+			}
+		}
+		dataBits += qcOut[c].GlobalExtBits
+
+		totalUsedBits += (8 - dataBits%8) % 8
+		totalUsedBits += dataBits + globHdrBits
+	}
+	return totalUsedBits
+}
+
+func FDKaacEncUpdateFillBits(qcKernel *QCKernel, qcOut []*QCOut) int {
+	checkUpdateFillBitsInputs(qcKernel, qcOut)
+
+	switch qcKernel.BitrateMode {
+	case QCBitrateModeSFR:
+	case QCBitrateModeFF:
+	case QCBitrateModeVBR1, QCBitrateModeVBR2, QCBitrateModeVBR3, QCBitrateModeVBR4, QCBitrateModeVBR5:
+		qcOut[0].TotFillBits = (qcOut[0].GrantedDynBits - qcOut[0].UsedDynBits) & 7
+		qcOut[0].TotalBits = qcOut[0].StaticBits + qcOut[0].UsedDynBits + qcOut[0].TotFillBits + qcOut[0].ElementExtBits + qcOut[0].GlobalExtBits
+		qcOut[0].TotFillBits += (maxInt(0, qcKernel.MinBitsPerFrame-qcOut[0].TotalBits) + 7) &^ 7
+	case QCBitrateModeCBR, QCBitrateModeInvalid:
+		fallthrough
+	default:
+		bitResSpace := qcKernel.BitResTotMax - qcKernel.BitResTot
+		deltaBitRes := qcOut[0].GrantedDynBits - qcOut[0].UsedDynBits
+		qcOut[0].TotFillBits = maxInt(
+			deltaBitRes&7,
+			deltaBitRes-(maxInt(0, bitResSpace-7)&^7),
+		)
+		qcOut[0].TotalBits = qcOut[0].StaticBits + qcOut[0].UsedDynBits + qcOut[0].TotFillBits + qcOut[0].ElementExtBits + qcOut[0].GlobalExtBits
+		qcOut[0].TotFillBits += (maxInt(0, qcKernel.MinBitsPerFrame-qcOut[0].TotalBits) + 7) &^ 7
+	}
+	return AACEncOK
+}
+
+func FDKaacEncFinalizeBitConsumption(
+	qcKernel *QCKernel,
+	qcOut *QCOut,
+	transportStaticBits int,
+	aot int,
+	syntaxFlags uint32,
+	epConfig int8,
+) int {
+	checkFinalizeBitConsumptionInputs(qcKernel, qcOut, transportStaticBits)
+
+	qcOut.TotalBits = qcOut.StaticBits + qcOut.UsedDynBits + qcOut.TotFillBits + qcOut.ElementExtBits + qcOut.GlobalExtBits
+
+	if qcKernel.BitrateMode == QCBitrateModeCBR {
+		exactTpBits := transportStaticBits
+		if exactTpBits != qcKernel.GlobHdrBits {
+			bitresSpace := qcKernel.BitResTotMax -
+				(qcKernel.BitResTot + (qcOut.GrantedDynBits - (qcOut.UsedDynBits + qcOut.TotFillBits)))
+			bitsToBitres := qcKernel.GlobHdrBits - exactTpBits
+			if bitsToBitres < 0 {
+				panic("fdkaac: transport static bits exceed estimated header bits")
+			}
+			diffFillBits := maxInt(0, bitsToBitres-bitresSpace)
+			diffFillBits = (diffFillBits + 7) &^ 7
+
+			qcKernel.BitResTot += bitsToBitres - diffFillBits
+			qcOut.TotFillBits += diffFillBits
+			qcOut.TotalBits += diffFillBits
+			qcOut.GrantedDynBits += diffFillBits
+			qcKernel.GlobHdrBits = transportStaticBits
+			if qcKernel.GlobHdrBits != exactTpBits {
+				qcKernel.BitResTot -= qcKernel.GlobHdrBits - exactTpBits
+			}
+		}
+	}
+
+	qcKernel.GlobHdrBits = transportStaticBits
+	totFillBits := qcOut.TotFillBits
+	fillExtPayload := QCOutExtension{Type: ExtFillData, PayloadBits: totFillBits}
+	qcOut.TotFillBits = FDKaacEncWriteExtensionData(nil, &fillExtPayload, 0, 0, syntaxFlags, aot, epConfig)
+
+	alignBits := 7 - (qcOut.StaticBits+qcOut.UsedDynBits+qcOut.ElementExtBits+qcOut.TotFillBits+qcOut.GlobalExtBits-1)%8
+	if (alignBits+qcOut.TotFillBits-totFillBits) == 8 && qcOut.TotFillBits > 8 {
+		qcOut.TotFillBits -= 8
+	}
+
+	qcOut.TotalBits = qcOut.StaticBits + qcOut.UsedDynBits + qcOut.TotFillBits + alignBits + qcOut.ElementExtBits + qcOut.GlobalExtBits
+	if qcOut.TotalBits > qcKernel.MaxBitsPerFrame || qcOut.TotalBits < qcKernel.MinBitsPerFrame {
+		return AACEncQuantError
+	}
+	qcOut.AlignBits = alignBits
+	return AACEncOK
+}
+
+func FDKaacEncUpdateBitres(qcKernel *QCKernel, qcOut []*QCOut) {
+	checkUpdateBitresInputs(qcKernel, qcOut)
+
+	switch qcKernel.BitrateMode {
+	case QCBitrateModeVBR1, QCBitrateModeVBR2, QCBitrateModeVBR3, QCBitrateModeVBR4, QCBitrateModeVBR5:
+		qcKernel.BitResTot = minInt(qcKernel.MaxBitsPerFrame, qcKernel.BitResTotMax)
+	case QCBitrateModeCBR, QCBitrateModeSFR, QCBitrateModeInvalid:
+		fallthrough
+	default:
+		qcKernel.BitResTot += qcOut[0].GrantedDynBits - (qcOut[0].UsedDynBits + qcOut[0].TotFillBits + qcOut[0].AlignBits)
+	}
+}
+
 func checkQCMainPrepareInputs(
 	elInfo *ElementInfo,
 	adjThrStateElement *ATSElement,
@@ -533,5 +666,89 @@ func checkGetTotalConsumedDynBitsInputs(qcOut []*QCOut, nSubFrames int) {
 		if qcOut[i] == nil {
 			panic("fdkaac: nil consumed dynamic-bit frame")
 		}
+	}
+}
+
+func checkGetTotalConsumedBitsInputs(qcOut []*QCOut, qcElement [][maxChannelElements]*QCOutElement, cm *ChannelMapping, globHdrBits int, nSubFrames int) {
+	if cm == nil {
+		panic("fdkaac: nil consumed-bit channel mapping")
+	}
+	if globHdrBits < 0 {
+		panic("fdkaac: invalid consumed-bit header size")
+	}
+	if nSubFrames < 0 || len(qcOut) < nSubFrames || len(qcElement) < nSubFrames {
+		panic("fdkaac: invalid consumed-bit frame count")
+	}
+	if cm.NElements < 0 || cm.NElements > maxChannelElements {
+		panic("fdkaac: invalid consumed-bit element count")
+	}
+	for c := 0; c < nSubFrames; c++ {
+		if qcOut[c] == nil {
+			panic("fdkaac: nil consumed-bit frame")
+		}
+		if qcOut[c].GlobalExtBits < 0 {
+			panic("fdkaac: invalid consumed-bit global extension size")
+		}
+		for i := 0; i < cm.NElements; i++ {
+			if !fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+				continue
+			}
+			if qcElement[c][i] == nil {
+				panic("fdkaac: nil consumed-bit element")
+			}
+			if qcElement[c][i].DynBitsUsed < 0 || qcElement[c][i].StaticBitsUsed < 0 || qcElement[c][i].ExtBitsUsed < 0 {
+				panic("fdkaac: invalid consumed-bit element size")
+			}
+		}
+	}
+}
+
+func checkUpdateFillBitsInputs(qcKernel *QCKernel, qcOut []*QCOut) {
+	if qcKernel == nil {
+		panic("fdkaac: nil fill-bit QC kernel")
+	}
+	if len(qcOut) < 1 || qcOut[0] == nil {
+		panic("fdkaac: nil fill-bit frame")
+	}
+	if qcKernel.MinBitsPerFrame < 0 || qcKernel.BitResTotMax < 0 {
+		panic("fdkaac: invalid fill-bit kernel")
+	}
+	if qcOut[0].StaticBits < 0 || qcOut[0].UsedDynBits < 0 ||
+		qcOut[0].ElementExtBits < 0 || qcOut[0].GlobalExtBits < 0 {
+		panic("fdkaac: invalid fill-bit frame sizes")
+	}
+}
+
+func checkFinalizeBitConsumptionInputs(qcKernel *QCKernel, qcOut *QCOut, transportStaticBits int) {
+	if qcKernel == nil {
+		panic("fdkaac: nil finalize QC kernel")
+	}
+	if qcOut == nil {
+		panic("fdkaac: nil finalize frame")
+	}
+	if transportStaticBits < 0 {
+		panic("fdkaac: invalid finalize transport header size")
+	}
+	if qcKernel.MaxBitsPerFrame < qcKernel.MinBitsPerFrame || qcKernel.MinBitsPerFrame < 0 {
+		panic("fdkaac: invalid finalize frame bounds")
+	}
+	if qcOut.StaticBits < 0 || qcOut.UsedDynBits < 0 || qcOut.TotFillBits < 0 ||
+		qcOut.ElementExtBits < 0 || qcOut.GlobalExtBits < 0 {
+		panic("fdkaac: invalid finalize frame sizes")
+	}
+}
+
+func checkUpdateBitresInputs(qcKernel *QCKernel, qcOut []*QCOut) {
+	if qcKernel == nil {
+		panic("fdkaac: nil bit-reservoir QC kernel")
+	}
+	if len(qcOut) < 1 || qcOut[0] == nil {
+		panic("fdkaac: nil bit-reservoir frame")
+	}
+	if qcKernel.MaxBitsPerFrame < 0 || qcKernel.BitResTotMax < 0 {
+		panic("fdkaac: invalid bit-reservoir kernel")
+	}
+	if qcOut[0].UsedDynBits < 0 || qcOut[0].TotFillBits < 0 || qcOut[0].AlignBits < 0 {
+		panic("fdkaac: invalid bit-reservoir frame sizes")
 	}
 }

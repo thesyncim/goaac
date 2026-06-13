@@ -319,6 +319,14 @@ noiseless bit count, `dynBitsLast` seeding, and frame dynamic-bit summing
 sequence. They also verify retry-scratch reset, malformed controls, no-cgo
 compilation, and zero steady-state allocation.
 
+The FDK AAC-LC QC fill/finalize/reservoir accounting subset is covered with
+source-shaped vectors for `FDKaacEnc_getTotalConsumedBits`,
+`FDKaacEnc_updateFillBits`, `FDKaacEnc_FinalizeBitConsumption`, and
+`FDKaacEnc_updateBitres`. Tests verify SCE/CPE/DSE total-bit summing, VBR and
+CBR fill-bit math, fill-extension sizing, byte alignment, static transport
+header correction, CBR/VBR reservoir updates, malformed controls, no-cgo
+compilation, and zero steady-state allocation.
+
 The FDK AAC-LC bit-reservoir PE distribution subset is covered with
 source-derived vectors for `FDKaacEnc_bitresCalcBitFac`,
 `FDKaacEnc_DistributeBits`, and the high/low bit-reservoir PE-correction
