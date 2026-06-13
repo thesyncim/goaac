@@ -34,12 +34,13 @@ const (
 	maxElementExtensions  = 1
 	maxGlobalExtensions   = 4
 
-	acScalable = 0x000008
-	acELD      = 0x000010
-	acER       = 0x000040
-	acERVCB11  = 0x000001
-	acERRVLC   = 0x000002
-	acERHCR    = 0x000004
+	acScalable   = 0x000008
+	acELD        = 0x000010
+	acER         = 0x000040
+	acERVCB11    = 0x000001
+	acERRVLC     = 0x000002
+	acERHCR      = 0x000004
+	acSBRPresent = 0x008000
 
 	aotAACLC = 2
 	aotSBR   = 5

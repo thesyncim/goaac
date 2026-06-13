@@ -368,6 +368,13 @@ reference power and tonality, TNS gain thresholds, low-complexity flags, PSD
 correction-curve hashing, malformed controls, no-cgo compilation, and zero
 steady-state allocation.
 
+The FDK AAC-LC psychoacoustic main-initialization wrapper is covered with a
+source-shaped `FDKaacEnc_psyMainInit` vector. Tests compare the wrapper against
+the direct long/short psy, TNS, PNS, and pre-echo initialization sequence,
+including TNS/PNS mask handling, init-flag reset and preserve behavior, disabled
+tool controls, unsupported sampling-rate transitions, no-cgo compilation, and
+zero steady-state allocation.
+
 The FDK AAC-LC QC lifecycle subset is covered with source-shaped vectors for
 `FDKaacEnc_QCNew`, `FDKaacEnc_QCOutNew`, and `FDKaacEnc_QCOutInit`. Tests verify
 fresh fixed-state pointer linking, 5.1 WAV channel-to-element traversal,

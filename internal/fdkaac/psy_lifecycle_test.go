@@ -221,6 +221,106 @@ func TestFDKaacEncPsyInitStereoReconfigOffset(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncPsyMainInitAACLCVectors(t *testing.T) {
+	var cm ChannelMapping
+	if errCode := FDKaacEncInitChannelMapping(Mode2, ChannelOrderMPEG, &cm); errCode != AACEncOK {
+		t.Fatalf("mapping error = %#x", errCode)
+	}
+	var psy PsyInternal
+	if errCode := FDKaacEncPsyNew(&psy, cm.NElements, cm.NChannels); errCode != AACEncOK {
+		t.Fatalf("psy new error = %#x, want %#x", errCode, AACEncOK)
+	}
+	var psyOut PsyOutState
+	if errCode := FDKaacEncPsyOutNew(&psyOut, cm.NElements, cm.NChannels, 1); errCode != AACEncOK {
+		t.Fatalf("psy output new error = %#x, want %#x", errCode, AACEncOK)
+	}
+	if errCode := FDKaacEncPsyInit(&psy, psyOut.PsyOutPtr[:], 1, cm.NChannels, AOTAACLC, &cm); errCode != AACEncOK {
+		t.Fatalf("psy init error = %#x, want %#x", errCode, AACEncOK)
+	}
+	psy.StaticChannels[0].PsyInputBuffer[7] = 91
+	psy.StaticChannels[1].BlockSwitchingControl.Attack = 3
+
+	const (
+		sampleRate    = 48000
+		granuleLength = 1024
+		bitRate       = 96000
+		bandwidth     = 15500
+	)
+	if errCode := FDKaacEncPsyMainInit(&psy, AOTAACLC, &cm, sampleRate, granuleLength, bitRate, tnsEnableMask, bandwidth, 1, 1, 1, 0, 0); errCode != AACEncOK {
+		t.Fatalf("psy main init error = %#x, want %#x", errCode, AACEncOK)
+	}
+	if psy.GranuleLength != granuleLength {
+		t.Fatalf("granule length = %d, want %d", psy.GranuleLength, granuleLength)
+	}
+	if psy.StaticChannels[0].PsyInputBuffer[7] != 91 || psy.StaticChannels[1].BlockSwitchingControl.Attack != 3 {
+		t.Fatalf("initFlags=0 reset static state unexpectedly")
+	}
+
+	wantLong, wantShort := wantAACLCMainInitConfigs(t, &cm, sampleRate, granuleLength, bitRate, tnsEnableMask, bandwidth, 1, 1, 1, 0)
+	if psy.PsyConf[0] != wantLong {
+		t.Fatalf("long psy main config did not match direct source sequence")
+	}
+	if psy.PsyConf[1] != wantShort {
+		t.Fatalf("short psy main config did not match direct source sequence")
+	}
+	if psy.PsyConf[0].TnsConf.TnsActive != 1 || psy.PsyConf[1].TnsConf.TnsActive != 1 {
+		t.Fatalf("TNS active flags = %d/%d, want 1/1", psy.PsyConf[0].TnsConf.TnsActive, psy.PsyConf[1].TnsConf.TnsActive)
+	}
+	if psy.PsyConf[0].PnsConf.UsePns != 1 || psy.PsyConf[1].PnsConf.UsePns != 1 {
+		t.Fatalf("PNS use flags = %d/%d, want 1/1", psy.PsyConf[0].PnsConf.UsePns, psy.PsyConf[1].PnsConf.UsePns)
+	}
+	if got, want := hashFixpSGL(psy.PsyConf[0].PnsConf.NP.PowDistPSDcurve[:psy.PsyConf[0].SfbCnt+1]), uint64(0x1445dfcb53e1d95b); got != want {
+		t.Fatalf("long PNS PSD hash = %#016x, want %#016x", got, want)
+	}
+
+	for ch := 0; ch < cm.ElInfo[0].NChannelsInEl; ch++ {
+		static := psy.PsyElement[0].PsyStatic[ch]
+		if static.CalcPreEcho != 1 || static.MdctScaleNm1 != pcmQuantThrScale>>1 {
+			t.Fatalf("pre-echo state ch%d = calc:%d scale:%d", ch, static.CalcPreEcho, static.MdctScaleNm1)
+		}
+		if hashFixpDBL(static.SfbThresholdNm1[:psy.PsyConf[0].SfbCnt]) != hashFixpDBL(psy.PsyConf[0].SfbPcmQuantThreshold[:psy.PsyConf[0].SfbCnt]) {
+			t.Fatalf("pre-echo threshold history ch%d does not match PCM thresholds", ch)
+		}
+	}
+}
+
+func TestFDKaacEncPsyMainInitResetAndDisabledToolVectors(t *testing.T) {
+	var cm ChannelMapping
+	if errCode := FDKaacEncInitChannelMapping(Mode2, ChannelOrderMPEG, &cm); errCode != AACEncOK {
+		t.Fatalf("mapping error = %#x", errCode)
+	}
+	var psy PsyInternal
+	if errCode := FDKaacEncPsyNew(&psy, cm.NElements, cm.NChannels); errCode != AACEncOK {
+		t.Fatalf("psy new error = %#x, want %#x", errCode, AACEncOK)
+	}
+	var psyOut PsyOutState
+	if errCode := FDKaacEncPsyOutNew(&psyOut, cm.NElements, cm.NChannels, 1); errCode != AACEncOK {
+		t.Fatalf("psy output new error = %#x, want %#x", errCode, AACEncOK)
+	}
+	if errCode := FDKaacEncPsyInit(&psy, psyOut.PsyOutPtr[:], 1, cm.NChannels, AOTAACLC, &cm); errCode != AACEncOK {
+		t.Fatalf("psy init error = %#x, want %#x", errCode, AACEncOK)
+	}
+	psy.StaticChannels[0].PsyInputBuffer[11] = 77
+	psy.StaticChannels[0].BlockSwitchingControl.Attack = 1
+
+	if errCode := FDKaacEncPsyMainInit(&psy, AOTAACLC, &cm, 48000, 1024, 128000, 0, 15500, 0, 0, 0, 0, 1); errCode != AACEncOK {
+		t.Fatalf("psy main init error = %#x, want %#x", errCode, AACEncOK)
+	}
+	if psy.StaticChannels[0].PsyInputBuffer[11] != 0 {
+		t.Fatalf("initFlags reset did not clear psy input buffer")
+	}
+	assertPsyLCBlockSwitch(t, &psy.StaticChannels[0].BlockSwitchingControl)
+	if psy.PsyConf[0].AllowIS || psy.PsyConf[0].AllowMS || psy.PsyConf[1].AllowIS || psy.PsyConf[1].AllowMS {
+		t.Fatalf("disabled stereo tools were enabled")
+	}
+	if psy.PsyConf[0].TnsConf.TnsActive != 0 || psy.PsyConf[1].TnsConf.TnsActive != 0 {
+		t.Fatalf("disabled TNS active flags = %d/%d", psy.PsyConf[0].TnsConf.TnsActive, psy.PsyConf[1].TnsConf.TnsActive)
+	}
+	if psy.PsyConf[0].PnsConf.UsePns != 0 || psy.PsyConf[1].PnsConf.UsePns != 0 {
+		t.Fatalf("disabled PNS use flags = %d/%d", psy.PsyConf[0].PnsConf.UsePns, psy.PsyConf[1].PnsConf.UsePns)
+	}
+}
+
 func TestFDKaacEncPsyLifecycleRejectsInvalid(t *testing.T) {
 	var psy PsyInternal
 	if got := FDKaacEncPsyNew(nil, 1, 1); got != AACEncInvalidHandle {
@@ -261,6 +361,23 @@ func TestFDKaacEncPsyLifecycleRejectsInvalid(t *testing.T) {
 	expectAACEncPanic(t, func() {
 		_ = FDKaacEncPsyInit(&psy, out.PsyOutPtr[:], 1, cm.NChannels, AOTAACLC, &cm)
 	})
+
+	var validPsy PsyInternal
+	if errCode := FDKaacEncPsyNew(&validPsy, cm.NElements, cm.NChannels); errCode != AACEncOK {
+		t.Fatalf("psy new error = %#x, want %#x", errCode, AACEncOK)
+	}
+	if errCode := FDKaacEncPsyInit(&validPsy, out.PsyOutPtr[:], 1, cm.NChannels, AOTAACLC, &cm); errCode != AACEncOK {
+		t.Fatalf("psy init error = %#x, want %#x", errCode, AACEncOK)
+	}
+	if got := FDKaacEncPsyMainInit(&validPsy, AOTAACLC, &cm, 12345, 1024, 96000, tnsEnableMask, 15500, 1, 1, 1, 0, 0); got != AACEncUnsupportedSamplingRate {
+		t.Fatalf("unsupported psy main sample rate rc = %#x, want %#x", got, AACEncUnsupportedSamplingRate)
+	}
+	expectAACEncPanic(t, func() {
+		_ = FDKaacEncPsyMainInit(nil, AOTAACLC, &cm, 48000, 1024, 96000, tnsEnableMask, 15500, 1, 1, 1, 0, 0)
+	})
+	expectAACEncPanic(t, func() {
+		_ = FDKaacEncPsyMainInit(&validPsy, AOTAACLC, &cm, 48000, 512, 96000, tnsEnableMask, 15500, 1, 1, 1, 0, 0)
+	})
 }
 
 func TestFDKaacEncPsyLifecycleAllocs(t *testing.T) {
@@ -279,6 +396,71 @@ func TestFDKaacEncPsyLifecycleAllocs(t *testing.T) {
 	if allocs != 0 {
 		t.Fatalf("psy lifecycle allocations = %v, want 0", allocs)
 	}
+}
+
+func TestFDKaacEncPsyMainInitAllocs(t *testing.T) {
+	var cm ChannelMapping
+	if errCode := FDKaacEncInitChannelMapping(Mode2, ChannelOrderMPEG, &cm); errCode != AACEncOK {
+		t.Fatalf("mapping error = %#x", errCode)
+	}
+	var psy PsyInternal
+	var out PsyOutState
+	if errCode := FDKaacEncPsyNew(&psy, cm.NElements, cm.NChannels); errCode != AACEncOK {
+		t.Fatalf("psy new error = %#x", errCode)
+	}
+	if errCode := FDKaacEncPsyOutNew(&out, cm.NElements, cm.NChannels, 1); errCode != AACEncOK {
+		t.Fatalf("psy output new error = %#x", errCode)
+	}
+	if errCode := FDKaacEncPsyInit(&psy, out.PsyOutPtr[:], 1, cm.NChannels, AOTAACLC, &cm); errCode != AACEncOK {
+		t.Fatalf("psy init error = %#x", errCode)
+	}
+	allocs := testing.AllocsPerRun(100, func() {
+		if errCode := FDKaacEncPsyMainInit(&psy, AOTAACLC, &cm, 48000, 1024, 96000, tnsEnableMask, 15500, 1, 1, 1, 0, 1); errCode != AACEncOK {
+			t.Fatalf("psy main init error = %#x", errCode)
+		}
+		psyLifecycleSink += psy.PsyConf[0].SfbCnt + psy.PsyConf[1].SfbCnt
+	})
+	if allocs != 0 {
+		t.Fatalf("FDKaacEncPsyMainInit allocations = %v, want 0", allocs)
+	}
+}
+
+func wantAACLCMainInitConfigs(t *testing.T, cm *ChannelMapping, sampleRate int, granuleLength int, bitRate int, tnsMask int, bandwidth int, usePns int, useIS int, useMS int, syntaxFlags uint32) (PsyConfiguration, PsyConfiguration) {
+	t.Helper()
+	channelsEff := cm.NChannelsEff
+	tnsChannels := 2
+	if FDKaacEncGetMonoStereoMode(cm.EncMode) == ElementModeMono {
+		tnsChannels = 1
+	}
+	ldSbrPresent := 0
+	if syntaxFlags&acSBRPresent != 0 {
+		ldSbrPresent = 1
+	}
+
+	var long PsyConfiguration
+	if got := FDKaacEncInitPsyConfiguration(bitRate/channelsEff, sampleRate, bandwidth, LongWindow, granuleLength, useIS, useMS, &long, FilterbankLC); got != AACEncOK {
+		t.Fatalf("direct long psy config rc = %#x", got)
+	}
+	if got := FDKaacEncInitTnsConfiguration((bitRate*tnsChannels)/channelsEff, sampleRate, tnsChannels, LongWindow, granuleLength, 0, ldSbrPresent, &long.TnsConf, &long, tnsMask&2, tnsMask&8); got != AACEncOK {
+		t.Fatalf("direct long TNS config rc = %#x", got)
+	}
+	if got := FDKaacEncInitPnsConfiguration(&long.PnsConf, bitRate/channelsEff, sampleRate, usePns, long.SfbCnt, long.SfbOffset[:], cm.ElInfo[0].NChannelsInEl, 1); got != AACEncOK {
+		t.Fatalf("direct long PNS config rc = %#x", got)
+	}
+
+	var short PsyConfiguration
+	if granuleLength > 512 {
+		if got := FDKaacEncInitPsyConfiguration(bitRate/channelsEff, sampleRate, bandwidth, ShortWindow, granuleLength, useIS, useMS, &short, FilterbankLC); got != AACEncOK {
+			t.Fatalf("direct short psy config rc = %#x", got)
+		}
+		if got := FDKaacEncInitTnsConfiguration((bitRate*tnsChannels)/channelsEff, sampleRate, tnsChannels, ShortWindow, granuleLength, 0, ldSbrPresent, &short.TnsConf, &short, tnsMask&1, tnsMask&4); got != AACEncOK {
+			t.Fatalf("direct short TNS config rc = %#x", got)
+		}
+		if got := FDKaacEncInitPnsConfiguration(&short.PnsConf, bitRate/channelsEff, sampleRate, usePns, short.SfbCnt, short.SfbOffset[:], cm.ElInfo[1].NChannelsInEl, 1); got != AACEncOK {
+			t.Fatalf("direct short PNS config rc = %#x", got)
+		}
+	}
+	return long, short
 }
 
 func assertPsyLCBlockSwitch(t *testing.T, got *BlockSwitchingControl) {

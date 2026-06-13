@@ -185,6 +185,167 @@ func FDKaacEncPsyInit(
 	return AACEncOK
 }
 
+func FDKaacEncPsyMainInit(
+	hPsy *PsyInternal,
+	audioObjectType AudioObjectType,
+	cm *ChannelMapping,
+	sampleRate int,
+	granuleLength int,
+	bitRate int,
+	tnsMask int,
+	bandwidth int,
+	usePns int,
+	useIS int,
+	useMS int,
+	syntaxFlags uint32,
+	initFlags uint32,
+) int {
+	checkPsyMainInitInputs(hPsy, cm, sampleRate, granuleLength, bitRate, bandwidth)
+
+	channelsEff := cm.NChannelsEff
+	tnsChannels := 0
+	switch FDKaacEncGetMonoStereoMode(cm.EncMode) {
+	case ElementModeMono:
+		tnsChannels = 1
+	case ElementModeStereo:
+		tnsChannels = 2
+	default:
+		tnsChannels = 0
+	}
+
+	filterbank := FilterbankLC
+	switch audioObjectType {
+	case AOTERAACLD:
+		filterbank = FilterbankLD
+	case AOTERAACELD:
+		filterbank = FilterbankELD
+	}
+
+	hPsy.GranuleLength = granuleLength
+
+	err := FDKaacEncInitPsyConfiguration(
+		bitRate/channelsEff,
+		sampleRate,
+		bandwidth,
+		LongWindow,
+		hPsy.GranuleLength,
+		useIS,
+		useMS,
+		&hPsy.PsyConf[0],
+		filterbank,
+	)
+	if err != AACEncOK {
+		return err
+	}
+
+	ldSbrPresent := 0
+	if syntaxFlags&acSBRPresent != 0 {
+		ldSbrPresent = 1
+	}
+	isLowDelay := 0
+	if isLowDelayAOT(audioObjectType) {
+		isLowDelay = 1
+	}
+	err = FDKaacEncInitTnsConfiguration(
+		(bitRate*tnsChannels)/channelsEff,
+		sampleRate,
+		tnsChannels,
+		LongWindow,
+		hPsy.GranuleLength,
+		isLowDelay,
+		ldSbrPresent,
+		&hPsy.PsyConf[0].TnsConf,
+		&hPsy.PsyConf[0],
+		tnsMask&2,
+		tnsMask&8,
+	)
+	if err != AACEncOK {
+		return err
+	}
+
+	if granuleLength > 512 {
+		err = FDKaacEncInitPsyConfiguration(
+			bitRate/channelsEff,
+			sampleRate,
+			bandwidth,
+			ShortWindow,
+			hPsy.GranuleLength,
+			useIS,
+			useMS,
+			&hPsy.PsyConf[1],
+			filterbank,
+		)
+		if err != AACEncOK {
+			return err
+		}
+
+		err = FDKaacEncInitTnsConfiguration(
+			(bitRate*tnsChannels)/channelsEff,
+			sampleRate,
+			tnsChannels,
+			ShortWindow,
+			hPsy.GranuleLength,
+			isLowDelay,
+			ldSbrPresent,
+			&hPsy.PsyConf[1].TnsConf,
+			&hPsy.PsyConf[1],
+			tnsMask&1,
+			tnsMask&4,
+		)
+		if err != AACEncOK {
+			return err
+		}
+	}
+
+	for i := 0; i < cm.NElements; i++ {
+		for ch := 0; ch < cm.ElInfo[i].NChannelsInEl; ch++ {
+			psyStatic := hPsy.PsyElement[i].PsyStatic[ch]
+			if initFlags != 0 {
+				FDKaacEncPsyInitStates(hPsy, psyStatic, audioObjectType)
+			}
+			FDKaacEncInitPreEchoControl(
+				psyStatic.SfbThresholdNm1[:],
+				&psyStatic.CalcPreEcho,
+				hPsy.PsyConf[0].SfbCnt,
+				hPsy.PsyConf[0].SfbPcmQuantThreshold[:],
+				&psyStatic.MdctScaleNm1,
+			)
+		}
+	}
+
+	err = FDKaacEncInitPnsConfiguration(
+		&hPsy.PsyConf[0].PnsConf,
+		bitRate/channelsEff,
+		sampleRate,
+		usePns,
+		hPsy.PsyConf[0].SfbCnt,
+		hPsy.PsyConf[0].SfbOffset[:],
+		cm.ElInfo[0].NChannelsInEl,
+		boolToInt(hPsy.PsyConf[0].Filterbank == FilterbankLC),
+	)
+	if err != AACEncOK {
+		return err
+	}
+
+	if granuleLength > 512 {
+		err = FDKaacEncInitPnsConfiguration(
+			&hPsy.PsyConf[1].PnsConf,
+			bitRate/channelsEff,
+			sampleRate,
+			usePns,
+			hPsy.PsyConf[1].SfbCnt,
+			hPsy.PsyConf[1].SfbOffset[:],
+			cm.ElInfo[1].NChannelsInEl,
+			boolToInt(hPsy.PsyConf[1].Filterbank == FilterbankLC),
+		)
+		if err != AACEncOK {
+			return err
+		}
+	}
+
+	return err
+}
+
 func checkPsyInitInputs(hPsy *PsyInternal, psyOut []*PsyOut, nSubFrames int, nMaxChannels int, cm *ChannelMapping) {
 	if hPsy == nil || cm == nil {
 		panic("fdkaac: nil psy init state")
@@ -248,4 +409,40 @@ func checkPsyInitInputs(hPsy *PsyInternal, psyOut []*PsyOut, nSubFrames int, nMa
 			panic("fdkaac: inconsistent psy output channel mapping")
 		}
 	}
+}
+
+func checkPsyMainInitInputs(hPsy *PsyInternal, cm *ChannelMapping, sampleRate int, granuleLength int, bitRate int, bandwidth int) {
+	if hPsy == nil || cm == nil {
+		panic("fdkaac: nil psy main init state")
+	}
+	if sampleRate <= 0 || granuleLength <= 0 || bitRate <= 0 || bandwidth <= 0 {
+		panic("fdkaac: invalid psy main init control")
+	}
+	if cm.NChannelsEff <= 0 || cm.NChannelsEff > maxAACChannels || cm.NElements < 0 || cm.NElements > maxChannelElements {
+		panic("fdkaac: invalid psy main init channel mapping")
+	}
+	if cm.NChannels < 0 || cm.NChannels > maxAACChannels {
+		panic("fdkaac: invalid psy main init channel count")
+	}
+	for i := 0; i < cm.NElements; i++ {
+		if hPsy.PsyElement[i] == nil {
+			panic("fdkaac: nil psy main init element")
+		}
+		nChannelsInEl := cm.ElInfo[i].NChannelsInEl
+		if nChannelsInEl < 0 || nChannelsInEl > len(hPsy.PsyElement[i].PsyStatic) {
+			panic("fdkaac: invalid psy main init element channel count")
+		}
+		for ch := 0; ch < nChannelsInEl; ch++ {
+			if hPsy.PsyElement[i].PsyStatic[ch] == nil {
+				panic("fdkaac: nil psy main init static channel")
+			}
+		}
+	}
+}
+
+func boolToInt(v bool) int {
+	if v {
+		return 1
+	}
+	return 0
 }
