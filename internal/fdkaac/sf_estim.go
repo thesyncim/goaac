@@ -14,6 +14,7 @@ const fdkIntMin = -1 << 31
 const fdkIntMax = 1<<31 - 1
 const upcountLimit = 1
 const maxScfDelta = 60
+const distFacShift = 3
 const scfDeltaPeLimit = FixpDBL(0x00140000) // FDK FL2FXCONST_DBL(10.0f / (1 << (2 * AS_PE_FAC_SHIFT))).
 const distFactorLdData = FixpDBL(-10802114) // FDK FL2FXCONST_DBL(-0.0050301265), ld64(1/1.25).
 
@@ -21,6 +22,7 @@ type QCOutChannel struct {
 	MdctSpectrum        [1024]FixpDBL
 	SfbFormFactorLdData [maxGroupedSFB]FixpDBL
 	SfbEnergyLdData     [maxGroupedSFB]FixpDBL
+	SfbThresholdLdData  [maxGroupedSFB]FixpDBL
 }
 
 func FDKaacEncCalcFormFactor(qcOutChannel []*QCOutChannel, psyOutChannel []*PsyOutChannel, nChannels int) {
@@ -417,6 +419,133 @@ func FDKaacEncAssimilateSingleScf(
 	}
 }
 
+func FDKaacEncAssimilateMultipleScf(
+	psyOutChan *PsyOutChannel,
+	qcOutChannel *QCOutChannel,
+	quantSpec []int16,
+	quantSpecTmp []int16,
+	dZoneQuantEnable int,
+	scf []int,
+	minScf []int,
+	sfbDist []FixpDBL,
+	sfbConstPePart []FixpDBL,
+	sfbFormFactorLdData []FixpDBL,
+	sfbNRelevantLines []FixpDBL,
+) {
+	checkAssimilateMultipleScfInputs(
+		psyOutChan, qcOutChannel, quantSpec, quantSpecTmp, scf, minScf, sfbDist,
+		sfbConstPePart, sfbFormFactorLdData, sfbNRelevantLines,
+	)
+
+	sfbCnt := psyOutChan.SfbCnt
+	scfMin := fdkIntMax
+	scfMax := fdkIntMin
+	for sfb := 0; sfb < sfbCnt; sfb++ {
+		if scf[sfb] != fdkIntMin {
+			scfMin = minInt(scfMin, scf[sfb])
+			scfMax = maxInt(scfMax, scf[sfb])
+		}
+	}
+
+	if scfMax == fdkIntMin || scfMax > scfMin+maxScfDelta {
+		return
+	}
+
+	var scfTmp [maxGroupedSFB]int
+	var sfbDistNew [maxGroupedSFB]FixpDBL
+	deltaPe := FixpDBL(0)
+	scfAct := scfMax
+	for {
+		scfAct--
+		copy(scfTmp[:], scf[:])
+		stopSfb := 0
+		for {
+			sfb := stopSfb
+			for sfb < sfbCnt && (scf[sfb] == fdkIntMin || scf[sfb] <= scfAct) {
+				sfb++
+			}
+			startSfb := sfb
+			sfb++
+			for sfb < sfbCnt && (scf[sfb] == fdkIntMin || scf[sfb] > scfAct) {
+				sfb++
+			}
+			stopSfb = sfb
+
+			possibleRegionFound := false
+			if startSfb < sfbCnt {
+				possibleRegionFound = true
+				for sfb = startSfb; sfb < stopSfb; sfb++ {
+					if scf[sfb] != fdkIntMin && scfAct < minScf[sfb] {
+						possibleRegionFound = false
+						break
+					}
+				}
+			}
+
+			if possibleRegionFound {
+				for sfb = startSfb; sfb < stopSfb; sfb++ {
+					if scfTmp[sfb] != fdkIntMin {
+						scfTmp[sfb] = scfAct
+					}
+				}
+
+				deltaScfBits := FDKaacEncCountScfBitsDiff(scf, scfTmp[:], sfbCnt, startSfb, stopSfb)
+				deltaSpecPe := FDKaacEncCalcSpecPeDiff(
+					qcOutChannel.SfbEnergyLdData[:], scf, scfTmp[:],
+					sfbConstPePart, sfbFormFactorLdData, sfbNRelevantLines, startSfb, stopSfb,
+				)
+				deltaPeNew := deltaPe + deltaScfBits + deltaSpecPe
+
+				if deltaPeNew < scfDeltaPeLimit {
+					distOldSum := FixpDBL(0)
+					distNewSum := FixpDBL(0)
+					for sfb = startSfb; sfb < stopSfb; sfb++ {
+						if scfTmp[sfb] != fdkIntMin {
+							distOldSum += CalcInvLdData(sfbDist[sfb]) >> distFacShift
+
+							sfbWidth := psyOutChan.SfbOffsets[sfb+1] - psyOutChan.SfbOffsets[sfb]
+							sfbOffs := psyOutChan.SfbOffsets[sfb]
+							sfbDistNew[sfb] = FDKaacEncCalcSfbDist(
+								qcOutChannel.MdctSpectrum[sfbOffs:],
+								quantSpecTmp[sfbOffs:],
+								sfbWidth,
+								scfAct,
+								dZoneQuantEnable,
+							)
+
+							if sfbDistNew[sfb] > qcOutChannel.SfbThresholdLdData[sfb] {
+								distNewSum = distOldSum << 1
+								break
+							}
+							distNewSum += CalcInvLdData(sfbDistNew[sfb]) >> distFacShift
+						}
+					}
+
+					if distNewSum < distOldSum {
+						deltaPe = deltaPeNew
+						for sfb = startSfb; sfb < stopSfb; sfb++ {
+							if scf[sfb] != fdkIntMin {
+								sfbWidth := psyOutChan.SfbOffsets[sfb+1] - psyOutChan.SfbOffsets[sfb]
+								sfbOffs := psyOutChan.SfbOffsets[sfb]
+								scf[sfb] = scfAct
+								sfbDist[sfb] = sfbDistNew[sfb]
+								copy(quantSpec[sfbOffs:sfbOffs+sfbWidth], quantSpecTmp[sfbOffs:sfbOffs+sfbWidth])
+							}
+						}
+					}
+				}
+			}
+
+			if stopSfb > sfbCnt {
+				break
+			}
+		}
+		if scfAct <= scfMin {
+			break
+		}
+	}
+}
+
 func checkFormFactorInputs(sfbFormFactorLdData []FixpDBL, psyOutChan *PsyOutChannel) {
 	if psyOutChan == nil {
 		panic("fdkaac: nil form-factor psy output")
@@ -574,5 +703,50 @@ func checkAssimilateSingleScfInputs(
 	}
 	if prev > len(qcOutChannel.MdctSpectrum) || len(quantSpec) < prev || len(quantSpecTmp) < prev {
 		panic("fdkaac: short assimilate-single spectrum")
+	}
+}
+
+func checkAssimilateMultipleScfInputs(
+	psyOutChan *PsyOutChannel,
+	qcOutChannel *QCOutChannel,
+	quantSpec []int16,
+	quantSpecTmp []int16,
+	scf []int,
+	minScf []int,
+	sfbDist []FixpDBL,
+	sfbConstPePart []FixpDBL,
+	sfbFormFactorLdData []FixpDBL,
+	sfbNRelevantLines []FixpDBL,
+) {
+	if psyOutChan == nil {
+		panic("fdkaac: nil assimilate-multiple psy output")
+	}
+	if qcOutChannel == nil {
+		panic("fdkaac: nil assimilate-multiple qc output")
+	}
+	if psyOutChan.SfbCnt <= 0 || psyOutChan.SfbCnt > maxGroupedSFB || psyOutChan.SfbPerGroup <= 0 || psyOutChan.SfbCnt%psyOutChan.SfbPerGroup != 0 {
+		panic("fdkaac: invalid assimilate-multiple band count")
+	}
+	if psyOutChan.MaxSfbPerGroup <= 0 || psyOutChan.MaxSfbPerGroup > psyOutChan.SfbPerGroup {
+		panic("fdkaac: invalid assimilate-multiple group width")
+	}
+	if len(scf) < psyOutChan.SfbCnt || len(minScf) < psyOutChan.SfbCnt || len(sfbDist) < psyOutChan.SfbCnt ||
+		len(sfbConstPePart) < psyOutChan.SfbCnt || len(sfbFormFactorLdData) < psyOutChan.SfbCnt ||
+		len(sfbNRelevantLines) < psyOutChan.SfbCnt {
+		panic("fdkaac: short assimilate-multiple band data")
+	}
+	prev := psyOutChan.SfbOffsets[0]
+	if prev < 0 {
+		panic("fdkaac: invalid assimilate-multiple offset")
+	}
+	for i := 0; i < psyOutChan.SfbCnt; i++ {
+		next := psyOutChan.SfbOffsets[i+1]
+		if next < prev {
+			panic("fdkaac: invalid assimilate-multiple offset")
+		}
+		prev = next
+	}
+	if prev > len(qcOutChannel.MdctSpectrum) || len(quantSpec) < prev || len(quantSpecTmp) < prev {
+		panic("fdkaac: short assimilate-multiple spectrum")
 	}
 }

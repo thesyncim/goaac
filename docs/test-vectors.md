@@ -178,6 +178,12 @@ constraints, restart-on-success rescans, already-checked minimum-scale controls,
 no-op flat-scale controls, quantized-spectrum side effects, malformed controls,
 and zero steady-state allocation.
 
+The FDK AAC-LC multi-SCF assimilation subset is covered with source-derived
+vectors for `FDKaacEnc_assimilateMultipleScf`. Tests verify regional shared-scale
+lowering, threshold rejection, minimum-scale rejection, irrelevant-band no-op
+control, quantized and temporary-spectrum side effects, malformed controls, and
+zero steady-state allocation.
+
 The FDK AAC-LC line-PE subset is covered with source-derived vectors for
 `CalcLdInt`, `fMultI`, `FDKaacEnc_prepareSfbPe`, and `FDKaacEnc_calcSfbPe`.
 Tests verify active-line preparation, high/low PE branches, inactive and
