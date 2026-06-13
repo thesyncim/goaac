@@ -357,9 +357,29 @@ func psyPostStereo(
 			pnsData[0],
 			pnsData[1],
 		)
-		if psyConfLong.AllowIS && psyOutElement.CommonWindow != 0 {
-			panic("fdkaac: intensity stereo is not ported")
-		}
+		FDKaacEncIntensityStereoProcessing(
+			psyData[0].SfbEnergy.Long[:],
+			psyData[1].SfbEnergy.Long[:],
+			psyData[0].MdctSpectrum,
+			psyData[1].MdctSpectrum,
+			psyData[0].SfbThreshold.Long[:],
+			psyData[1].SfbThreshold.Long[:],
+			psyOutElement.PsyOutChannel[1].SfbThresholdLdData[:],
+			psyData[0].SfbSpreadEnergy.Long[:],
+			psyData[1].SfbSpreadEnergy.Long[:],
+			psyOutElement.PsyOutChannel[0].SfbEnergyLdData[:],
+			psyOutElement.PsyOutChannel[1].SfbEnergyLdData[:],
+			&psyOutElement.ToolsInfo.MsDigest,
+			psyOutElement.ToolsInfo.MsMask[:],
+			psyConfLong.SfbCnt,
+			psyConfLong.SfbCnt,
+			maxSfbPerGroup[0],
+			psyConfLong.SfbOffset[:],
+			boolToInt(psyConfLong.AllowIS && psyOutElement.CommonWindow != 0),
+			psyOutElement.PsyOutChannel[1].IsBook[:],
+			psyOutElement.PsyOutChannel[1].IsScale[:],
+			pnsData,
+		)
 		FDKaacEncMsStereoProcessing(
 			psyData[0].MdctSpectrum,
 			psyData[1].MdctSpectrum,
@@ -397,10 +417,30 @@ func psyPostStereo(
 		return
 	}
 
-	if psyConfLong.AllowIS && psyOutElement.CommonWindow != 0 {
-		panic("fdkaac: intensity stereo is not ported")
-	}
 	sfbCnt := psyStatic[0].BlockSwitchingControl.NoOfGroups * psyConfShort.SfbCnt
+	FDKaacEncIntensityStereoProcessing(
+		psyData[0].SfbEnergy.Long[:],
+		psyData[1].SfbEnergy.Long[:],
+		psyData[0].MdctSpectrum,
+		psyData[1].MdctSpectrum,
+		psyData[0].SfbThreshold.Long[:],
+		psyData[1].SfbThreshold.Long[:],
+		psyOutElement.PsyOutChannel[1].SfbThresholdLdData[:],
+		psyData[0].SfbSpreadEnergy.Long[:],
+		psyData[1].SfbSpreadEnergy.Long[:],
+		psyOutElement.PsyOutChannel[0].SfbEnergyLdData[:],
+		psyOutElement.PsyOutChannel[1].SfbEnergyLdData[:],
+		&psyOutElement.ToolsInfo.MsDigest,
+		psyOutElement.ToolsInfo.MsMask[:],
+		sfbCnt,
+		psyConfShort.SfbCnt,
+		maxSfbPerGroup[0],
+		psyData[0].GroupedSfbOffset[:],
+		boolToInt(psyConfLong.AllowIS && psyOutElement.CommonWindow != 0),
+		psyOutElement.PsyOutChannel[1].IsBook[:],
+		psyOutElement.PsyOutChannel[1].IsScale[:],
+		pnsData,
+	)
 	FDKaacEncMsStereoProcessing(
 		psyData[0].MdctSpectrum,
 		psyData[1].MdctSpectrum,

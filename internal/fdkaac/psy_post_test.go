@@ -124,12 +124,12 @@ func TestFDKaacEncPsyPostTnsToolsAndOutputShortVector(t *testing.T) {
 	}
 }
 
-func TestFDKaacEncPsyPostTnsRejectsIntensityStereoUntilPorted(t *testing.T) {
+func TestFDKaacEncPsyPostTnsIntensityStereoVector(t *testing.T) {
 	longConf, shortConf := mustPsyPostConfig(t, 1, 1)
 	var leftData, rightData PsyData
 	var leftSpec, rightSpec [maxSpectralLines]FixpDBL
 	preparePsyTnsLongData(&leftData, leftSpec[:], &longConf, 9103)
-	preparePsyTnsLongData(&rightData, rightSpec[:], &longConf, 9109)
+	preparePsyTnsCorrelatedLongData(&rightData, rightSpec[:], &leftData, &longConf)
 
 	var leftStatic, rightStatic PsyStatic
 	initPsyPostStatic(&leftStatic, LongWindow, []int{1}, &longConf)
@@ -139,7 +139,7 @@ func TestFDKaacEncPsyPostTnsRejectsIntensityStereoUntilPorted(t *testing.T) {
 	var leftOut, rightOut PsyOutChannel
 	var tonality [2][maxSFBLong]FixpSGL
 	var tnsScratch PsyTnsTonalityScratch
-	FDKaacEncPsyAdvanceTnsAndTonality(
+	rc := FDKaacEncPsyAdvanceTnsAndTonality(
 		2,
 		[]*PsyStatic{&leftStatic, &rightStatic},
 		[]*PsyData{&leftData, &rightData},
@@ -149,24 +149,41 @@ func TestFDKaacEncPsyPostTnsRejectsIntensityStereoUntilPorted(t *testing.T) {
 		&tonality,
 		&tnsScratch,
 	)
+	if rc != AACEncOK {
+		t.Fatalf("TNS rc = %#x, want OK", rc)
+	}
 
 	var leftPNS, rightPNS PNSData
 	element := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{&leftOut, &rightOut}}
 	var postScratch PsyPostTnsScratch
-	expectAACEncPanic(t, func() {
-		FDKaacEncPsyPostTnsToolsAndOutput(
-			2,
-			[]*PsyStatic{&leftStatic, &rightStatic},
-			[]*PsyData{&leftData, &rightData},
-			[]*TNSData{&leftTNS, &rightTNS},
-			[]*PNSData{&leftPNS, &rightPNS},
-			&longConf,
-			&shortConf,
-			&element,
-			&tonality,
-			&postScratch,
-		)
-	})
+	rc = FDKaacEncPsyPostTnsToolsAndOutput(
+		2,
+		[]*PsyStatic{&leftStatic, &rightStatic},
+		[]*PsyData{&leftData, &rightData},
+		[]*TNSData{&leftTNS, &rightTNS},
+		[]*PNSData{&leftPNS, &rightPNS},
+		&longConf,
+		&shortConf,
+		&element,
+		&tonality,
+		&postScratch,
+	)
+	if rc != AACEncOK {
+		t.Fatalf("post-TNS rc = %#x, want OK", rc)
+	}
+
+	isBands := 0
+	for sfb := 0; sfb < rightOut.SfbCnt; sfb++ {
+		if rightOut.IsBook[sfb] == codeBookISInPhaseNo {
+			isBands++
+		}
+	}
+	if isBands < isMinSFBs {
+		t.Fatalf("intensity bands = %d, want at least %d", isBands, isMinSFBs)
+	}
+	if got, want := hashPsyPostStage(2, []*PsyData{&leftData, &rightData}, []*TNSData{&leftTNS, &rightTNS}, []*PNSData{&leftPNS, &rightPNS}, &element, &longConf), uint64(0xbab3687703bd06bc); got != want {
+		t.Fatalf("intensity post-TNS hash = %#016x, want %#016x", got, want)
+	}
 }
 
 func TestFDKaacEncPsyPostTnsRejectsInvalidControls(t *testing.T) {
@@ -316,6 +333,43 @@ func initPsyPostStatic(static *PsyStatic, sequence int, groupLen []int, longConf
 		longConf.SfbPcmQuantThreshold[:],
 		&static.MdctScaleNm1,
 	)
+}
+
+func preparePsyTnsCorrelatedLongData(dst *PsyData, spectrum []FixpDBL, src *PsyData, conf *PsyConfiguration) {
+	for sfb := 0; sfb < src.SfbActive; sfb++ {
+		for line := conf.SfbOffset[sfb]; line < conf.SfbOffset[sfb+1]; line++ {
+			v := src.MdctSpectrum[line] >> 2
+			if sfb >= src.SfbActive-2 {
+				v = -v
+			}
+			spectrum[line] = v
+		}
+	}
+	for line := conf.LowpassLine; line < conf.GranuleLength; line++ {
+		spectrum[line] = 0
+	}
+
+	*dst = PsyData{MdctSpectrum: spectrum}
+	dst.SfbActive = conf.SfbActive
+	dst.LowpassLine = conf.LowpassLine
+
+	FDKaacEncCalcSfbMaxScaleSpec(spectrum, conf.SfbOffset[:], dst.SfbMaxScaleSpec.Long[:], dst.SfbActive)
+	minSpecShift := DfractBits - 2
+	for sfb := 0; sfb < dst.SfbActive; sfb++ {
+		minSpecShift = minInt(minSpecShift, dst.SfbMaxScaleSpec.Long[sfb])
+	}
+	FDKaacEncCheckBandEnergyOptim(
+		spectrum,
+		dst.SfbMaxScaleSpec.Long[:],
+		conf.SfbOffset[:],
+		dst.SfbActive,
+		dst.SfbEnergy.Long[:],
+		dst.SfbEnergyLdData.Long[:],
+		minSpecShift-4,
+	)
+	for sfb := 0; sfb < dst.SfbActive; sfb++ {
+		dst.SfbThreshold.Long[sfb] = FMultDD(dst.SfbEnergy.Long[sfb], cRatio)
+	}
 }
 
 func hashPsyPostStage(
