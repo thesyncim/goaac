@@ -337,6 +337,14 @@ reservoir level redistribution, PE grant handoff through the existing
 bit-reservoir helper, low/high reservoir error returns, malformed controls,
 no-cgo compilation, and zero steady-state allocation.
 
+The FDK AAC-LC QC one-frame control wrapper subset is covered with
+source-shaped vectors for `FDKaacEnc_QCMain` setup and post-quantization
+decision logic. Tests verify the CBR/full-reservoir mode switch, reservoir
+redistribution, bit distribution, threshold adjustment, quantize/count handoff,
+under-budget exit, over-budget saving, dynamic-bit overshoot, emergency
+iteration spending, the pinned no-op `checkMinFrameBitsDemand` behavior,
+malformed controls, no-cgo compilation, and zero steady-state allocation.
+
 The FDK AAC-LC bit-reservoir PE distribution subset is covered with
 source-derived vectors for `FDKaacEnc_bitresCalcBitFac`,
 `FDKaacEnc_DistributeBits`, and the high/low bit-reservoir PE-correction

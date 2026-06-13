@@ -34,6 +34,12 @@ type QCMainQuantizeScratch struct {
 	CalculateQuant         [maxChannelElements][2]int
 }
 
+type QCMainFrameScratch struct {
+	Adjust  AdjustThresholdsScratch
+	Quant   QCMainQuantizeScratch
+	Element [1][maxChannelElements]*QCOutElement
+}
+
 type ElementBits struct {
 	ChBitrateEl     int
 	MaxBitsEl       int
@@ -81,6 +87,35 @@ type QCPrepareBitDistributionResult struct {
 	DistributedBits     int
 	DistributedElements int
 	TotalGrantedPeCorr  int
+}
+
+type QCMainFrameResult struct {
+	IsCBRAdjustment        int
+	BitresAvgTotalBits     int
+	TotalAvailableBits     int
+	AvgTotalDynBits        int
+	AdjustedElements       int
+	AdjustmentIterations   int
+	QuantizedElements      int
+	QuantizationPasses     int
+	SumDynBitsConsumed     int
+	SumBitsConsumed        int
+	QuantizationDone       int
+	DecreaseBitConsumption int
+	EmergencyIterations    int
+	DynBitsOvershoot       int
+	ConstraintsReset       int
+	CrashRecoveryNeeded    int
+}
+
+type QCMainQuantizationDecisionResult struct {
+	QuantizationDone       int
+	SumDynBitsConsumed     int
+	SumBitsConsumed        int
+	DecreaseBitConsumption int
+	EmergencyIterations    int
+	DynBitsOvershoot       int
+	ConstraintsReset       int
 }
 
 func FDKaacEncQCMainPrepare(
@@ -268,6 +303,196 @@ func FDKaacEncQCMainQuantizeFrame(
 	FDKaacEncUpdateUsedDynBits(&qcOut.UsedDynBits, qcElement, cm)
 	result.SumDynBitsConsumed = FDKaacEncGetTotalConsumedDynBits([]*QCOut{qcOut}, 1)
 	return result, AACEncOK
+}
+
+func FDKaacEncQCMainFrame(
+	qcKernel *QCKernel,
+	adjThrState *AdjThrState,
+	psyOutElement []*PsyOutElement,
+	qcOut []*QCOut,
+	qcElement [][maxChannelElements]*QCOutElement,
+	cm *ChannelMapping,
+	elementBits []*ElementBits,
+	scratch *QCMainFrameScratch,
+	avgTotalBits int,
+	invQuant int,
+	dZoneQuantEnable int,
+	maxIterations int,
+	aot int,
+	syntaxFlags uint32,
+	epConfig int8,
+) (QCMainFrameResult, int) {
+	checkQCMainFrameInputs(qcKernel, adjThrState, psyOutElement, qcOut, qcElement, cm, elementBits, scratch, avgTotalBits, maxIterations)
+
+	result := QCMainFrameResult{DecreaseBitConsumption: -1}
+	isCBRAdjustment := 0
+	if fdkaacEncIsConstantBitrateMode(qcKernel.BitrateMode) || qcKernel.BitResMode != BitresModeFull {
+		isCBRAdjustment = 1
+	}
+	result.IsCBRAdjustment = isCBRAdjustment
+
+	bitresAvgTotalBits := avgTotalBits
+	if isCBRAdjustment == 0 {
+		bitresAvgTotalBits = qcKernel.MaxBitsPerFrame
+	}
+	result.BitresAvgTotalBits = bitresAvgTotalBits
+
+	if errCode := FDKaacEncBitResRedistribution(qcKernel, cm, elementBits, bitresAvgTotalBits); errCode != AACEncOK {
+		return result, errCode
+	}
+
+	for i := 0; i < cm.NElements; i++ {
+		if fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+			scratch.Element[0][i] = qcElement[0][i]
+		} else {
+			scratch.Element[0][i] = nil
+		}
+	}
+
+	prepareResult, errCode := FDKaacEncPrepareBitDistribution(
+		qcKernel,
+		adjThrState,
+		psyOutElement,
+		qcOut,
+		scratch.Element[:],
+		cm,
+		elementBits,
+		bitresAvgTotalBits,
+	)
+	if errCode != AACEncOK {
+		return result, errCode
+	}
+	result.TotalAvailableBits = prepareResult.TotalAvailableBits
+	result.AvgTotalDynBits = prepareResult.AvgTotalDynBits
+
+	adjustResult := FDKaacEncAdjustThresholds(adjThrState, scratch.Element[0][:], qcOut[0], psyOutElement, isCBRAdjustment, cm, &scratch.Adjust)
+	result.AdjustedElements = adjustResult.AdaptedElements
+	result.AdjustmentIterations = adjustResult.Iterations
+
+	quantResult, errCode := FDKaacEncQCMainQuantizeFrame(
+		cm,
+		psyOutElement,
+		qcOut[0],
+		scratch.Element[0][:],
+		adjThrState,
+		elementBits,
+		&scratch.Quant,
+		invQuant,
+		dZoneQuantEnable,
+		maxIterations,
+		aot,
+		syntaxFlags,
+		epConfig,
+	)
+	result.QuantizationPasses = 1
+	result.QuantizedElements = quantResult.QuantizedElements
+	result.SumDynBitsConsumed = quantResult.SumDynBitsConsumed
+	result.CrashRecoveryNeeded = quantResult.CrashRecoveryNeeded
+	if errCode != AACEncOK {
+		return result, errCode
+	}
+
+	decision := FDKaacEncQCMainQuantizationDecision(
+		qcKernel,
+		qcOut,
+		scratch.Element[:],
+		cm,
+		result.TotalAvailableBits,
+		result.AvgTotalDynBits,
+		quantResult.SumDynBitsConsumed,
+		quantResult.DecreaseBitConsumption,
+		scratch.Quant.Iterations[:],
+		maxIterations,
+	)
+	result.SumDynBitsConsumed = decision.SumDynBitsConsumed
+	result.SumBitsConsumed = decision.SumBitsConsumed
+	result.QuantizationDone = decision.QuantizationDone
+	result.DecreaseBitConsumption = decision.DecreaseBitConsumption
+	result.EmergencyIterations = decision.EmergencyIterations
+	result.DynBitsOvershoot = decision.DynBitsOvershoot
+	result.ConstraintsReset = decision.ConstraintsReset
+	return result, AACEncOK
+}
+
+func FDKaacEncQCMainQuantizationDecision(
+	qcKernel *QCKernel,
+	qcOut []*QCOut,
+	qcElement [][maxChannelElements]*QCOutElement,
+	cm *ChannelMapping,
+	totalAvailableBits int,
+	avgTotalDynBits int,
+	sumDynBitsConsumedTotal int,
+	decreaseBitConsumption int,
+	iterations []int,
+	maxIterations int,
+) QCMainQuantizationDecisionResult {
+	checkQCMainQuantizationDecisionInputs(qcKernel, qcOut, qcElement, cm, totalAvailableBits, avgTotalDynBits, sumDynBitsConsumedTotal, decreaseBitConsumption, iterations, maxIterations)
+
+	result := QCMainQuantizationDecisionResult{
+		SumDynBitsConsumed:     sumDynBitsConsumedTotal,
+		DecreaseBitConsumption: decreaseBitConsumption,
+	}
+
+	if sumDynBitsConsumedTotal == -1 {
+		result.QuantizationDone = 0
+	} else {
+		result.SumBitsConsumed = FDKaacEncGetTotalConsumedBits(qcOut, qcElement, cm, qcKernel.GlobHdrBits, 1)
+		if ((result.SumBitsConsumed < totalAvailableBits) || sumDynBitsConsumedTotal == 0) &&
+			decreaseBitConsumption == 1 &&
+			FDKaacEncCheckMinFrameBitsDemand(qcOut, qcKernel.MinBitsPerFrame, 1) != 0 {
+			result.QuantizationDone = 1
+		}
+		if result.SumBitsConsumed > totalAvailableBits && decreaseBitConsumption == 0 {
+			result.QuantizationDone = 0
+		}
+	}
+
+	emergencyIterations := 1
+	for i := 0; i < cm.NElements; i++ {
+		if fdkaacEncIsAdjustableElement(cm.ElInfo[i].ElType) {
+			if iterations[i] < maxIterations {
+				emergencyIterations = 0
+			}
+		}
+	}
+	result.EmergencyIterations = emergencyIterations
+
+	if qcOut[0].UsedDynBits > qcOut[0].MaxDynBits {
+		result.DynBitsOvershoot = 1
+	}
+
+	if result.QuantizationDone == 0 || result.DynBitsOvershoot != 0 {
+		if result.SumBitsConsumed == 0 {
+			result.SumBitsConsumed = FDKaacEncGetTotalConsumedBits(qcOut, qcElement, cm, qcKernel.GlobHdrBits, 1)
+		}
+		if sumDynBitsConsumedTotal >= avgTotalDynBits || sumDynBitsConsumedTotal == 0 {
+			result.QuantizationDone = 1
+		}
+		if emergencyIterations != 0 && result.SumBitsConsumed < totalAvailableBits {
+			result.QuantizationDone = 1
+		}
+		if result.SumBitsConsumed > totalAvailableBits ||
+			FDKaacEncCheckMinFrameBitsDemand(qcOut, qcKernel.MinBitsPerFrame, 1) == 0 {
+			result.QuantizationDone = 0
+		}
+		if result.SumBitsConsumed < totalAvailableBits &&
+			FDKaacEncCheckMinFrameBitsDemand(qcOut, qcKernel.MinBitsPerFrame, 1) != 0 {
+			result.DecreaseBitConsumption = 0
+		} else {
+			result.DecreaseBitConsumption = 1
+		}
+		if result.DynBitsOvershoot != 0 {
+			result.QuantizationDone = 0
+			result.DecreaseBitConsumption = 1
+		}
+		result.ConstraintsReset = 1
+	}
+	return result
+}
+
+func FDKaacEncCheckMinFrameBitsDemand(qcOut []*QCOut, minBitsPerFrame int, nSubFrames int) int {
+	checkMinFrameBitsDemandInputs(qcOut, minBitsPerFrame, nSubFrames)
+	return 1
 }
 
 func FDKaacEncReduceBitConsumption(
@@ -747,6 +972,141 @@ func FDKaacEncUpdateBitres(qcKernel *QCKernel, qcOut []*QCOut) {
 		fallthrough
 	default:
 		qcKernel.BitResTot += qcOut[0].GrantedDynBits - (qcOut[0].UsedDynBits + qcOut[0].TotFillBits + qcOut[0].AlignBits)
+	}
+}
+
+func fdkaacEncIsConstantBitrateMode(bitrateMode QCBitrateMode) bool {
+	return bitrateMode == QCBitrateModeCBR || bitrateMode == QCBitrateModeSFR || bitrateMode == QCBitrateModeFF
+}
+
+func checkQCMainFrameInputs(
+	qcKernel *QCKernel,
+	adjThrState *AdjThrState,
+	psyOutElement []*PsyOutElement,
+	qcOut []*QCOut,
+	qcElement [][maxChannelElements]*QCOutElement,
+	cm *ChannelMapping,
+	elementBits []*ElementBits,
+	scratch *QCMainFrameScratch,
+	avgTotalBits int,
+	maxIterations int,
+) {
+	if qcKernel == nil {
+		panic("fdkaac: nil QC main kernel")
+	}
+	if adjThrState == nil {
+		panic("fdkaac: nil QC main threshold state")
+	}
+	if cm == nil {
+		panic("fdkaac: nil QC main channel mapping")
+	}
+	if scratch == nil {
+		panic("fdkaac: nil QC main scratch")
+	}
+	if avgTotalBits < 0 || maxIterations < 0 || qcKernel.MaxBitsPerFrame < 0 || qcKernel.GlobHdrBits < 0 || qcKernel.MaxBitFac < 0 {
+		panic("fdkaac: invalid QC main frame levels")
+	}
+	if qcKernel.BitResMode != BitresModeFull && qcKernel.BitResMode != BitresModeReduced && qcKernel.BitResMode != BitresModeDisabled {
+		panic("fdkaac: invalid QC main bit-reservoir mode")
+	}
+	if cm.NElements <= 0 || cm.NElements > maxChannelElements ||
+		len(psyOutElement) < cm.NElements || len(qcOut) < 1 || len(qcElement) < 1 ||
+		len(elementBits) < cm.NElements {
+		panic("fdkaac: invalid QC main element count")
+	}
+	if qcOut[0] == nil {
+		panic("fdkaac: nil QC main frame output")
+	}
+	for i := 0; i < cm.NElements; i++ {
+		elInfo := cm.ElInfo[i]
+		if !fdkaacEncIsAdjustableElement(elInfo.ElType) {
+			if elInfo.ElType != idDSE {
+				panic("fdkaac: unsupported QC main element")
+			}
+			continue
+		}
+		if elInfo.NChannelsInEl != channelElementCount(elInfo.ElType) {
+			panic("fdkaac: invalid QC main channel count")
+		}
+		if psyOutElement[i] == nil {
+			panic("fdkaac: nil QC main psy element")
+		}
+		if qcElement[0][i] == nil {
+			panic("fdkaac: nil QC main output element")
+		}
+		if elementBits[i] == nil {
+			panic("fdkaac: nil QC main element bits")
+		}
+		if adjThrState.AdjThrStateElem[i] == nil {
+			panic("fdkaac: nil QC main threshold element")
+		}
+		for ch := 0; ch < elInfo.NChannelsInEl; ch++ {
+			if psyOutElement[i].PsyOutChannel[ch] == nil {
+				panic("fdkaac: nil QC main psy channel")
+			}
+			if qcElement[0][i].QCOutChannel[ch] == nil {
+				panic("fdkaac: nil QC main output channel")
+			}
+		}
+	}
+}
+
+func checkQCMainQuantizationDecisionInputs(
+	qcKernel *QCKernel,
+	qcOut []*QCOut,
+	qcElement [][maxChannelElements]*QCOutElement,
+	cm *ChannelMapping,
+	totalAvailableBits int,
+	avgTotalDynBits int,
+	sumDynBitsConsumedTotal int,
+	decreaseBitConsumption int,
+	iterations []int,
+	maxIterations int,
+) {
+	if qcKernel == nil {
+		panic("fdkaac: nil QC decision kernel")
+	}
+	if cm == nil {
+		panic("fdkaac: nil QC decision channel mapping")
+	}
+	if totalAvailableBits < 0 || avgTotalDynBits < 0 || sumDynBitsConsumedTotal < -1 || maxIterations < 0 {
+		panic("fdkaac: invalid QC decision bit levels")
+	}
+	if decreaseBitConsumption < -1 || decreaseBitConsumption > 1 {
+		panic("fdkaac: invalid QC decision direction")
+	}
+	if cm.NElements <= 0 || cm.NElements > maxChannelElements ||
+		len(qcOut) < 1 || len(qcElement) < 1 || len(iterations) < cm.NElements {
+		panic("fdkaac: invalid QC decision element count")
+	}
+	if qcOut[0] == nil {
+		panic("fdkaac: nil QC decision frame")
+	}
+	for i := 0; i < cm.NElements; i++ {
+		elInfo := cm.ElInfo[i]
+		if !fdkaacEncIsAdjustableElement(elInfo.ElType) {
+			continue
+		}
+		if qcElement[0][i] == nil {
+			panic("fdkaac: nil QC decision element")
+		}
+		if iterations[i] < 0 {
+			panic("fdkaac: invalid QC decision iteration")
+		}
+	}
+}
+
+func checkMinFrameBitsDemandInputs(qcOut []*QCOut, minBitsPerFrame int, nSubFrames int) {
+	if minBitsPerFrame < 0 || nSubFrames < 0 {
+		panic("fdkaac: invalid minimum frame-bit demand")
+	}
+	if len(qcOut) < nSubFrames {
+		panic("fdkaac: short minimum frame-bit inputs")
+	}
+	for i := 0; i < nSubFrames; i++ {
+		if qcOut[i] == nil {
+			panic("fdkaac: nil minimum frame-bit input")
+		}
 	}
 }
 
