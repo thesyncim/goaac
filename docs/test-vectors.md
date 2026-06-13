@@ -279,6 +279,12 @@ min-SNR relaxation to 1 dB, threshold replacement, PE-band replacement,
 global/channel PE updates, no-op behavior, malformed controls, no-cgo
 compilation, and zero steady-state allocation.
 
+The FDK AAC-LC allow-more-holes subset is covered with source-shaped M/S and
+energy-fallback vectors for `FDKaacEnc_allowMoreHoles`. Tests verify
+inactive-band PE clearing, lower-energy side-channel hole opening, low-energy
+high-band erasure, threshold replacement, no-op behavior, malformed controls,
+no-cgo compilation, and zero steady-state allocation.
+
 The FDK AAC-LC PE threshold-adjustment subset is covered with source-derived
 vectors for normalized Schur division, `FDKaacEnc_preparePe`,
 `FDKaacEnc_calcWeighting`, `FDKaacEnc_calcPe`, and `FDKaacEnc_peCalculation`.

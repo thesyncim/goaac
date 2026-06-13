@@ -552,6 +552,79 @@ func TestFDKaacEncReduceMinSnrNoOp(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncAllowMoreHolesMSVector(t *testing.T) {
+	var leftPsy PsyOutChannel
+	var rightPsy PsyOutChannel
+	var leftQC QCOutChannel
+	var rightQC QCOutChannel
+	var peData PEData
+	var tools ToolsInfo
+	var state ATSElement
+	var ahFlag [2][maxGroupedSFB]uint8
+	fillAllowMoreHolesMSCase(&leftPsy, &rightPsy, &leftQC, &rightQC, &peData, &tools, &state, &ahFlag)
+	psy := [2]*PsyOutChannel{&leftPsy, &rightPsy}
+	qc := [2]*QCOutChannel{&leftQC, &rightQC}
+
+	FDKaacEncAllowMoreHoles(qc[:], psy[:], &peData, &tools, &state, &ahFlag, 2, 70, 120)
+
+	wantLeftThreshold := [...]FixpDBL{-520000000, -510000000, -500000000, -490000000}
+	wantRightThreshold := [...]FixpDBL{-530000000, -520000000, -366445568, -500000000}
+	wantLeftFlags := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleActive}
+	wantRightFlags := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone, AvoidHoleActive}
+	wantLeftPE := [...]FixpDBL{655360, 1310720, 1966080, 0}
+	wantRightPE := [...]FixpDBL{983040, 1638400, 3932160, 0}
+	assertFixpDBLSlice(t, "allow-more-holes MS left threshold", qc[0].SfbThresholdLdData[:4], wantLeftThreshold[:], 0xe569c44c5bbc4aff)
+	assertFixpDBLSlice(t, "allow-more-holes MS right threshold", qc[1].SfbThresholdLdData[:4], wantRightThreshold[:], 0x17b3f12a8fcd925f)
+	assertUint8Slice(t, "allow-more-holes MS left flags", ahFlag[0][:4], wantLeftFlags[:])
+	assertUint8Slice(t, "allow-more-holes MS right flags", ahFlag[1][:4], wantRightFlags[:])
+	assertFixpDBLSlice(t, "allow-more-holes MS left PE", peData.PEChannelData[0].SfbPe[:4], wantLeftPE[:], 0x670a2d6276fde545)
+	assertFixpDBLSlice(t, "allow-more-holes MS right PE", peData.PEChannelData[1].SfbPe[:4], wantRightPE[:], 0xca3908e3c9e67e7f)
+}
+
+func TestFDKaacEncAllowMoreHolesEnergyVector(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var peData PEData
+	var tools ToolsInfo
+	var state ATSElement
+	var ahFlag [2][maxGroupedSFB]uint8
+	fillAllowMoreHolesEnergyCase(&psyStorage, &qcStorage, &peData, &tools, &state, &ahFlag)
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+
+	FDKaacEncAllowMoreHoles(qc[:], psy[:], &peData, &tools, &state, &ahFlag, 1, 70, 100)
+
+	wantThreshold := [...]FixpDBL{-520000000, -500000000, -510000000, -296445568, -500000000, -505000000, -490000000, -540000000}
+	wantFlags := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone, AvoidHoleNone, AvoidHoleInactive, AvoidHoleActive, AvoidHoleInactive, AvoidHoleInactive}
+	wantPE := [...]FixpDBL{720896, 1441792, 5242880, 2621440, 983040, 1638400, 2293760, 4587520}
+	assertFixpDBLSlice(t, "allow-more-holes energy threshold", qc[0].SfbThresholdLdData[:8], wantThreshold[:], 0xd5c50105c1114255)
+	assertUint8Slice(t, "allow-more-holes energy flags", ahFlag[0][:8], wantFlags[:])
+	assertFixpDBLSlice(t, "allow-more-holes energy PE", peData.PEChannelData[0].SfbPe[:8], wantPE[:], 0xbddc50616fc42913)
+}
+
+func TestFDKaacEncAllowMoreHolesNoOp(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var peData PEData
+	var tools ToolsInfo
+	var state ATSElement
+	var ahFlag [2][maxGroupedSFB]uint8
+	fillAllowMoreHolesEnergyCase(&psyStorage, &qcStorage, &peData, &tools, &state, &ahFlag)
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+	beforeThreshold := qcStorage.SfbThresholdLdData
+	beforeFlags := ahFlag
+
+	FDKaacEncAllowMoreHoles(qc[:], psy[:], &peData, &tools, &state, &ahFlag, 1, 100, 90)
+
+	if qcStorage.SfbThresholdLdData != beforeThreshold {
+		t.Fatalf("no-op allow-more-holes threshold changed = %v, want %v", qcStorage.SfbThresholdLdData[:8], beforeThreshold[:8])
+	}
+	if ahFlag != beforeFlags {
+		t.Fatalf("no-op allow-more-holes flags changed = %v, want %v", ahFlag[0][:8], beforeFlags[0][:8])
+	}
+}
+
 func TestFDKaacEncPECalculationRejectsInvalid(t *testing.T) {
 	peData, psy, qc, tools, state := buildAdjThrLongPatchCase()
 	for _, tt := range []struct {
@@ -792,6 +865,78 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 			redPeGlobal := 160
 			FDKaacEncReduceMinSnr([]*QCOutChannel{&badQC}, []*PsyOutChannel{&badPsy}, &badPE, &badFlags, 1, 90, &redPeGlobal)
 		}},
+		{"nil allow-more-holes PE", func() {
+			var amhPsy PsyOutChannel
+			var amhQC QCOutChannel
+			var amhPE PEData
+			var amhTools ToolsInfo
+			var amhState ATSElement
+			var amhFlags [2][maxGroupedSFB]uint8
+			fillAllowMoreHolesEnergyCase(&amhPsy, &amhQC, &amhPE, &amhTools, &amhState, &amhFlags)
+			FDKaacEncAllowMoreHoles([]*QCOutChannel{&amhQC}, []*PsyOutChannel{&amhPsy}, nil, &amhTools, &amhState, &amhFlags, 1, 70, 100)
+		}},
+		{"nil allow-more-holes tools", func() {
+			var amhPsy PsyOutChannel
+			var amhQC QCOutChannel
+			var amhPE PEData
+			var amhTools ToolsInfo
+			var amhState ATSElement
+			var amhFlags [2][maxGroupedSFB]uint8
+			fillAllowMoreHolesEnergyCase(&amhPsy, &amhQC, &amhPE, &amhTools, &amhState, &amhFlags)
+			FDKaacEncAllowMoreHoles([]*QCOutChannel{&amhQC}, []*PsyOutChannel{&amhPsy}, &amhPE, nil, &amhState, &amhFlags, 1, 70, 100)
+		}},
+		{"nil allow-more-holes state", func() {
+			var amhPsy PsyOutChannel
+			var amhQC QCOutChannel
+			var amhPE PEData
+			var amhTools ToolsInfo
+			var amhState ATSElement
+			var amhFlags [2][maxGroupedSFB]uint8
+			fillAllowMoreHolesEnergyCase(&amhPsy, &amhQC, &amhPE, &amhTools, &amhState, &amhFlags)
+			FDKaacEncAllowMoreHoles([]*QCOutChannel{&amhQC}, []*PsyOutChannel{&amhPsy}, &amhPE, &amhTools, nil, &amhFlags, 1, 70, 100)
+		}},
+		{"nil allow-more-holes flags", func() {
+			var amhPsy PsyOutChannel
+			var amhQC QCOutChannel
+			var amhPE PEData
+			var amhTools ToolsInfo
+			var amhState ATSElement
+			var amhFlags [2][maxGroupedSFB]uint8
+			fillAllowMoreHolesEnergyCase(&amhPsy, &amhQC, &amhPE, &amhTools, &amhState, &amhFlags)
+			FDKaacEncAllowMoreHoles([]*QCOutChannel{&amhQC}, []*PsyOutChannel{&amhPsy}, &amhPE, &amhTools, &amhState, nil, 1, 70, 100)
+		}},
+		{"negative allow-more-holes current PE", func() {
+			var amhPsy PsyOutChannel
+			var amhQC QCOutChannel
+			var amhPE PEData
+			var amhTools ToolsInfo
+			var amhState ATSElement
+			var amhFlags [2][maxGroupedSFB]uint8
+			fillAllowMoreHolesEnergyCase(&amhPsy, &amhQC, &amhPE, &amhTools, &amhState, &amhFlags)
+			FDKaacEncAllowMoreHoles([]*QCOutChannel{&amhQC}, []*PsyOutChannel{&amhPsy}, &amhPE, &amhTools, &amhState, &amhFlags, 1, 70, -1)
+		}},
+		{"bad allow-more-holes start band", func() {
+			var amhPsy PsyOutChannel
+			var amhQC QCOutChannel
+			var amhPE PEData
+			var amhTools ToolsInfo
+			var amhState ATSElement
+			var amhFlags [2][maxGroupedSFB]uint8
+			fillAllowMoreHolesEnergyCase(&amhPsy, &amhQC, &amhPE, &amhTools, &amhState, &amhFlags)
+			amhState.AHParam.StartSfbL = -1
+			FDKaacEncAllowMoreHoles([]*QCOutChannel{&amhQC}, []*PsyOutChannel{&amhPsy}, &amhPE, &amhTools, &amhState, &amhFlags, 1, 70, 100)
+		}},
+		{"negative allow-more-holes band PE", func() {
+			var amhPsy PsyOutChannel
+			var amhQC QCOutChannel
+			var amhPE PEData
+			var amhTools ToolsInfo
+			var amhState ATSElement
+			var amhFlags [2][maxGroupedSFB]uint8
+			fillAllowMoreHolesEnergyCase(&amhPsy, &amhQC, &amhPE, &amhTools, &amhState, &amhFlags)
+			amhPE.PEChannelData[0].SfbPe[3] = -1
+			FDKaacEncAllowMoreHoles([]*QCOutChannel{&amhQC}, []*PsyOutChannel{&amhPsy}, &amhPE, &amhTools, &amhState, &amhFlags, 1, 70, 100)
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() {
@@ -996,6 +1141,27 @@ func TestFDKaacEncReduceMinSnrAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("reduce-min-SNR allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncAllowMoreHolesAllocs(t *testing.T) {
+	var psyStorage PsyOutChannel
+	var qcStorage QCOutChannel
+	var peData PEData
+	var tools ToolsInfo
+	var state ATSElement
+	var ahFlag [2][maxGroupedSFB]uint8
+	psy := [1]*PsyOutChannel{&psyStorage}
+	qc := [1]*QCOutChannel{&qcStorage}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		fillAllowMoreHolesEnergyCase(&psyStorage, &qcStorage, &peData, &tools, &state, &ahFlag)
+		FDKaacEncAllowMoreHoles(qc[:], psy[:], &peData, &tools, &state, &ahFlag, 1, 70, 100)
+		adjThrSink = qcStorage.SfbThresholdLdData[3] + FixpDBL(ahFlag[0][3]) + peData.PEChannelData[0].SfbPe[3]
+		adjThrHashSink = hashFixpDBL(qcStorage.SfbThresholdLdData[:8])
+	})
+	if allocs != 0 {
+		t.Fatalf("allow-more-holes allocations = %v, want 0", allocs)
 	}
 }
 
@@ -1334,6 +1500,111 @@ func fillReduceMinSnrCase(
 	copy(qc.SfbWeightedEnergyLdData[:], weighted[:])
 	copy(qc.SfbMinSnrLdData[:], minSnr[:])
 	copy(peData.PEChannelData[0].SfbNLines[:], nLines[:])
+	copy(peData.PEChannelData[0].SfbPe[:], pe[:])
+	copy(ahFlag[0][:], flags[:])
+}
+
+func fillAllowMoreHolesMSCase(
+	leftPsy *PsyOutChannel,
+	rightPsy *PsyOutChannel,
+	leftQC *QCOutChannel,
+	rightQC *QCOutChannel,
+	peData *PEData,
+	tools *ToolsInfo,
+	state *ATSElement,
+	ahFlag *[2][maxGroupedSFB]uint8,
+) {
+	*leftPsy = PsyOutChannel{
+		SfbCnt:             4,
+		SfbPerGroup:        4,
+		MaxSfbPerGroup:     3,
+		LastWindowSequence: LongWindow,
+	}
+	*rightPsy = *leftPsy
+	*leftQC = QCOutChannel{}
+	*rightQC = QCOutChannel{}
+	*peData = PEData{}
+	*tools = ToolsInfo{}
+	*state = ATSElement{AHParam: AHParam{StartSfbL: 1, StartSfbS: 1}}
+	*ahFlag = [2][maxGroupedSFB]uint8{}
+	for i := 0; i <= 4; i++ {
+		leftPsy.SfbOffsets[i] = i
+		rightPsy.SfbOffsets[i] = i
+	}
+
+	leftThreshold := [...]FixpDBL{-520000000, -510000000, -500000000, -490000000}
+	rightThreshold := [...]FixpDBL{-530000000, -520000000, -510000000, -500000000}
+	leftWeighted := [...]FixpDBL{-260000000, -240000000, -200000000, -220000000}
+	rightWeighted := [...]FixpDBL{-300000000, -350000000, -400000000, -450000000}
+	minSnr := [...]FixpDBL{-90000000, -90000000, -90000000, -90000000}
+	leftPE := [...]FixpDBL{
+		10 << peConstPartShift,
+		20 << peConstPartShift,
+		30 << peConstPartShift,
+		40 << peConstPartShift,
+	}
+	rightPE := [...]FixpDBL{
+		15 << peConstPartShift,
+		25 << peConstPartShift,
+		60 << peConstPartShift,
+		35 << peConstPartShift,
+	}
+	flags := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleActive}
+	copy(leftQC.SfbThresholdLdData[:], leftThreshold[:])
+	copy(rightQC.SfbThresholdLdData[:], rightThreshold[:])
+	copy(leftQC.SfbWeightedEnergyLdData[:], leftWeighted[:])
+	copy(rightQC.SfbWeightedEnergyLdData[:], rightWeighted[:])
+	copy(leftQC.SfbMinSnrLdData[:], minSnr[:])
+	copy(rightQC.SfbMinSnrLdData[:], minSnr[:])
+	copy(peData.PEChannelData[0].SfbPe[:], leftPE[:])
+	copy(peData.PEChannelData[1].SfbPe[:], rightPE[:])
+	copy(tools.MsMask[:], []int{1, 1, 1, 0})
+	copy(ahFlag[0][:], flags[:])
+	copy(ahFlag[1][:], flags[:])
+}
+
+func fillAllowMoreHolesEnergyCase(
+	psy *PsyOutChannel,
+	qc *QCOutChannel,
+	peData *PEData,
+	tools *ToolsInfo,
+	state *ATSElement,
+	ahFlag *[2][maxGroupedSFB]uint8,
+) {
+	*psy = PsyOutChannel{
+		SfbCnt:             8,
+		SfbPerGroup:        4,
+		MaxSfbPerGroup:     4,
+		LastWindowSequence: LongWindow,
+	}
+	*qc = QCOutChannel{}
+	*peData = PEData{}
+	*tools = ToolsInfo{}
+	*state = ATSElement{AHParam: AHParam{StartSfbL: 1, StartSfbS: 1}}
+	*ahFlag = [2][maxGroupedSFB]uint8{}
+	for i := 0; i <= 8; i++ {
+		psy.SfbOffsets[i] = i
+	}
+
+	threshold := [...]FixpDBL{-520000000, -500000000, -510000000, -530000000, -500000000, -505000000, -490000000, -540000000}
+	weighted := [...]FixpDBL{-300000000, -250000000, -280000000, -330000000, -260000000, -240000000, -200000000, -330000000}
+	energyLd := [...]FixpDBL{-100000000, -160000000, -120000000, -800000000, -180000000, -140000000, -130000000, -170000000}
+	energy := [...]FixpDBL{120000000, 110000000, 100000000, 90000000, 80000000, 70000000, 60000000, 50000000}
+	pe := [...]FixpDBL{
+		11 << peConstPartShift,
+		22 << peConstPartShift,
+		80 << peConstPartShift,
+		40 << peConstPartShift,
+		15 << peConstPartShift,
+		25 << peConstPartShift,
+		35 << peConstPartShift,
+		70 << peConstPartShift,
+	}
+	flags := [...]uint8{AvoidHoleInactive, AvoidHoleInactive, AvoidHoleNone, AvoidHoleInactive, AvoidHoleInactive, AvoidHoleActive, AvoidHoleInactive, AvoidHoleInactive}
+	copy(qc.SfbThresholdLdData[:], threshold[:])
+	copy(qc.SfbWeightedEnergyLdData[:], weighted[:])
+	copy(qc.SfbEnergyLdData[:], energyLd[:])
+	copy(qc.SfbEnergy[:], energy[:])
 	copy(peData.PEChannelData[0].SfbPe[:], pe[:])
 	copy(ahFlag[0][:], flags[:])
 }

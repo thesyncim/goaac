@@ -94,6 +94,10 @@ const (
 	correctThreshMaxLd   FixpDBL = 0x28000000
 
 	reduceMinSnrMaxNLines = int(MaxValDBL>>uint(peConstPartShift-1)) / 3
+
+	allowMoreHolesNumEnergyLevels = 8
+	allowMoreHolesThrOffset       = FixpDBL(0x02000000)
+	allowMoreHolesMsMargin        = FixpDBL(-44356546)
 )
 
 var adjThrInvInt = [8]FixpDBL{
@@ -104,6 +108,11 @@ var adjThrInvInt = [8]FixpDBL{
 var adjThrInvSqrt4 = [8]FixpDBL{
 	MaxValDBL, MaxValDBL, 0x6ba27e65, 0x61424bb5,
 	0x5a827999, 0x55994845, 0x51c8e33c, 0x4eb160d1,
+}
+
+var allowMoreHolesEnergyLevel = [allowMoreHolesNumEnergyLevels]FixpDBL{
+	0x08888890, 0x1999999a, 0x2aaaaab9, 0x3bbbbbc3,
+	0x4cccccf8, 0x5dddde02, 0x6eeeeef6, 0,
 }
 
 type BitresMode int
@@ -842,6 +851,166 @@ func FDKaacEncReduceMinSnr(
 	*redPeGlobal = newGlobalPe
 }
 
+func FDKaacEncAllowMoreHoles(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	peData *PEData,
+	toolsInfo *ToolsInfo,
+	adjThrStateElement *ATSElement,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	nChannels int,
+	desiredPe int,
+	currentPe int,
+) {
+	checkAllowMoreHolesInputs(qcOutChannel, psyOutChannel, peData, toolsInfo, adjThrStateElement, ahFlag, nChannels, desiredPe, currentPe)
+
+	actPe := currentPe
+	if actPe <= desiredPe {
+		return
+	}
+
+	for ch := 0; ch < nChannels; ch++ {
+		psyCh := psyOutChannel[ch]
+		peChanData := &peData.PEChannelData[ch]
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := psyCh.MaxSfbPerGroup; sfb < psyCh.SfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				if peChanData.SfbPe[idx] < 0 {
+					panic("fdkaac: invalid allow-more-holes PE band")
+				}
+				peChanData.SfbPe[idx] = 0
+			}
+		}
+	}
+
+	if nChannels == 2 && psyOutChannel[0].LastWindowSequence == psyOutChannel[1].LastWindowSequence {
+		for sfb := psyOutChannel[0].MaxSfbPerGroup - 1; sfb >= 0; sfb-- {
+			for sfbGrp := 0; sfbGrp < psyOutChannel[0].SfbCnt; sfbGrp += psyOutChannel[0].SfbPerGroup {
+				idx := sfbGrp + sfb
+				if toolsInfo.MsMask[idx] == 0 {
+					continue
+				}
+
+				energyLdL := qcOutChannel[0].SfbWeightedEnergyLdData[idx]
+				energyLdR := qcOutChannel[1].SfbWeightedEnergyLdData[idx]
+
+				if ahFlag[1][idx] != AvoidHoleNone &&
+					((allowMoreHolesMsMargin>>1)+(qcOutChannel[0].SfbMinSnrLdData[idx]>>1)) > ((energyLdR>>1)-(energyLdL>>1)) {
+					checkAllowMoreHolesPEBand(peData.PEChannelData[1].SfbPe[idx])
+					ahFlag[1][idx] = AvoidHoleNone
+					qcOutChannel[1].SfbThresholdLdData[idx] = allowMoreHolesThrOffset + energyLdR
+					actPe -= int(peData.PEChannelData[1].SfbPe[idx] >> peConstPartShift)
+				} else if ahFlag[0][idx] != AvoidHoleNone &&
+					((allowMoreHolesMsMargin>>1)+(qcOutChannel[1].SfbMinSnrLdData[idx]>>1)) > ((energyLdL>>1)-(energyLdR>>1)) {
+					checkAllowMoreHolesPEBand(peData.PEChannelData[0].SfbPe[idx])
+					ahFlag[0][idx] = AvoidHoleNone
+					qcOutChannel[0].SfbThresholdLdData[idx] = allowMoreHolesThrOffset + energyLdL
+					actPe -= int(peData.PEChannelData[0].SfbPe[idx] >> peConstPartShift)
+				}
+			}
+			if actPe <= desiredPe {
+				return
+			}
+		}
+	}
+
+	if actPe <= desiredPe {
+		return
+	}
+
+	maxSfbSlots := 0
+	for ch := 0; ch < nChannels; ch++ {
+		psyCh := psyOutChannel[ch]
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			maxSfbSlots += psyCh.MaxSfbPerGroup
+		}
+	}
+	avgEnE := DfractBits - FixNormZD(FixpDBL(maxInt(0, maxSfbSlots-1)))
+
+	var startSfb [2]int
+	var sfbCnt [2]int
+	var sfbPerGroup [2]int
+	var maxSfbPerGroup [2]int
+	maxSfb := 0
+	minSfb := maxGroupedSFB
+	avgEn := FixpDBL(0)
+	minEnLD64 := FixpDBL(0)
+	ahCnt := 0
+
+	for ch := 0; ch < nChannels; ch++ {
+		qcCh := qcOutChannel[ch]
+		psyCh := psyOutChannel[ch]
+		maxSfbPerGroup[ch] = psyCh.MaxSfbPerGroup
+		sfbCnt[ch] = psyCh.SfbCnt
+		sfbPerGroup[ch] = psyCh.SfbPerGroup
+		maxSfb = maxInt(maxSfb, psyCh.MaxSfbPerGroup)
+		if psyCh.LastWindowSequence != ShortWindow {
+			startSfb[ch] = adjThrStateElement.AHParam.StartSfbL
+		} else {
+			startSfb[ch] = adjThrStateElement.AHParam.StartSfbS
+		}
+		minSfb = minInt(minSfb, startSfb[ch])
+
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := startSfb[ch]; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				if ahFlag[ch][idx] != AvoidHoleNone &&
+					qcCh.SfbWeightedEnergyLdData[idx] > qcCh.SfbThresholdLdData[idx] {
+					minEnLD64 = minFixpDBL(minEnLD64, qcCh.SfbEnergyLdData[idx])
+					avgEn += qcCh.SfbEnergy[idx] >> uint(avgEnE)
+					ahCnt++
+				}
+			}
+		}
+	}
+
+	avgEnLD64 := FixpDBL(0)
+	if avgEn != 0 && ahCnt != 0 {
+		avgEnLD64 = CalcLdData(avgEn) +
+			FixpDBL(avgEnE<<(DfractBits-1-ldDataShift)) -
+			CalcLdInt(ahCnt)
+	}
+
+	var enLD64 [allowMoreHolesNumEnergyLevels]FixpDBL
+	for i := 0; i < allowMoreHolesNumEnergyLevels-1; i++ {
+		enLD64[i] = minEnLD64 + FMultDD(avgEnLD64-minEnLD64, allowMoreHolesEnergyLevel[i])
+	}
+	enLD64[allowMoreHolesNumEnergyLevels-1] = minEnLD64 + (avgEnLD64 - minEnLD64)
+
+	done := false
+	enIdx := 0
+	sfb := maxSfb - 1
+	for !done {
+		for ch := 0; ch < nChannels; ch++ {
+			qcCh := qcOutChannel[ch]
+			if sfb >= startSfb[ch] && sfb < maxSfbPerGroup[ch] {
+				for sfbGrp := 0; sfbGrp < sfbCnt[ch]; sfbGrp += sfbPerGroup[ch] {
+					idx := sfbGrp + sfb
+					if ahFlag[ch][idx] != AvoidHoleNone &&
+						qcCh.SfbEnergyLdData[idx] < enLD64[enIdx] {
+						checkAllowMoreHolesPEBand(peData.PEChannelData[ch].SfbPe[idx])
+						ahFlag[ch][idx] = AvoidHoleNone
+						qcCh.SfbThresholdLdData[idx] = allowMoreHolesThrOffset + qcCh.SfbWeightedEnergyLdData[idx]
+						actPe -= int(peData.PEChannelData[ch].SfbPe[idx] >> peConstPartShift)
+					}
+					if actPe <= desiredPe {
+						return
+					}
+				}
+			}
+		}
+
+		sfb--
+		if sfb < minSfb {
+			sfb = maxSfb
+			enIdx++
+			if enIdx >= allowMoreHolesNumEnergyLevels {
+				done = true
+			}
+		}
+	}
+}
+
 func FDKaacEncBitresCalcBitFac(
 	bitresBits int,
 	maxBitresBits int,
@@ -1386,6 +1555,58 @@ func checkReduceMinSnrInputs(
 	}
 	if desiredPe < 0 || *redPeGlobal < 0 {
 		panic("fdkaac: invalid reduce-min-SNR PE target")
+	}
+}
+
+func checkAllowMoreHolesInputs(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	peData *PEData,
+	toolsInfo *ToolsInfo,
+	adjThrStateElement *ATSElement,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	nChannels int,
+	desiredPe int,
+	currentPe int,
+) {
+	checkThresholdAdjustmentInputs(qcOutChannel, psyOutChannel, nChannels)
+	if peData == nil {
+		panic("fdkaac: nil allow-more-holes PE data")
+	}
+	if toolsInfo == nil {
+		panic("fdkaac: nil allow-more-holes tools info")
+	}
+	if adjThrStateElement == nil {
+		panic("fdkaac: nil allow-more-holes state")
+	}
+	if ahFlag == nil {
+		panic("fdkaac: nil allow-more-holes avoid-hole flags")
+	}
+	if desiredPe < 0 || currentPe < 0 {
+		panic("fdkaac: invalid allow-more-holes PE target")
+	}
+	for ch := 0; ch < nChannels; ch++ {
+		psyCh := psyOutChannel[ch]
+		startSfb := adjThrStateElement.AHParam.StartSfbL
+		if psyCh.LastWindowSequence == ShortWindow {
+			startSfb = adjThrStateElement.AHParam.StartSfbS
+		}
+		if startSfb < 0 || startSfb > psyCh.SfbPerGroup {
+			panic("fdkaac: invalid allow-more-holes start band")
+		}
+	}
+	if nChannels == 2 {
+		left := psyOutChannel[0]
+		right := psyOutChannel[1]
+		if left.SfbCnt != right.SfbCnt || left.SfbPerGroup != right.SfbPerGroup || left.MaxSfbPerGroup != right.MaxSfbPerGroup {
+			panic("fdkaac: mismatched allow-more-holes stereo bands")
+		}
+	}
+}
+
+func checkAllowMoreHolesPEBand(pe FixpDBL) {
+	if pe < 0 {
+		panic("fdkaac: invalid allow-more-holes PE band")
 	}
 }
 
