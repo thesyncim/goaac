@@ -304,6 +304,12 @@ post-adjustment threshold unweighting, malformed mapping/control rejection, the
 explicit unsupported guard for multi-element global inter-CBR reduction, no-cgo
 compilation, and zero steady-state allocation.
 
+The FDK AAC-LC QC prepare wrapper subset is covered with a source-shaped SCE
+vector for `FDKaacEnc_QCMainPrepare`. Tests compare the wrapper against the
+direct form-factor, PE-calculation, and static channel-element dry-run sequence,
+verify the nil-QC static side-info bit count, malformed controls, no-cgo
+compilation, and zero steady-state allocation.
+
 The FDK AAC-LC bit-reservoir PE distribution subset is covered with
 source-derived vectors for `FDKaacEnc_bitresCalcBitFac`,
 `FDKaacEnc_DistributeBits`, and the high/low bit-reservoir PE-correction

@@ -293,6 +293,22 @@ func TestFDKaacEncChannelElementWriteSCEVector(t *testing.T) {
 	})
 }
 
+func TestFDKaacEncChannelElementWriteStaticDryRunVector(t *testing.T) {
+	_, psy := buildLongChannelElementCase(t)
+	element := ElementInfo{ElType: idSCE, InstanceTag: 2}
+	psyElement := PsyOutElement{}
+	bits, errCode := FDKaacEncChannelElementWrite(
+		nil, &element, nil, &psyElement, []*PsyOutChannel{psy},
+		0, aotAACLC, -1, 0,
+	)
+	if errCode != AACEncOK {
+		t.Fatalf("static dry-run error = %#x, want OK", errCode)
+	}
+	if bits != 29 {
+		t.Fatalf("static dry-run bits = %d, want 29", bits)
+	}
+}
+
 func TestFDKaacEncChannelElementWriteCPECommonWindowVector(t *testing.T) {
 	qc0, psy0 := buildLongChannelElementCase(t)
 	qc1, psy1 := buildLongChannelElementCase(t)
@@ -538,6 +554,11 @@ func TestFDKaacEncBitencRejectsInvalid(t *testing.T) {
 			qc0, psy0 := buildLongChannelElementCase(t)
 			element := ElementInfo{ElType: idCPE, InstanceTag: 0}
 			FDKaacEncChannelElementWrite(&bs, &element, []*QCOutChannel{qc0}, &PsyOutElement{}, []*PsyOutChannel{psy0}, 0, aotAACLC, -1, 0)
+		}},
+		{"nil QC with bitstream", func() {
+			_, psy := buildLongChannelElementCase(t)
+			element := ElementInfo{ElType: idSCE, InstanceTag: 0}
+			FDKaacEncChannelElementWrite(&bs, &element, nil, &PsyOutElement{}, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 0)
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
