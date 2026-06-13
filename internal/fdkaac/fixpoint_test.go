@@ -190,6 +190,29 @@ func TestFixPow2DVectors(t *testing.T) {
 	}
 }
 
+func TestFMultIVectors(t *testing.T) {
+	input := [...]struct {
+		a FixpDBL
+		b int
+	}{
+		{a: 0x4799051f, b: 0},
+		{a: 0x4799051f, b: 1},
+		{a: 0x4799051f, b: 2},
+		{a: 0x4799051f, b: 3},
+		{a: 0x4799051f, b: 64},
+		{a: 0x40000000, b: 5},
+		{a: -0x40000000, b: 5},
+		{a: MaxValDBL, b: 3},
+	}
+	want := [...]int{0, 1, 1, 2, 36, 3, -2, 3}
+
+	var got [len(input)]int
+	for i, tt := range input {
+		got[i] = FMultI(tt.a, tt.b)
+	}
+	assertIntSlice(t, "FMultI", got[:], want[:], 0x94a38313243b8b4e)
+}
+
 func TestFixNormVectors(t *testing.T) {
 	dbl := []struct {
 		in                   FixpDBL

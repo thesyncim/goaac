@@ -104,6 +104,23 @@ func TestCalcInvLdDataVectors(t *testing.T) {
 	assertFixpDBLSlice(t, "CalcInvLdData", got[:], want[:], 0x335c2d95e0481cab)
 }
 
+func TestCalcLdIntVectors(t *testing.T) {
+	if len(ldIntCoeff) != 193 {
+		t.Fatalf("ldIntCoeff length = %d, want 193", len(ldIntCoeff))
+	}
+	if ldIntCoeff[0] != MinValDBL+1 || ldIntCoeff[192] != 0x0f2b8034 {
+		t.Fatalf("ldIntCoeff edge entries = %d/%d", ldIntCoeff[0], ldIntCoeff[192])
+	}
+
+	input := [...]int{0, 1, 2, 3, 4, 8, 64, 120, 192, 193}
+	want := [...]FixpDBL{0, 0, 33554432, 53182516, 67108864, 100663296, 201326592, 231756791, 254509108, 0}
+	var got [len(input)]FixpDBL
+	for i, v := range input {
+		got[i] = CalcLdInt(v)
+	}
+	assertFixpDBLSlice(t, "CalcLdInt", got[:], want[:], 0x5548a115d7d858d0)
+}
+
 func TestLdDataVectorRejectsInvalid(t *testing.T) {
 	var src [2]FixpDBL
 	var dst [2]FixpDBL

@@ -167,6 +167,37 @@ func FMultBitExactDS(a FixpDBL, b FixpSGL) FixpDBL {
 	return FixMulBitExactDS(a, b)
 }
 
+func FMultI(a FixpDBL, b int) int {
+	m, mE := fMultNorm(a, FixpDBL(b))
+
+	var mi FixpDBL
+	if mE < 0 {
+		if mE > -DfractBits {
+			m >>= uint((-mE) - 1)
+			mi = (m + 1) >> 1
+		}
+	} else {
+		mi = ScaleValueSaturateDBL(m, mE)
+	}
+	return int(mi)
+}
+
+func fMultNorm(f1, f2 FixpDBL) (FixpDBL, int) {
+	if f1 == 0 || f2 == 0 {
+		return 0, 0
+	}
+
+	normF1 := CountLeadingBits(f1)
+	f1 <<= uint(normF1)
+	normF2 := CountLeadingBits(f2)
+	f2 <<= uint(normF2)
+
+	if f1 == MinValDBL && f2 == MinValDBL {
+		return -(MinValDBL >> 1), -(normF1 + normF2 - 1)
+	}
+	return FMultDD(f1, f2), -(normF1 + normF2)
+}
+
 func FixNormZD(val FixpDBL) int {
 	return bits.LeadingZeros32(uint32(val))
 }

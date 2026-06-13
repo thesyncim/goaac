@@ -166,6 +166,12 @@ previous/next relevant-band linking, skipped `FDK_INT_MIN` bands, lazy
 `sfbConstPePart` cache-fill mutation, invalid transitions, and zero
 steady-state allocation.
 
+The FDK AAC-LC line-PE subset is covered with source-derived vectors for
+`CalcLdInt`, `fMultI`, `FDKaacEnc_prepareSfbPe`, and `FDKaacEnc_calcSfbPe`.
+Tests verify active-line preparation, high/low PE branches, inactive and
+intensity-book transitions, malformed controls, and zero steady-state
+allocation.
+
 ## Regenerate
 
 ```sh
