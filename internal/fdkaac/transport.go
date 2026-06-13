@@ -32,6 +32,14 @@ const (
 	Mode7_1FrontCenter  ChannelMode = 34
 )
 
+type ChannelOrder int
+
+const (
+	ChannelOrderMPEG ChannelOrder = 0
+	ChannelOrderWAV  ChannelOrder = 1
+	ChannelOrderWG4  ChannelOrder = 2
+)
+
 const (
 	ConfigFlagMPEGID     uint32 = 0x00100000
 	ConfigFlagProtection uint32 = 0x00400000
@@ -76,13 +84,11 @@ func AACLCConfig(sampleRate, channels int) (CoderConfig, error) {
 }
 
 func ChannelModeFromChannels(channels int) ChannelMode {
-	if channels <= 8 && channels > 0 {
-		if channels == 8 {
-			return Mode1_2_2_2_1
-		}
-		return ChannelMode(channels)
+	mode := ModeUnknown
+	if FDKaacEncDetermineEncoderMode(&mode, channels) != AACEncOK {
+		return ModeInvalid
 	}
-	return ModeInvalid
+	return mode
 }
 
 func GetChannelConfig(channelMode ChannelMode, channelConfigZero bool) int {

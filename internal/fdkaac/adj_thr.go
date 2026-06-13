@@ -190,8 +190,11 @@ type AdjThrState struct {
 }
 
 type ChannelMapping struct {
-	NElements int
-	ElInfo    [maxChannelElements]ElementInfo
+	EncMode      ChannelMode
+	NChannels    int
+	NChannelsEff int
+	NElements    int
+	ElInfo       [maxChannelElements]ElementInfo
 }
 
 type QCOutElement struct {

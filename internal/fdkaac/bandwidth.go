@@ -336,6 +336,9 @@ func fdkaacEncBandwidthTable(frameLength int, sampleRate int) []bandwidthTab {
 }
 
 func fdkaacEncEffectiveChannels(cm *ChannelMapping, encoderMode ChannelMode) int {
+	if cm.NChannelsEff > 0 {
+		return cm.NChannelsEff
+	}
 	nChannelsEff := 0
 	for i := 0; i < cm.NElements; i++ {
 		elInfo := cm.ElInfo[i]
