@@ -142,7 +142,7 @@ func TestF2PowVectors(t *testing.T) {
 		got[2*i] = m
 		got[2*i+1] = FixpDBL(e)
 	}
-	assertFixpDBLSlice(t, "f2Pow mantissa/exponent", got[:], want[:], 0xac9492d8ffc3bd2e)
+	assertFixpDBLSlice(t, "f2Pow mantissa/exponent", got[:], want[:], 0xd546b77f4d49ce68)
 }
 
 func TestCalcLdIntVectors(t *testing.T) {

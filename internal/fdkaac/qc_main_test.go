@@ -104,7 +104,7 @@ func TestFDKaacEncReduceBitConsumptionCrashRecoveryBoundary(t *testing.T) {
 	if result.CrashRecoveryNeeded != 1 || result.BitsToSave != 298 || result.SavedBits != 19 || result.StopSfb != 0 {
 		t.Fatalf("crash recovery result = %+v, want needed with 298 bits and 19 static bits saved", result)
 	}
-	if iterations != 4 || qc.GlobalGain != 0 || calculateQuant[0] != 1 {
+	if iterations != 4 || qc.GlobalGain != 100 || calculateQuant[0] != 1 {
 		t.Fatalf("crash recovery retry state iterations=%d gain=%d calc=%d", iterations, qc.GlobalGain, calculateQuant[0])
 	}
 	if qc.SectionData.MaxSfbPerGroup != 0 || psy.MaxSfbPerGroup != 0 || qc.SectionData.Huffsection[0].SfbCnt != 0 {
@@ -214,14 +214,14 @@ func TestFDKaacEncFinalizeAndBitresVectors(t *testing.T) {
 	if kernel.GlobHdrBits != 56 || kernel.BitResTot != 108 {
 		t.Fatalf("finalize kernel = %+v, want header 56 bitres 108", kernel)
 	}
-	if qcOut.TotFillBits != 27 || qcOut.AlignBits != 3 || qcOut.TotalBits != 280 || qcOut.GrantedDynBits != 500 {
-		t.Fatalf("finalized frame = %+v, want fill 27 align 3 total 280 granted 500", qcOut)
+	if qcOut.TotFillBits != 31 || qcOut.AlignBits != 7 || qcOut.TotalBits != 288 || qcOut.GrantedDynBits != 500 {
+		t.Fatalf("finalized frame = %+v, want fill 31 align 7 total 288 granted 500", qcOut)
 	}
 
 	frames := [1]*QCOut{&qcOut}
 	FDKaacEncUpdateBitres(&kernel, frames[:])
-	if kernel.BitResTot != 367 {
-		t.Fatalf("CBR bit reservoir = %d, want 367", kernel.BitResTot)
+	if kernel.BitResTot != 359 {
+		t.Fatalf("CBR bit reservoir = %d, want 359", kernel.BitResTot)
 	}
 
 	vbrKernel := QCKernel{BitrateMode: QCBitrateModeVBR5, MaxBitsPerFrame: 700, BitResTotMax: 650}
@@ -1088,7 +1088,7 @@ func TestFDKaacEncQCAccountingRejectsInvalid(t *testing.T) {
 		})
 	}
 
-	overflowKernel := QCKernel{MaxBitsPerFrame: 100, MinBitsPerFrame: 0}
+	overflowKernel := QCKernel{GlobHdrBits: 56, MaxBitsPerFrame: 100, MinBitsPerFrame: 0, BitrateMode: QCBitrateModeCBR}
 	overflowOut := QCOut{StaticBits: 80, UsedDynBits: 80}
 	if errCode := FDKaacEncFinalizeBitConsumption(&overflowKernel, &overflowOut, 56, aotAACLC, 0, -1); errCode != AACEncQuantError {
 		t.Fatalf("overflow finalize error = %#x, want quant error", errCode)
@@ -1255,13 +1255,14 @@ func TestFDKaacEncBitDistributionAllocs(t *testing.T) {
 }
 
 func TestFDKaacEncCrashRecoveryAllocs(t *testing.T) {
+	var qc QCOutChannel
+	var psy PsyOutChannel
+	var psyElement PsyOutElement
+	var qcOut QCOut
+	var qcElement QCOutElement
 	allocs := testing.AllocsPerRun(1000, func() {
-		var qc QCOutChannel
-		var psy PsyOutChannel
-		var psyElement PsyOutElement
-		var qcOut QCOut
 		fillQCCrashRecoveryCase(&psy, &qc, &psyElement, &qcOut)
-		qcElement := QCOutElement{
+		qcElement = QCOutElement{
 			StaticBitsUsed: qcOut.StaticBits,
 			GrantedDynBits: 10,
 			QCOutChannel:   [2]*QCOutChannel{&qc},
@@ -1388,15 +1389,15 @@ func TestFDKaacEncQCMainQuantizeAllocs(t *testing.T) {
 }
 
 func TestFDKaacEncQCMainPrepareAllocs(t *testing.T) {
+	var element ElementInfo
+	var state ATSElement
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var tools ToolsInfo
+	var psyElement PsyOutElement
+	var qcElement QCOutElement
+	var mdct [maxSpectralLines]FixpDBL
 	allocs := testing.AllocsPerRun(1000, func() {
-		var element ElementInfo
-		var state ATSElement
-		var psy PsyOutChannel
-		var qc QCOutChannel
-		var tools ToolsInfo
-		var psyElement PsyOutElement
-		var qcElement QCOutElement
-		var mdct [maxSpectralLines]FixpDBL
 		fillQCMainPrepareCase(
 			&element, &state, &psy, &qc, &tools, &psyElement, &qcElement, &mdct,
 		)

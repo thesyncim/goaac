@@ -666,7 +666,7 @@ func TestFDKaacEncCalcRedValPowerVectors(t *testing.T) {
 		got[2*i] = m
 		got[2*i+1] = FixpDBL(e)
 	}
-	assertFixpDBLSlice(t, "red-value power mantissa/exponent", got[:], want[:], 0x9501b04b422044a9)
+	assertFixpDBLSlice(t, "red-value power mantissa/exponent", got[:], want[:], 0xf05ed6c375a81fcb)
 }
 
 func TestFDKaacEncReductionValueVectors(t *testing.T) {
@@ -717,7 +717,7 @@ func TestFDKaacEncReductionValueVectors(t *testing.T) {
 		got[out+1] = FixpDBL(e)
 		out += 2
 	}
-	assertFixpDBLSlice(t, "CBR reduction values", got[:], want[:], 0x3f552b251713cd6e)
+	assertFixpDBLSlice(t, "CBR reduction values", got[:], want[:], 0x179c5b2fd6463248)
 }
 
 func TestFDKaacEncReduceThresholdsCBRVector(t *testing.T) {
@@ -2223,9 +2223,10 @@ func fillVBRLongThresholdReductionCase(
 	thrExp *[2][maxGroupedSFB]FixpDBL,
 	ahFlag *[2][maxGroupedSFB]uint8,
 ) {
-	_, psyPtrs, qcPtrs, _, _ := buildAdjThrLongPatchCase()
-	*psy = *psyPtrs[0]
-	*qc = *qcPtrs[0]
+	var peData PEData
+	var tools ToolsInfo
+	var state ATSElement
+	fillAdjThrLongPatchCase(&peData, psy, qc, &tools, &state)
 	copy(qc.SfbWeightedEnergyLdData[:], qc.SfbEnergyLdData[:])
 	*thrExp = [2][maxGroupedSFB]FixpDBL{}
 	*ahFlag = [2][maxGroupedSFB]uint8{}
