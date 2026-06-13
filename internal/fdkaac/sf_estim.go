@@ -3,6 +3,11 @@ package fdkaac
 const formFacShift = 6
 const asPeFacShift = 7
 const asPeFacLdData = FixpDBL(0x0e000000)
+const peC1 = FixpDBL(0x03000000)
+const peC2 = FixpDBL(0x015269e2)
+const peC3 = FixpDBL(0x47990500)
+const peFac07 = FixpDBL(0x59999980)
+const peFac0375 = FixpDBL(0x30000000)
 
 type QCOutChannel struct {
 	MdctSpectrum        [1024]FixpDBL
@@ -76,6 +81,21 @@ func FDKaacEncCalcSfbRelevantLines(
 			}
 		}
 	}
+}
+
+func FDKaacEncCountSingleScfBits(scf int, scfLeft int, scfRight int) FixpDBL {
+	scfBitsFract := FixpDBL(FDKaacEncBitCountScalefactorDelta(scfLeft-scf) + FDKaacEncBitCountScalefactorDelta(scf-scfRight))
+	return scfBitsFract << (DfractBits - 1 - (2 * asPeFacShift))
+}
+
+func FDKaacEncCalcSingleSpecPe(scf int, sfbConstPePart FixpDBL, nLines FixpDBL) FixpDBL {
+	scfFract := FixpDBL(scf << (DfractBits - 1 - asPeFacShift))
+	ldRatio := sfbConstPePart - FMultDD(peFac0375, scfFract)
+
+	if ldRatio >= peC1 {
+		return FMultDD(peFac07, FMultDD(nLines, ldRatio))
+	}
+	return FMultDD(peFac07, FMultDD(nLines, peC2+FMultDD(peC3, ldRatio)))
 }
 
 func checkFormFactorInputs(sfbFormFactorLdData []FixpDBL, psyOutChan *PsyOutChannel) {

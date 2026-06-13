@@ -6,6 +6,8 @@ var formFactorSink FixpDBL
 var formFactorHashSink uint64
 var relevantLinesSink FixpDBL
 var relevantLinesHashSink uint64
+var scfPeSink FixpDBL
+var scfPeHashSink uint64
 
 func TestFDKaacEncCalcFormFactorLongVectors(t *testing.T) {
 	var qc QCOutChannel
@@ -75,6 +77,48 @@ func TestFDKaacEncCalcSfbRelevantLinesShortVectors(t *testing.T) {
 
 	want := [...]FixpDBL{3388439, 0, 15621102, 0, 17450949, 0, 15006516, 0, 0, 8382327, 0, 0}
 	assertFixpDBLSlice(t, "short relevant lines", lines[:], want[:], 0x17456b49ebcd2b7d)
+}
+
+func TestFDKaacEncCountSingleScfBitsVectors(t *testing.T) {
+	input := [...]struct {
+		scf      int
+		scfLeft  int
+		scfRight int
+	}{
+		{scf: 10, scfLeft: 15, scfRight: 8},
+		{scf: 45, scfLeft: 0, scfRight: 60},
+		{scf: 0, scfLeft: 60, scfRight: -60},
+		{scf: 30, scfLeft: 30, scfRight: 30},
+		{scf: 24, scfLeft: -12, scfRight: 54},
+	}
+	want := [...]FixpDBL{1310720, 3932160, 4980736, 262144, 4063232}
+
+	var got [len(input)]FixpDBL
+	for i, tt := range input {
+		got[i] = FDKaacEncCountSingleScfBits(tt.scf, tt.scfLeft, tt.scfRight)
+	}
+	assertFixpDBLSlice(t, "single scalefactor bits", got[:], want[:], 0xebd971fc74afaf8b)
+}
+
+func TestFDKaacEncCalcSingleSpecPeVectors(t *testing.T) {
+	input := [...]struct {
+		scf            int
+		sfbConstPePart FixpDBL
+		nLines         FixpDBL
+	}{
+		{scf: 2, sfbConstPePart: 0x08000000, nLines: 7252715},
+		{scf: 7, sfbConstPePart: 0x04000000, nLines: 19176032},
+		{scf: 0, sfbConstPePart: 0x01500000, nLines: 15006516},
+		{scf: 12, sfbConstPePart: 0x09000000, nLines: 3388439},
+		{scf: 4, sfbConstPePart: 0x03000000, nLines: 8382327},
+	}
+	want := [...]FixpDBL{287558, 219285, 168736, 83386, 99059}
+
+	var got [len(input)]FixpDBL
+	for i, tt := range input {
+		got[i] = FDKaacEncCalcSingleSpecPe(tt.scf, tt.sfbConstPePart, tt.nLines)
+	}
+	assertFixpDBLSlice(t, "single spec pe", got[:], want[:], 0x7f9608da2bb13e33)
 }
 
 func TestFDKaacEncCalcFormFactorRejectsInvalid(t *testing.T) {
@@ -206,6 +250,31 @@ func TestFDKaacEncCalcSfbRelevantLinesRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncCountSingleScfBitsRejectsInvalid(t *testing.T) {
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{name: "left delta out of range", fn: func() {
+			FDKaacEncCountSingleScfBits(0, 61, 0)
+		}},
+		{name: "right delta out of range", fn: func() {
+			FDKaacEncCountSingleScfBits(0, 0, -61)
+		}},
+	}
+
+	for _, tt := range tests {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		}()
+	}
+}
+
 func TestFDKaacEncCalcFormFactorAllocs(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -237,6 +306,22 @@ func TestFDKaacEncCalcSfbRelevantLinesAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("relevant-lines allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncSingleScfPeAllocs(t *testing.T) {
+	allocs := testing.AllocsPerRun(1000, func() {
+		var got [5]FixpDBL
+		got[0] = FDKaacEncCountSingleScfBits(10, 15, 8)
+		got[1] = FDKaacEncCountSingleScfBits(30, 30, 30)
+		got[2] = FDKaacEncCalcSingleSpecPe(2, 0x08000000, 7252715)
+		got[3] = FDKaacEncCalcSingleSpecPe(7, 0x04000000, 19176032)
+		got[4] = FDKaacEncCalcSingleSpecPe(4, 0x03000000, 8382327)
+		scfPeSink = got[0] + got[1] + got[2] + got[3] + got[4]
+		scfPeHashSink = hashFixpDBL(got[:])
+	})
+	if allocs != 0 {
+		t.Fatalf("single scalefactor/PE allocations = %v, want 0", allocs)
 	}
 }
 

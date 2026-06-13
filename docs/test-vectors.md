@@ -110,6 +110,10 @@ energy/log-data scaling, short-window band energies, and mid/side band energies
 with log-data output enabled. Tests also verify invalid offset/scale/output
 transitions and zero steady-state allocation.
 
+The FDK scalefactor delta bit-count subset is covered with a source-derived
+Huffman length table hash, selected deltas across the legal `[-60, 60]` range,
+invalid delta transitions, and zero steady-state allocation.
+
 The FDK AAC-LC short grouping subset is covered with source-derived grouped
 offset and min-SNR vectors, saturating threshold/energy/MS/spread-energy sums,
 max-SFB scan and zero-spectrum floor checks, spectrum-regroup hashes, invalid
@@ -150,6 +154,11 @@ The FDK AAC-LC relevant-lines subset is covered with source-derived long and
 grouped-short vectors for `FDKaacEnc_calcSfbRelevantLines`, including
 output-clearing behavior, active-band energy/threshold gating, inactive-band
 zeros, malformed offset/data transitions, and zero steady-state allocation.
+
+The FDK AAC-LC single-band PE subset is covered with source-derived vectors for
+`FDKaacEnc_countSingleScfBits` and `FDKaacEnc_calcSingleSpecPe`, including both
+spectral-PE branches, out-of-range delta transitions through the scalefactor
+Huffman length helper, and zero steady-state allocation.
 
 ## Regenerate
 
