@@ -78,6 +78,7 @@ const (
 	AACEncBitresTooHigh           = 0x40a1
 	AACEncInvalidChannelBitrate   = 0x4100
 	AACEncUnsupportedAOT          = 0x3000
+	AACEncUnsupportedFilterbank   = 0x3010
 	AACEncInvalidElementInfoType  = 0x4120
 	AACEncWriteScalError          = 0x41e0
 	AACEncWriteSecError           = 0x4200

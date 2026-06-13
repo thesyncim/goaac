@@ -400,6 +400,13 @@ including TNS/PNS mask handling, init-flag reset and preserve behavior, disabled
 tool controls, unsupported sampling-rate transitions, no-cgo compilation, and
 zero steady-state allocation.
 
+The FDK AAC-LC psychoacoustic main runtime is covered with source-shaped
+`FDKaacEnc_psyMain` vectors. Tests verify stereo long-window analysis, a real
+block-switch attack transition into `START_WINDOW`, MDCT output ownership
+through caller-provided spectrum buffers, input-history rotation, unsupported
+filterbank controls, malformed state checks, no-cgo compilation, and zero
+steady-state allocation through caller-owned scratch.
+
 The FDK AAC-LC QC lifecycle subset is covered with source-shaped vectors for
 `FDKaacEnc_QCNew`, `FDKaacEnc_QCOutNew`, and `FDKaacEnc_QCOutInit`. Tests verify
 fresh fixed-state pointer linking, 5.1 WAV channel-to-element traversal,
