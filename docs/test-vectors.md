@@ -160,6 +160,12 @@ The FDK AAC-LC single-band PE subset is covered with source-derived vectors for
 spectral-PE branches, out-of-range delta transitions through the scalefactor
 Huffman length helper, and zero steady-state allocation.
 
+The FDK AAC-LC multi-band PE diff subset is covered with source-derived vectors
+for `FDKaacEnc_countScfBitsDiff` and `FDKaacEnc_calcSpecPeDiff`, including
+previous/next relevant-band linking, skipped `FDK_INT_MIN` bands, lazy
+`sfbConstPePart` cache-fill mutation, invalid transitions, and zero
+steady-state allocation.
+
 ## Regenerate
 
 ```sh

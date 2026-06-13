@@ -121,6 +121,66 @@ func TestFDKaacEncCalcSingleSpecPeVectors(t *testing.T) {
 	assertFixpDBLSlice(t, "single spec pe", got[:], want[:], 0x7f9608da2bb13e33)
 }
 
+func TestFDKaacEncCountScfBitsDiffVectors(t *testing.T) {
+	const min = fdkIntMin
+	scfOld := [...]int{12, min, 8, 11, min, 14, 18, min, 16, 20}
+	scfNew := [...]int{13, min, 10, 9, min, 15, 17, min, 14, 19}
+	input := [...]struct {
+		startSfb int
+		stopSfb  int
+	}{
+		{startSfb: 2, stopSfb: 8},
+		{startSfb: 0, stopSfb: 4},
+		{startSfb: 4, stopSfb: 7},
+		{startSfb: 7, stopSfb: 10},
+		{startSfb: 1, stopSfb: 3},
+	}
+	want := [...]FixpDBL{-131072, 0, 131072, 131072, -262144}
+
+	var got [len(input)]FixpDBL
+	for i, tt := range input {
+		got[i] = FDKaacEncCountScfBitsDiff(scfOld[:], scfNew[:], len(scfOld), tt.startSfb, tt.stopSfb)
+	}
+	assertFixpDBLSlice(t, "scalefactor bits diff", got[:], want[:], 0xe6c995131d2b80ef)
+}
+
+func TestFDKaacEncCalcSpecPeDiffVectors(t *testing.T) {
+	const min = fdkIntMin
+	energy := [...]FixpDBL{-300000000, -250000000, -280000000, -310000000, -260000000, -240000000, -200000000, -330000000}
+	form := [...]FixpDBL{-330220071, -277590868, -332606544, -282650384, -338598629, -274335045, -293504191, -323306888}
+	lines := [...]FixpDBL{7252715, 0, 5626260, 23182377, 0, 19176032, 15006516, 8382327}
+	scfOld := [...]int{12, min, 8, 11, min, 14, 18, 16}
+	scfNew := [...]int{13, min, 10, 9, min, 15, 17, 14}
+	constPart := [...]FixpDBL{
+		FixpDBL(min),
+		0x04000000,
+		0x03000000,
+		FixpDBL(min),
+		0x02000000,
+		FixpDBL(min),
+		0x20000000,
+		FixpDBL(min),
+	}
+
+	got := FDKaacEncCalcSpecPeDiff(
+		energy[:], scfOld[:], scfNew[:], constPart[:], form[:], lines[:], 0, len(scfOld),
+	)
+	if got != 59962 {
+		t.Fatalf("spec PE diff = %d, want 59962", got)
+	}
+	wantConstPart := [...]FixpDBL{
+		-39333917,
+		0x04000000,
+		0x03000000,
+		-68118760,
+		0x02000000,
+		-37276430,
+		0x20000000,
+		-57790508,
+	}
+	assertFixpDBLSlice(t, "spec PE const part", constPart[:], wantConstPart[:], 0x2215c451354b2881)
+}
+
 func TestFDKaacEncCalcFormFactorRejectsInvalid(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -275,6 +335,77 @@ func TestFDKaacEncCountSingleScfBitsRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncScfPeDiffRejectsInvalid(t *testing.T) {
+	const min = fdkIntMin
+	scfOld := [...]int{12, min, 8, 11}
+	scfNew := [...]int{13, min, 10, 9}
+	energy := [...]FixpDBL{-300000000, -250000000, -280000000, -310000000}
+	form := [...]FixpDBL{-330220071, -277590868, -332606544, -282650384}
+	lines := [...]FixpDBL{7252715, 0, 5626260, 23182377}
+	constPart := [...]FixpDBL{FixpDBL(min), 0x04000000, 0x03000000, FixpDBL(min)}
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{name: "bad count", fn: func() {
+			FDKaacEncCountScfBitsDiff(scfOld[:], scfNew[:], 0, 0, 1)
+		}},
+		{name: "bad range", fn: func() {
+			FDKaacEncCountScfBitsDiff(scfOld[:], scfNew[:], len(scfOld), 2, 2)
+		}},
+		{name: "stop past count", fn: func() {
+			FDKaacEncCountScfBitsDiff(scfOld[:], scfNew[:], len(scfOld), 0, len(scfOld)+1)
+		}},
+		{name: "short old", fn: func() {
+			FDKaacEncCountScfBitsDiff(scfOld[:3], scfNew[:], len(scfOld), 0, 2)
+		}},
+		{name: "short new", fn: func() {
+			FDKaacEncCountScfBitsDiff(scfOld[:], scfNew[:3], len(scfOld), 0, 2)
+		}},
+		{name: "empty relevant range", fn: func() {
+			FDKaacEncCountScfBitsDiff(scfOld[:], scfNew[:], len(scfOld), 1, 2)
+		}},
+		{name: "delta out of range", fn: func() {
+			old := [...]int{0, 0}
+			next := [...]int{0, 70}
+			FDKaacEncCountScfBitsDiff(old[:], next[:], len(old), 0, len(old))
+		}},
+		{name: "bad spec range", fn: func() {
+			FDKaacEncCalcSpecPeDiff(energy[:], scfOld[:], scfNew[:], constPart[:], form[:], lines[:], 0, 0)
+		}},
+		{name: "short energy", fn: func() {
+			FDKaacEncCalcSpecPeDiff(energy[:3], scfOld[:], scfNew[:], constPart[:], form[:], lines[:], 0, len(scfOld))
+		}},
+		{name: "short old spec", fn: func() {
+			FDKaacEncCalcSpecPeDiff(energy[:], scfOld[:3], scfNew[:], constPart[:], form[:], lines[:], 0, len(scfOld))
+		}},
+		{name: "short new spec", fn: func() {
+			FDKaacEncCalcSpecPeDiff(energy[:], scfOld[:], scfNew[:3], constPart[:], form[:], lines[:], 0, len(scfOld))
+		}},
+		{name: "short const", fn: func() {
+			FDKaacEncCalcSpecPeDiff(energy[:], scfOld[:], scfNew[:], constPart[:3], form[:], lines[:], 0, len(scfOld))
+		}},
+		{name: "short form", fn: func() {
+			FDKaacEncCalcSpecPeDiff(energy[:], scfOld[:], scfNew[:], constPart[:], form[:3], lines[:], 0, len(scfOld))
+		}},
+		{name: "short lines", fn: func() {
+			FDKaacEncCalcSpecPeDiff(energy[:], scfOld[:], scfNew[:], constPart[:], form[:], lines[:3], 0, len(scfOld))
+		}},
+	}
+
+	for _, tt := range tests {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		}()
+	}
+}
+
 func TestFDKaacEncCalcFormFactorAllocs(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -322,6 +453,31 @@ func TestFDKaacEncSingleScfPeAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("single scalefactor/PE allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncScfPeDiffAllocs(t *testing.T) {
+	const min = fdkIntMin
+	scfOld := [...]int{12, min, 8, 11, min, 14, 18, min, 16, 20}
+	scfNew := [...]int{13, min, 10, 9, min, 15, 17, min, 14, 19}
+	energy := [...]FixpDBL{-300000000, -250000000, -280000000, -310000000, -260000000, -240000000, -200000000, -330000000}
+	form := [...]FixpDBL{-330220071, -277590868, -332606544, -282650384, -338598629, -274335045, -293504191, -323306888}
+	lines := [...]FixpDBL{7252715, 0, 5626260, 23182377, 0, 19176032, 15006516, 8382327}
+	constPartBase := [...]FixpDBL{FixpDBL(min), 0x04000000, 0x03000000, FixpDBL(min), 0x02000000, FixpDBL(min), 0x20000000, FixpDBL(min)}
+	var constPart [len(constPartBase)]FixpDBL
+	var got [2]FixpDBL
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		copy(constPart[:], constPartBase[:])
+		got[0] = FDKaacEncCountScfBitsDiff(scfOld[:], scfNew[:], len(scfOld), 2, 8)
+		got[1] = FDKaacEncCalcSpecPeDiff(
+			energy[:], scfOld[:len(energy)], scfNew[:len(energy)], constPart[:], form[:], lines[:], 0, len(energy),
+		)
+		scfPeSink = got[0] + got[1] + constPart[0] + constPart[7]
+		scfPeHashSink = hashFixpDBL(got[:])
+	})
+	if allocs != 0 {
+		t.Fatalf("scalefactor/PE diff allocations = %v, want 0", allocs)
 	}
 }
 

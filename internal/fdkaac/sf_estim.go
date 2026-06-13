@@ -8,6 +8,9 @@ const peC2 = FixpDBL(0x015269e2)
 const peC3 = FixpDBL(0x47990500)
 const peFac07 = FixpDBL(0x59999980)
 const peFac0375 = FixpDBL(0x30000000)
+const peSfbConstPart6p75 = FixpDBL(0x02c14050)
+const formFactorLdScale = FixpDBL(0x0c000000)
+const fdkIntMin = -1 << 31
 
 type QCOutChannel struct {
 	MdctSpectrum        [1024]FixpDBL
@@ -98,6 +101,95 @@ func FDKaacEncCalcSingleSpecPe(scf int, sfbConstPePart FixpDBL, nLines FixpDBL) 
 	return FMultDD(peFac07, FMultDD(nLines, peC2+FMultDD(peC3, ldRatio)))
 }
 
+func FDKaacEncCountScfBitsDiff(scfOld []int, scfNew []int, sfbCnt int, startSfb int, stopSfb int) FixpDBL {
+	checkScfDiffInputs(scfOld, scfNew, sfbCnt, startSfb, stopSfb)
+
+	scfBitsDiff := 0
+	sfbLast := startSfb
+	for sfbLast < stopSfb && scfOld[sfbLast] == fdkIntMin {
+		sfbLast++
+	}
+	if sfbLast == stopSfb {
+		panic("fdkaac: empty scalefactor diff range")
+	}
+
+	sfbPrev := startSfb - 1
+	for sfbPrev >= 0 && scfOld[sfbPrev] == fdkIntMin {
+		sfbPrev--
+	}
+	if sfbPrev >= 0 {
+		scfBitsDiff += FDKaacEncBitCountScalefactorDelta(scfNew[sfbPrev]-scfNew[sfbLast]) -
+			FDKaacEncBitCountScalefactorDelta(scfOld[sfbPrev]-scfOld[sfbLast])
+	}
+
+	for sfb := sfbLast + 1; sfb < stopSfb; sfb++ {
+		if scfOld[sfb] != fdkIntMin {
+			scfBitsDiff += FDKaacEncBitCountScalefactorDelta(scfNew[sfbLast]-scfNew[sfb]) -
+				FDKaacEncBitCountScalefactorDelta(scfOld[sfbLast]-scfOld[sfb])
+			sfbLast = sfb
+		}
+	}
+
+	sfbNext := stopSfb
+	for sfbNext < sfbCnt && scfOld[sfbNext] == fdkIntMin {
+		sfbNext++
+	}
+	if sfbNext < sfbCnt {
+		scfBitsDiff += FDKaacEncBitCountScalefactorDelta(scfNew[sfbLast]-scfNew[sfbNext]) -
+			FDKaacEncBitCountScalefactorDelta(scfOld[sfbLast]-scfOld[sfbNext])
+	}
+
+	return FixpDBL(scfBitsDiff << (DfractBits - 1 - (2 * asPeFacShift)))
+}
+
+func FDKaacEncCalcSpecPeDiff(
+	sfbEnergyLdData []FixpDBL,
+	scfOld []int,
+	scfNew []int,
+	sfbConstPePart []FixpDBL,
+	sfbFormFactorLdData []FixpDBL,
+	sfbNRelevantLines []FixpDBL,
+	startSfb int,
+	stopSfb int,
+) FixpDBL {
+	checkSpecPeDiffInputs(
+		sfbEnergyLdData, scfOld, scfNew, sfbConstPePart, sfbFormFactorLdData,
+		sfbNRelevantLines, startSfb, stopSfb,
+	)
+
+	specPeDiff := FixpDBL(0)
+	for sfb := startSfb; sfb < stopSfb; sfb++ {
+		if scfOld[sfb] != fdkIntMin {
+			if sfbConstPePart[sfb] == FixpDBL(fdkIntMin) {
+				sfbConstPePart[sfb] = ((sfbEnergyLdData[sfb] - sfbFormFactorLdData[sfb] - formFactorLdScale) >> 1) + peSfbConstPart6p75
+			}
+
+			scfFract := FixpDBL(scfOld[sfb] << (DfractBits - 1 - asPeFacShift))
+			ldRatioOld := sfbConstPePart[sfb] - FMultDD(peFac0375, scfFract)
+
+			scfFract = FixpDBL(scfNew[sfb] << (DfractBits - 1 - asPeFacShift))
+			ldRatioNew := sfbConstPePart[sfb] - FMultDD(peFac0375, scfFract)
+
+			var pOld FixpDBL
+			if ldRatioOld >= peC1 {
+				pOld = ldRatioOld
+			} else {
+				pOld = peC2 + FMultDD(peC3, ldRatioOld)
+			}
+
+			var pNew FixpDBL
+			if ldRatioNew >= peC1 {
+				pNew = ldRatioNew
+			} else {
+				pNew = peC2 + FMultDD(peC3, ldRatioNew)
+			}
+
+			specPeDiff += FMultDD(peFac07, FMultDD(sfbNRelevantLines[sfb], pNew-pOld))
+		}
+	}
+	return specPeDiff
+}
+
 func checkFormFactorInputs(sfbFormFactorLdData []FixpDBL, psyOutChan *PsyOutChannel) {
 	if psyOutChan == nil {
 		panic("fdkaac: nil form-factor psy output")
@@ -162,5 +254,33 @@ func checkSfbRelevantLinesInputs(
 			panic("fdkaac: empty relevant-lines active band")
 		}
 		prev = next
+	}
+}
+
+func checkScfDiffInputs(scfOld []int, scfNew []int, sfbCnt int, startSfb int, stopSfb int) {
+	if sfbCnt <= 0 || sfbCnt > maxGroupedSFB || startSfb < 0 || stopSfb <= startSfb || stopSfb > sfbCnt {
+		panic("fdkaac: invalid scalefactor diff range")
+	}
+	if len(scfOld) < sfbCnt || len(scfNew) < sfbCnt {
+		panic("fdkaac: short scalefactor diff data")
+	}
+}
+
+func checkSpecPeDiffInputs(
+	sfbEnergyLdData []FixpDBL,
+	scfOld []int,
+	scfNew []int,
+	sfbConstPePart []FixpDBL,
+	sfbFormFactorLdData []FixpDBL,
+	sfbNRelevantLines []FixpDBL,
+	startSfb int,
+	stopSfb int,
+) {
+	if startSfb < 0 || stopSfb <= startSfb || stopSfb > maxGroupedSFB {
+		panic("fdkaac: invalid spec-pe diff range")
+	}
+	if len(sfbEnergyLdData) < stopSfb || len(scfOld) < stopSfb || len(scfNew) < stopSfb ||
+		len(sfbConstPePart) < stopSfb || len(sfbFormFactorLdData) < stopSfb || len(sfbNRelevantLines) < stopSfb {
+		panic("fdkaac: short spec-pe diff data")
 	}
 }
