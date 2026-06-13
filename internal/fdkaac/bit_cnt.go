@@ -212,6 +212,147 @@ func FDKaacEncCountValues(values []int16, width int, codeBook int) int {
 	return bitCnt
 }
 
+func FDKaacEncCodeValues(values []int16, width int, codeBook int, bitstream *BitStream) int {
+	checkCodeValuesInputs(values, width, codeBook)
+
+	switch codeBook {
+	case codeBookZeroNo:
+	case codeBook1No:
+		for i := 0; i < width; i += 4 {
+			t0 := int(values[i+0]) + 1
+			t1 := int(values[i+1]) + 1
+			t2 := int(values[i+2]) + 1
+			t3 := int(values[i+3]) + 1
+			codeWord := int(fdkaacEncHuffCtab1[t0][t1][t2][t3])
+			codeLength := hiLtab(fdkaacEncHuffLtab12[t0][t1][t2][t3])
+			writeHuffCodeword(bitstream, codeWord, codeLength)
+		}
+	case codeBook2No:
+		for i := 0; i < width; i += 4 {
+			t0 := int(values[i+0]) + 1
+			t1 := int(values[i+1]) + 1
+			t2 := int(values[i+2]) + 1
+			t3 := int(values[i+3]) + 1
+			codeWord := int(fdkaacEncHuffCtab2[t0][t1][t2][t3])
+			codeLength := loLtab(fdkaacEncHuffLtab12[t0][t1][t2][t3])
+			writeHuffCodeword(bitstream, codeWord, codeLength)
+		}
+	case codeBook3No:
+		for i := 0; i < width; i += 4 {
+			sign := 0
+			signLength := 0
+			t0, zero := huffSignedIndex(values[i+0])
+			signLength += zero
+			sign = (sign << zero) + signBitInt16(values[i+0])
+			t1, zero := huffSignedIndex(values[i+1])
+			signLength += zero
+			sign = (sign << zero) + signBitInt16(values[i+1])
+			t2, zero := huffSignedIndex(values[i+2])
+			signLength += zero
+			sign = (sign << zero) + signBitInt16(values[i+2])
+			t3, zero := huffSignedIndex(values[i+3])
+			signLength += zero
+			sign = (sign << zero) + signBitInt16(values[i+3])
+			codeWord := int(fdkaacEncHuffCtab3[t0][t1][t2][t3])
+			codeLength := hiLtab(fdkaacEncHuffLtab34[t0][t1][t2][t3])
+			writeHuffCodeword(bitstream, (codeWord<<signLength)|sign, codeLength+signLength)
+		}
+	case codeBook4No:
+		for i := 0; i < width; i += 4 {
+			sign := 0
+			signLength := 0
+			t0, zero := huffSignedIndex(values[i+0])
+			signLength += zero
+			sign = (sign << zero) + signBitInt16(values[i+0])
+			t1, zero := huffSignedIndex(values[i+1])
+			signLength += zero
+			sign = (sign << zero) + signBitInt16(values[i+1])
+			t2, zero := huffSignedIndex(values[i+2])
+			signLength += zero
+			sign = (sign << zero) + signBitInt16(values[i+2])
+			t3, zero := huffSignedIndex(values[i+3])
+			signLength += zero
+			sign = (sign << zero) + signBitInt16(values[i+3])
+			codeWord := int(fdkaacEncHuffCtab4[t0][t1][t2][t3])
+			codeLength := loLtab(fdkaacEncHuffLtab34[t0][t1][t2][t3])
+			writeHuffCodeword(bitstream, (codeWord<<signLength)|sign, codeLength+signLength)
+		}
+	case codeBook5No:
+		for i := 0; i < width; i += 4 {
+			t0 := int(values[i+0]) + 4
+			t1 := int(values[i+1]) + 4
+			t2 := int(values[i+2]) + 4
+			t3 := int(values[i+3]) + 4
+			codeWord := int(fdkaacEncHuffCtab5[t0][t1])
+			codeLength := hiLtab(fdkaacEncHuffLtab56[t2][t3])
+			codeWord = (codeWord << codeLength) + int(fdkaacEncHuffCtab5[t2][t3])
+			codeLength += hiLtab(fdkaacEncHuffLtab56[t0][t1])
+			writeHuffCodeword(bitstream, codeWord, codeLength)
+		}
+	case codeBook6No:
+		for i := 0; i < width; i += 4 {
+			t0 := int(values[i+0]) + 4
+			t1 := int(values[i+1]) + 4
+			t2 := int(values[i+2]) + 4
+			t3 := int(values[i+3]) + 4
+			codeWord := int(fdkaacEncHuffCtab6[t0][t1])
+			codeLength := loLtab(fdkaacEncHuffLtab56[t2][t3])
+			codeWord = (codeWord << codeLength) + int(fdkaacEncHuffCtab6[t2][t3])
+			codeLength += loLtab(fdkaacEncHuffLtab56[t0][t1])
+			writeHuffCodeword(bitstream, codeWord, codeLength)
+		}
+	case codeBook7No:
+		for i := 0; i < width; i += 2 {
+			t0, t1, sign, signLength := huffSignedPair(values[i+0], values[i+1])
+			codeWord := int(fdkaacEncHuffCtab7[t0][t1])
+			codeLength := hiLtab(fdkaacEncHuffLtab78[t0][t1])
+			writeHuffCodeword(bitstream, (codeWord<<signLength)|sign, codeLength+signLength)
+		}
+	case codeBook8No:
+		for i := 0; i < width; i += 2 {
+			t0, t1, sign, signLength := huffSignedPair(values[i+0], values[i+1])
+			codeWord := int(fdkaacEncHuffCtab8[t0][t1])
+			codeLength := loLtab(fdkaacEncHuffLtab78[t0][t1])
+			writeHuffCodeword(bitstream, (codeWord<<signLength)|sign, codeLength+signLength)
+		}
+	case codeBook9No:
+		for i := 0; i < width; i += 2 {
+			t0, t1, sign, signLength := huffSignedPair(values[i+0], values[i+1])
+			codeWord := int(fdkaacEncHuffCtab9[t0][t1])
+			codeLength := hiLtab(fdkaacEncHuffLtab910[t0][t1])
+			writeHuffCodeword(bitstream, (codeWord<<signLength)|sign, codeLength+signLength)
+		}
+	case codeBook10No:
+		for i := 0; i < width; i += 2 {
+			t0, t1, sign, signLength := huffSignedPair(values[i+0], values[i+1])
+			codeWord := int(fdkaacEncHuffCtab10[t0][t1])
+			codeLength := loLtab(fdkaacEncHuffLtab910[t0][t1])
+			writeHuffCodeword(bitstream, (codeWord<<signLength)|sign, codeLength+signLength)
+		}
+	case codeBookEscNo:
+		for i := 0; i < width; i += 2 {
+			t0, t1, sign, signLength := huffSignedPair(values[i+0], values[i+1])
+			t00 := minInt(t0, 16)
+			t01 := minInt(t1, 16)
+			codeWord := int(fdkaacEncHuffCtab11[t00][t01])
+			codeLength := int(fdkaacEncHuffLtab11[t00][t01])
+			writeHuffCodeword(bitstream, (codeWord<<signLength)|sign, codeLength+signLength)
+			writeEscapedHuffValue(bitstream, t0)
+			writeEscapedHuffValue(bitstream, t1)
+		}
+	}
+	return 0
+}
+
+func FDKaacEncCodeScalefactorDelta(delta int, bitstream *BitStream) int {
+	if absInt(delta) > codeBookScfLav {
+		return 1
+	}
+	index := delta + codeBookScfLav
+	WriteBits(bitstream, fdkaacEncHuffCtabScf[index], uint32(fdkaacEncHuffLtabScf[index]))
+	return 0
+}
+
 func fdkaacEncCount1234567891011(values []int16, width int, bitCount []int) {
 	bc12 := 0
 	bc34 := 0
@@ -485,6 +626,68 @@ func checkCountValuesInputs(values []int16, width int, codeBook int) {
 	if len(values) < width {
 		panic("fdkaac: short count-values spectrum")
 	}
+}
+
+func checkCodeValuesInputs(values []int16, width int, codeBook int) {
+	if width < 0 || codeBook < codeBookZeroNo || codeBook > codeBookEscNo {
+		panic("fdkaac: invalid code-values control")
+	}
+	switch codeBook {
+	case codeBookZeroNo:
+	case codeBook1No, codeBook2No, codeBook3No, codeBook4No, codeBook5No, codeBook6No:
+		if width%4 != 0 {
+			panic("fdkaac: invalid quad code-values width")
+		}
+	default:
+		if width%2 != 0 {
+			panic("fdkaac: invalid pair code-values width")
+		}
+	}
+	if len(values) < width {
+		panic("fdkaac: short code-values spectrum")
+	}
+}
+
+func writeHuffCodeword(bitstream *BitStream, codeWord int, codeLength int) {
+	WriteBits(bitstream, uint32(codeWord), uint32(codeLength))
+}
+
+func writeEscapedHuffValue(bitstream *BitStream, t int) {
+	if t < 16 {
+		return
+	}
+	n := 4
+	p := t
+	for p >>= 1; p >= 16; p >>= 1 {
+		n++
+	}
+	codeWord := (((1 << (n - 3)) - 2) << n) | (t - (1 << n))
+	WriteBits(bitstream, uint32(codeWord), uint32(n+n-3))
+}
+
+func huffSignedPair(v0, v1 int16) (int, int, int, int) {
+	t0, zero := huffSignedIndex(v0)
+	signLength := zero
+	sign := signBitInt16(v0)
+	t1, zero := huffSignedIndex(v1)
+	signLength += zero
+	sign = (sign << zero) + signBitInt16(v1)
+	return t0, t1, sign, signLength
+}
+
+func huffSignedIndex(v int16) (int, int) {
+	t := absInt16(v)
+	if t == 0 {
+		return 0, 0
+	}
+	return t, 1
+}
+
+func signBitInt16(v int16) int {
+	if v < 0 {
+		return 1
+	}
+	return 0
 }
 
 func hiLtab(x uint32) int {

@@ -119,6 +119,11 @@ ROM checksums for the spectral length tables and source-derived vectors for
 zero spectra, LAV category transitions, escape lengths, fixed-codebook recounts,
 invalid controls, and zero steady-state allocation.
 
+The FDK Huffman codeword emission subset is covered with mechanically derived
+codeword ROM checksums and source-derived byte vectors for spectral codebooks
+0-11, pair-width codebooks, escape extensions, scalefactor deltas, invalid
+controls, and zero steady-state allocation.
+
 The FDK AAC-LC short grouping subset is covered with source-derived grouped
 offset and min-SNR vectors, saturating threshold/energy/MS/spread-energy sums,
 max-SFB scan and zero-spectrum floor checks, spectrum-regroup hashes, invalid

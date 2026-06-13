@@ -1,6 +1,9 @@
 package fdkaac
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 var bitCountSink int
 var bitCountHashSink uint64
@@ -73,6 +76,45 @@ func TestFDKaacEncSpectralHuffmanLengthTables(t *testing.T) {
 	}
 	if got, want := hashHuffLtab11(), uint64(0xc28a4a9d309ab353); got != want {
 		t.Fatalf("huff_ltab11 hash = %#016x, want %#016x", got, want)
+	}
+}
+
+func TestFDKaacEncHuffmanCodewordTables(t *testing.T) {
+	if got, n := hashHuffCtab1234(fdkaacEncHuffCtab1); n != 81 || got != 0x506876e813765fb5 {
+		t.Fatalf("huff_ctab1 = len:%d hash:%#016x, want len:81 hash:%#016x", n, got, uint64(0x506876e813765fb5))
+	}
+	if got, n := hashHuffCtab1234(fdkaacEncHuffCtab2); n != 81 || got != 0xe0c1946d42d01641 {
+		t.Fatalf("huff_ctab2 = len:%d hash:%#016x, want len:81 hash:%#016x", n, got, uint64(0xe0c1946d42d01641))
+	}
+	if got, n := hashHuffCtab1234(fdkaacEncHuffCtab3); n != 81 || got != 0xc70ceef4750f7ca1 {
+		t.Fatalf("huff_ctab3 = len:%d hash:%#016x, want len:81 hash:%#016x", n, got, uint64(0xc70ceef4750f7ca1))
+	}
+	if got, n := hashHuffCtab1234(fdkaacEncHuffCtab4); n != 81 || got != 0xc82636a7300f8179 {
+		t.Fatalf("huff_ctab4 = len:%d hash:%#016x, want len:81 hash:%#016x", n, got, uint64(0xc82636a7300f8179))
+	}
+	if got, n := hashHuffCtab56(fdkaacEncHuffCtab5); n != 81 || got != 0x2d3668b451382f89 {
+		t.Fatalf("huff_ctab5 = len:%d hash:%#016x, want len:81 hash:%#016x", n, got, uint64(0x2d3668b451382f89))
+	}
+	if got, n := hashHuffCtab56(fdkaacEncHuffCtab6); n != 81 || got != 0x3831594defb6f9bd {
+		t.Fatalf("huff_ctab6 = len:%d hash:%#016x, want len:81 hash:%#016x", n, got, uint64(0x3831594defb6f9bd))
+	}
+	if got, n := hashHuffCtab78(fdkaacEncHuffCtab7); n != 64 || got != 0xda7a9ca97d724b7e {
+		t.Fatalf("huff_ctab7 = len:%d hash:%#016x, want len:64 hash:%#016x", n, got, uint64(0xda7a9ca97d724b7e))
+	}
+	if got, n := hashHuffCtab78(fdkaacEncHuffCtab8); n != 64 || got != 0x7d83d3f78aa60229 {
+		t.Fatalf("huff_ctab8 = len:%d hash:%#016x, want len:64 hash:%#016x", n, got, uint64(0x7d83d3f78aa60229))
+	}
+	if got, n := hashHuffCtab910(fdkaacEncHuffCtab9); n != 169 || got != 0xd63e800a68ccbc71 {
+		t.Fatalf("huff_ctab9 = len:%d hash:%#016x, want len:169 hash:%#016x", n, got, uint64(0xd63e800a68ccbc71))
+	}
+	if got, n := hashHuffCtab910(fdkaacEncHuffCtab10); n != 169 || got != 0x2f0343f9318fc689 {
+		t.Fatalf("huff_ctab10 = len:%d hash:%#016x, want len:169 hash:%#016x", n, got, uint64(0x2f0343f9318fc689))
+	}
+	if got, n := hashHuffCtab11(); n != 357 || got != 0xcdbaf324c918934d {
+		t.Fatalf("huff_ctab11 = len:%d hash:%#016x, want len:357 hash:%#016x", n, got, uint64(0xcdbaf324c918934d))
+	}
+	if got, n := hashHuffCtabScf(); n != 121 || got != 0x18dfd429c9508539 {
+		t.Fatalf("huff_ctabscf = len:%d hash:%#016x, want len:121 hash:%#016x", n, got, uint64(0x18dfd429c9508539))
 	}
 }
 
@@ -181,6 +223,80 @@ func TestFDKaacEncCountValuesVectors(t *testing.T) {
 	assertIntSlice(t, "count-values bit counts", got[:], []int{0, 16, 14, 33, 26, 41, 33, 43, 34, 58, 49, 69}, 0xb3ab02ac6ae863ef)
 }
 
+func TestFDKaacEncCodeValuesVectors(t *testing.T) {
+	tests := []struct {
+		codeBook int
+		values   []int16
+		bits     uint32
+		want     []byte
+	}{
+		{codeBookZeroNo, []int16{31, -16, 0, 1}, 0, []byte{}},
+		{codeBook1No, []int16{-1, 0, 1, 0, 1, -1, 0, 1}, 16, []byte{0xd9, 0xee}},
+		{codeBook2No, []int16{-1, 0, 1, 0, 1, -1, 0, 1}, 14, []byte{0xa3, 0x98}},
+		{codeBook3No, []int16{-2, 0, 2, 1, -1, 2, 0, -2}, 33, []byte{0xff, 0xea, 0x7f, 0xf2, 0x80}},
+		{codeBook4No, []int16{-2, 0, 2, 1, -1, 2, 0, -2}, 26, []byte{0xfc, 0xe7, 0xed, 0x40}},
+		{codeBook5No, []int16{-4, 3, 0, 4, -2, 1, -3, 2}, 41, []byte{0xff, 0x8f, 0xd3, 0xd9, 0xf7, 0x00}},
+		{codeBook6No, []int16{-4, 3, 0, 4, -2, 1, -3, 2}, 33, []byte{0xff, 0x3f, 0x53, 0x78, 0x00}},
+		{codeBook7No, []int16{-7, 6, 0, 5, -4, 3}, 35, []byte{0xff, 0xcb, 0xd6, 0xf7, 0xc0}},
+		{codeBook8No, []int16{-7, 6, 0, 5, -4, 3}, 28, []byte{0xfe, 0x5e, 0x2c, 0x60}},
+		{codeBook9No, []int16{-12, 11, 0, 10, -9, 8}, 44, []byte{0xff, 0xf6, 0xfd, 0xd7, 0xfa, 0xe0}},
+		{codeBook10No, []int16{-12, 11, 0, 10, -9, 8}, 38, []byte{0xff, 0xcb, 0xf8, 0x3e, 0x08}},
+		{codeBookEscNo, []int16{-31, 16, 0, 17, -64, 1, 20, -18}, 69, []byte{0x24, 0xf0, 0x71, 0xc0, 0xda, 0xd8, 0x02, 0x24, 0x10}},
+	}
+
+	for _, tc := range tests {
+		t.Run("", func(t *testing.T) {
+			var storage [64]byte
+			var out [64]byte
+			var bs BitStream
+			if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+				t.Fatal(err)
+			}
+			if got := FDKaacEncCodeValues(tc.values, len(tc.values), tc.codeBook, &bs); got != 0 {
+				t.Fatalf("FDKaacEncCodeValues returned %d, want 0", got)
+			}
+			if got := BitStreamValidBits(&bs); got != tc.bits {
+				t.Fatalf("codebook %d bits = %d, want %d", tc.codeBook, got, tc.bits)
+			}
+			ByteAlign(&bs, 0)
+			n := FetchBuffer(&bs, out[:])
+			if !bytes.Equal(out[:n], tc.want) {
+				t.Fatalf("codebook %d bytes = % x, want % x", tc.codeBook, out[:n], tc.want)
+			}
+		})
+	}
+}
+
+func TestFDKaacEncCodeScalefactorDeltaVectors(t *testing.T) {
+	var storage [16]byte
+	var out [16]byte
+	var bs BitStream
+	if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+	for _, delta := range []int{-60, -1, 0, 1, 2, 23, 60} {
+		if got := FDKaacEncCodeScalefactorDelta(delta, &bs); got != 0 {
+			t.Fatalf("FDKaacEncCodeScalefactorDelta(%d) = %d, want 0", delta, got)
+		}
+	}
+	if got := BitStreamValidBits(&bs); got != 62 {
+		t.Fatalf("scalefactor code bits = %d, want 62", got)
+	}
+	ByteAlign(&bs, 0)
+	n := FetchBuffer(&bs, out[:])
+	if want := []byte{0xff, 0xfa, 0x22, 0xb3, 0xff, 0x1f, 0xff, 0xcc}; !bytes.Equal(out[:n], want) {
+		t.Fatalf("scalefactor code bytes = % x, want % x", out[:n], want)
+	}
+
+	ResetBitStream(&bs, BSWriter)
+	if got := FDKaacEncCodeScalefactorDelta(61, &bs); got != 1 {
+		t.Fatalf("out-of-range scalefactor code result = %d, want 1", got)
+	}
+	if got := BitStreamValidBits(&bs); got != 0 {
+		t.Fatalf("out-of-range scalefactor wrote %d bits, want 0", got)
+	}
+}
+
 func TestFDKaacEncBitCountRejectsInvalid(t *testing.T) {
 	values := []int16{0, 0, 0, 0}
 	var bitCount [12]int
@@ -210,6 +326,35 @@ func TestFDKaacEncBitCountRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncCodeValuesRejectsInvalid(t *testing.T) {
+	values := []int16{0, 0, 0, 0}
+	var storage [16]byte
+	var bs BitStream
+	if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		fn   func()
+	}{
+		{"negative width", func() { FDKaacEncCodeValues(values, -4, codeBook1No, &bs) }},
+		{"invalid codebook", func() { FDKaacEncCodeValues(values, 4, 12, &bs) }},
+		{"unaligned quad width", func() { FDKaacEncCodeValues(values, 2, codeBook1No, &bs) }},
+		{"unaligned pair width", func() { FDKaacEncCodeValues(values, 3, codeBook7No, &bs) }},
+		{"unaligned escape width", func() { FDKaacEncCodeValues(values, 3, codeBookEscNo, &bs) }},
+		{"short values", func() { FDKaacEncCodeValues(values[:3], 4, codeBook1No, &bs) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tc.name)
+				}
+			}()
+			tc.fn()
+		})
+	}
+}
+
 func TestFDKaacEncSpectralBitCountAllocs(t *testing.T) {
 	values := [8]int16{-31, 16, 0, 17, -64, 1, 20, -18}
 	var bitCount [12]int
@@ -220,6 +365,29 @@ func TestFDKaacEncSpectralBitCountAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("spectral bit-count allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncCodeValuesAllocs(t *testing.T) {
+	values := [8]int16{-31, 16, 0, 17, -64, 1, 20, -18}
+	var storage [64]byte
+	var out [64]byte
+	var bs BitStream
+	allocs := testing.AllocsPerRun(1000, func() {
+		clear(storage[:])
+		clear(out[:])
+		if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+			t.Fatal(err)
+		}
+		FDKaacEncCodeValues(values[:], len(values), codeBookEscNo, &bs)
+		FDKaacEncCodeScalefactorDelta(23, &bs)
+		ByteAlign(&bs, 0)
+		n := FetchBuffer(&bs, out[:])
+		bitCountSink = n
+		bitCountHashSink = hashHuffBytes(out[:n])
+	})
+	if allocs != 0 {
+		t.Fatalf("spectral code-values allocations = %v, want 0", allocs)
 	}
 }
 
@@ -237,6 +405,94 @@ func hashHuffLtab12() uint64 {
 		}
 	}
 	return hashBandEnergyInts(x[:])
+}
+
+func hashHuffCtab1234(table [3][3][3][3]uint16) (uint64, int) {
+	h := uint64(14695981039346656037)
+	n := 0
+	for i := range table {
+		for j := range table[i] {
+			for k := range table[i][j] {
+				for l := range table[i][j][k] {
+					h = hashHuffUint32(h, uint32(table[i][j][k][l]))
+					n++
+				}
+			}
+		}
+	}
+	return h, n
+}
+
+func hashHuffCtab56(table [9][9]uint16) (uint64, int) {
+	h := uint64(14695981039346656037)
+	n := 0
+	for i := range table {
+		for j := range table[i] {
+			h = hashHuffUint32(h, uint32(table[i][j]))
+			n++
+		}
+	}
+	return h, n
+}
+
+func hashHuffCtab78(table [8][8]uint16) (uint64, int) {
+	h := uint64(14695981039346656037)
+	n := 0
+	for i := range table {
+		for j := range table[i] {
+			h = hashHuffUint32(h, uint32(table[i][j]))
+			n++
+		}
+	}
+	return h, n
+}
+
+func hashHuffCtab910(table [13][13]uint16) (uint64, int) {
+	h := uint64(14695981039346656037)
+	n := 0
+	for i := range table {
+		for j := range table[i] {
+			h = hashHuffUint32(h, uint32(table[i][j]))
+			n++
+		}
+	}
+	return h, n
+}
+
+func hashHuffCtab11() (uint64, int) {
+	h := uint64(14695981039346656037)
+	n := 0
+	for i := range fdkaacEncHuffCtab11 {
+		for j := range fdkaacEncHuffCtab11[i] {
+			h = hashHuffUint32(h, uint32(fdkaacEncHuffCtab11[i][j]))
+			n++
+		}
+	}
+	return h, n
+}
+
+func hashHuffCtabScf() (uint64, int) {
+	h := uint64(14695981039346656037)
+	for _, v := range fdkaacEncHuffCtabScf {
+		h = hashHuffUint32(h, v)
+	}
+	return h, len(fdkaacEncHuffCtabScf)
+}
+
+func hashHuffUint32(h uint64, v uint32) uint64 {
+	h = fnv64AddByte(h, byte(v))
+	h = fnv64AddByte(h, byte(v>>8))
+	h = fnv64AddByte(h, byte(v>>16))
+	h = fnv64AddByte(h, byte(v>>24))
+	return h
+}
+
+func hashHuffBytes(x []byte) uint64 {
+	h := uint64(14695981039346656037)
+	for _, b := range x {
+		h = fnv64AddByte(h, b)
+	}
+	return h
 }
 
 func hashHuffLtab34() uint64 {
