@@ -129,6 +129,12 @@ long-window, ER-VCB11, short-grouped, PNS, and intensity vectors. Tests verify
 greedy section merges, section layout hashes, Huffman/side-info/scalefactor/noise
 totals, malformed controls, and zero steady-state allocation.
 
+The FDK channel bitstream writer helper subset is covered with source-derived
+byte vectors for global gain, long and short ICS info, section data,
+scalefactor/noise data, and spectral payload emission. Tests also verify a
+combined long-channel payload sequence, invalid writer/control transitions, and
+zero steady-state allocation.
+
 The FDK AAC-LC short grouping subset is covered with source-derived grouped
 offset and min-SNR vectors, saturating threshold/energy/MS/spread-energy sums,
 max-SFB scan and zero-spectrum floor checks, spectrum-regroup hashes, invalid
