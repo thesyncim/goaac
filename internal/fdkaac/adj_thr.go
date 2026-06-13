@@ -454,6 +454,22 @@ func FDKaacEncCalcPENoAH(
 	return pe, constPart, nActiveLinesTmp
 }
 
+func FDKaacEncCalcRedValPower(num FixpDBL, denum FixpDBL) (FixpDBL, int) {
+	if denum <= 0 || num == MinValDBL {
+		panic("fdkaac: invalid reduction power input")
+	}
+
+	var value FixpDBL
+	var scaling int
+	if num >= 0 {
+		value, scaling = fDivNormExp(num, denum)
+	} else {
+		value, scaling = fDivNormExp(-num, denum)
+		value = -value
+	}
+	return f2Pow(value, scaling)
+}
+
 func FDKaacEncReduceThresholdsCBR(
 	qcOutChannel []*QCOutChannel,
 	psyOutChannel []*PsyOutChannel,

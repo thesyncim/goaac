@@ -104,6 +104,47 @@ func TestCalcInvLdDataVectors(t *testing.T) {
 	assertFixpDBLSlice(t, "CalcInvLdData", got[:], want[:], 0x335c2d95e0481cab)
 }
 
+func TestF2PowVectors(t *testing.T) {
+	if len(pow2Coeff) != pow2Precision {
+		t.Fatalf("pow2 coefficient length = %d, want %d", len(pow2Coeff), pow2Precision)
+	}
+	if pow2Coeff[0] != 0x58b90bfc || pow2Coeff[7] != 0x00000b16 {
+		t.Fatalf("pow2 coefficient edges = %#x/%#x", pow2Coeff[0], pow2Coeff[7])
+	}
+
+	input := [...]struct {
+		m FixpDBL
+		e int
+	}{
+		{0, 0},
+		{0x40000000, 0},
+		{0x60000000, 0},
+		{-0x60000000, 0},
+		{0x20000000, 2},
+		{-0x30000000, -1},
+		{0x12345678, 3},
+		{-0x15555555, 2},
+	}
+	want := [...]FixpDBL{
+		1073741824, 1,
+		1518500247, 1,
+		902905648, 2,
+		1276901414, 0,
+		1073741824, 2,
+		942880697, 1,
+		1181340552, 2,
+		1352829922, 0,
+	}
+
+	var got [len(input) * 2]FixpDBL
+	for i, tt := range input {
+		m, e := f2Pow(tt.m, tt.e)
+		got[2*i] = m
+		got[2*i+1] = FixpDBL(e)
+	}
+	assertFixpDBLSlice(t, "f2Pow mantissa/exponent", got[:], want[:], 0xac9492d8ffc3bd2e)
+}
+
 func TestCalcLdIntVectors(t *testing.T) {
 	if len(ldIntCoeff) != 193 {
 		t.Fatalf("ldIntCoeff length = %d, want 193", len(ldIntCoeff))
@@ -178,6 +219,12 @@ func TestLdDataVectorRejectsInvalid(t *testing.T) {
 			},
 		},
 		{
+			name: "bad pow2 exponent",
+			fn: func() {
+				f2Pow(0, DfractBits)
+			},
+		},
+		{
 			name: "negative count",
 			fn: func() {
 				LdDataVector(src[:], dst[:], -1)
@@ -214,7 +261,8 @@ func TestCalcLdDataAllocs(t *testing.T) {
 		input := [...]FixpDBL{0, 1, 0x100000, 0x10000000, MaxValDBL}
 		var output [len(input)]FixpDBL
 		LdDataVector(input[:], output[:], len(output))
-		ldDataSink = output[0] + output[1] + output[2] + output[3] + output[4] + CalcInvLdData(-1)
+		powM, powE := f2Pow(0x12345678, 3)
+		ldDataSink = output[0] + output[1] + output[2] + output[3] + output[4] + CalcInvLdData(-1) + powM + FixpDBL(powE)
 	})
 	if allocs != 0 {
 		t.Fatalf("LdDataVector allocations = %v, want 0", allocs)

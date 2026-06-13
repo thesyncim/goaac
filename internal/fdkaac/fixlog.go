@@ -6,6 +6,8 @@ const (
 	ldDataStep1Over64 = FixpDBL(0x02000000)
 	ldDataStep2Over64 = FixpDBL(0x04000000)
 	ldData31Over64    = FixpDBL(0x3e000000)
+	pow2Precision     = 8
+	halfDBL           = FixpDBL(0x40000000)
 )
 
 var ldCoeffDBL = [10]FixpDBL{
@@ -46,6 +48,17 @@ var exp2XTabLong = [32]uint32{
 	0x40063D51, 0x40069613, 0x4006EED5, 0x40074798, 0x4007A05B, 0x4007F91F,
 	0x400851E4, 0x4008AAA8, 0x4009036E, 0x40095C33, 0x4009B4FA, 0x400A0DC0,
 	0x400A6688, 0x400ABF4F,
+}
+
+var pow2Coeff = [pow2Precision]FixpDBL{
+	0x58b90bfc,
+	0x1ebfbe00,
+	0x071ac236,
+	0x013b2ab7,
+	0x002bb100,
+	0x00050c24,
+	0x00007ff3,
+	0x00000b16,
 }
 
 var ldIntCoeff = [193]FixpDBL{
@@ -149,6 +162,44 @@ func fDivNormExp(num FixpDBL, denom FixpDBL) (FixpDBL, int) {
 	exp += normDen
 
 	return schurDiv(num, denom, FractBits), exp
+}
+
+func f2Pow(expM FixpDBL, expE int) (FixpDBL, int) {
+	if expE >= DfractBits || expE <= -DfractBits {
+		panic("fdkaac: invalid pow2 exponent")
+	}
+
+	intPart := 0
+	var fracPart FixpDBL
+	if expE > 0 {
+		expBits := DfractBits - 1 - expE
+		if expBits < 0 {
+			panic("fdkaac: invalid pow2 exponent")
+		}
+		intPart = int(expM >> uint(expBits))
+		fracPart = expM - FixpDBL(intPart<<uint(expBits))
+		fracPart <<= uint(expE)
+	} else {
+		fracPart = expM >> uint(-expE)
+	}
+
+	if fracPart > halfDBL {
+		intPart++
+		fracPart += MinValDBL
+	}
+	if fracPart < -halfDBL {
+		intPart--
+		fracPart = -(MinValDBL - fracPart)
+	}
+
+	resultE := intPart + 1
+	p := fracPart
+	resultM := halfDBL
+	for i := 0; i < len(pow2Coeff); i++ {
+		resultM = FMultAddDiv2DD(resultM, pow2Coeff[i], p)
+		p = FMultDD(p, fracPart)
+	}
+	return resultM, resultE
 }
 
 func CalcInvLdData(x FixpDBL) FixpDBL {

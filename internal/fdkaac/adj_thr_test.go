@@ -336,6 +336,40 @@ func TestFDKaacEncCalcPENoAHVector(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncCalcRedValPowerVectors(t *testing.T) {
+	input := [...]struct {
+		num   FixpDBL
+		denum FixpDBL
+	}{
+		{0, 40},
+		{25, 100},
+		{-25, 100},
+		{90, 45},
+		{-75, 320},
+		{-290, 104},
+		{-80, 104},
+		{200, 160},
+	}
+	want := [...]FixpDBL{
+		1073741824, 1,
+		1276901414, 1,
+		902905648, 1,
+		1073741824, 3,
+		912737645, 1,
+		1243422908, -2,
+		1259997673, 0,
+		1276901414, 2,
+	}
+
+	var got [len(input) * 2]FixpDBL
+	for i, tt := range input {
+		m, e := FDKaacEncCalcRedValPower(tt.num, tt.denum)
+		got[2*i] = m
+		got[2*i+1] = FixpDBL(e)
+	}
+	assertFixpDBLSlice(t, "red-value power mantissa/exponent", got[:], want[:], 0x9501b04b422044a9)
+}
+
 func TestFDKaacEncReduceThresholdsCBRVector(t *testing.T) {
 	var psyStorage PsyOutChannel
 	var qcStorage QCOutChannel
@@ -862,6 +896,8 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 		{"nil no-AH flags", func() { FDKaacEncCalcPENoAH(&peData, nil, []*PsyOutChannel{&pePsy}, 1) }},
 		{"bad no-AH channel count", func() { FDKaacEncCalcPENoAH(&peData, &peFlags, []*PsyOutChannel{&pePsy}, 0) }},
 		{"nil no-AH psy", func() { FDKaacEncCalcPENoAH(&peData, &peFlags, []*PsyOutChannel{nil}, 1) }},
+		{"zero red-power denominator", func() { FDKaacEncCalcRedValPower(1, 0) }},
+		{"min red-power numerator", func() { FDKaacEncCalcRedValPower(MinValDBL, 1) }},
 		{"nil reduction flags", func() { FDKaacEncReduceThresholdsCBR(qc[:], psy[:], nil, &thrExp, 1, 0x20000000, 0) }},
 		{"nil threshold exponent", func() { FDKaacEncReduceThresholdsCBR(qc[:], psy[:], &ahFlag, nil, 1, 0x20000000, 0) }},
 		{"nil reduction qc", func() {
@@ -1147,7 +1183,8 @@ func TestFDKaacEncThresholdReductionAllocs(t *testing.T) {
 		FDKaacEncReduceThresholdsCBR(qc[:], psy[:], &ahFlag, &thrExp, 1, 0x20000000, 0)
 		fillPENoAHCase(&peData, &psyStorage, &ahFlag)
 		pe, constPart, nActiveLines := FDKaacEncCalcPENoAH(&peData, &ahFlag, psy[:], 1)
-		adjThrSink = qcStorage.SfbThresholdLdData[0] + FixpDBL(pe+constPart+nActiveLines)
+		redM, redE := FDKaacEncCalcRedValPower(FixpDBL(constPart-pe), FixpDBL(4*nActiveLines))
+		adjThrSink = qcStorage.SfbThresholdLdData[0] + FixpDBL(pe+constPart+nActiveLines) + redM + FixpDBL(redE)
 		adjThrHashSink = uint64(ahFlag[0][3])
 	})
 	if allocs != 0 {
