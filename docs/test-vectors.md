@@ -337,6 +337,14 @@ direct form-factor, PE-calculation, and static channel-element dry-run sequence,
 verify the nil-QC static side-info bit count, malformed controls, no-cgo
 compilation, and zero steady-state allocation.
 
+The FDK AAC-LC psychoacoustic lifecycle subset is covered with source-shaped
+vectors for `FDKaacEnc_PsyNew`, `FDKaacEnc_PsyOutNew`,
+`FDKaacEnc_psyInitStates`, and `FDKaacEnc_psyInit`. Tests verify fixed-state
+owner linking, LC and low-delay block-switch initialization, 5.1
+channel-to-element traversal, stereo reconfiguration offset behavior, preserved
+static-channel reset thresholds, malformed controls, no-cgo compilation, and
+zero steady-state allocation.
+
 The FDK AAC-LC QC lifecycle subset is covered with source-shaped vectors for
 `FDKaacEnc_QCNew`, `FDKaacEnc_QCOutNew`, and `FDKaacEnc_QCOutInit`. Tests verify
 fresh fixed-state pointer linking, 5.1 WAV channel-to-element traversal,
