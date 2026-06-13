@@ -15,8 +15,37 @@ const (
 	maxTnsFilters = 2
 	tnsMaxOrder   = 12
 
+	elIDBits = 3
+
+	extTypeBits          = 4
+	extDataElVersionBits = 4
+	extFillNibbleBits    = 4
+
+	fillElCountBits    = 4
+	fillElEscCountBits = 8
+	maxFillDataBytes   = 269
+
+	dataByteAlignFlag     = 0
+	elInstanceTagBits     = 4
+	dataByteAlignFlagBits = 1
+	dataLenCountBits      = 8
+	dataLenEscCountBits   = 8
+	maxDSEDataBytes       = 510
+
 	acScalable = 0x000008
 	acELD      = 0x000010
+	acER       = 0x000040
+
+	idDSE = 4
+	idFIL = 6
+
+	ExtFIL          = 0x00
+	ExtFillData     = 0x01
+	ExtDataElement  = 0x02
+	ExtLDSACData    = 0x09
+	ExtDynamicRange = 0x0b
+	ExtSBRData      = 0x0d
+	ExtSBRDataCRC   = 0x0e
 )
 
 type TNSInfo struct {
@@ -27,6 +56,12 @@ type TNSInfo struct {
 	Direction    [transFac][maxTnsFilters]int
 	CoefCompress [transFac][maxTnsFilters]int
 	Coef         [transFac][maxTnsFilters][tnsMaxOrder]int
+}
+
+type QCOutExtension struct {
+	Type        int
+	PayloadBits int
+	Payload     []byte
 }
 
 func FDKaacEncEncodeSpectralData(sfbOffset []int, sectionData *SectionData, quantSpectrum []int16, bitstream *BitStream) int {
@@ -310,6 +345,190 @@ func FDKaacEncEncodePulseData(bitstream *BitStream) int {
 	return 1
 }
 
+func FDKaacEncWriteExtensionPayload(bitstream *BitStream, extPayloadType int, extPayloadData []byte, extPayloadBits int) int {
+	checkWriteExtensionPayloadInputs(extPayloadType, extPayloadData, extPayloadBits)
+
+	extBitsUsed := 0
+	if extPayloadBits < extTypeBits {
+		return 0
+	}
+
+	fillByte := byte(0x00)
+	if bitstream != nil {
+		WriteBits(bitstream, uint32(extPayloadType), extTypeBits)
+	}
+	extBitsUsed += extTypeBits
+
+	switch extPayloadType {
+	case ExtLDSACData:
+		if bitstream != nil {
+			WriteBits(bitstream, uint32(extPayloadData[0]), 4)
+		}
+		extBitsUsed += 4
+		writeExtensionPayloadBytes(bitstream, extPayloadData[1:], extPayloadBits)
+		extBitsUsed += extPayloadBits
+	case ExtDynamicRange, ExtSBRData, ExtSBRDataCRC:
+		writeExtensionPayloadBytes(bitstream, extPayloadData, extPayloadBits)
+		extBitsUsed += extPayloadBits
+	case ExtDataElement:
+		dataElementLength := (extPayloadBits + 7) >> 3
+		cnt := dataElementLength
+		loopCounter := 1
+		for dataElementLength >= 255 {
+			loopCounter++
+			dataElementLength -= 255
+		}
+		if bitstream != nil {
+			WriteBits(bitstream, 0x00, extDataElVersionBits)
+			for i := 1; i < loopCounter; i++ {
+				WriteBits(bitstream, 255, 8)
+			}
+			WriteBits(bitstream, uint32(dataElementLength), 8)
+			for i := 0; i < cnt; i++ {
+				WriteBits(bitstream, uint32(extPayloadData[i]), 8)
+			}
+		}
+		extBitsUsed += extDataElVersionBits + loopCounter*8 + cnt*8
+	case ExtFillData:
+		fillByte = 0xa5
+		fallthrough
+	case ExtFIL:
+		if bitstream != nil {
+			writeBits := extPayloadBits
+			WriteBits(bitstream, 0x00, extFillNibbleBits)
+			writeBits -= 8
+			for writeBits >= 8 {
+				WriteBits(bitstream, uint32(fillByte), 8)
+				writeBits -= 8
+			}
+		}
+		extBitsUsed += extFillNibbleBits + (extPayloadBits &^ 0x7) - 8
+	default:
+		if bitstream != nil {
+			writeBits := extPayloadBits
+			WriteBits(bitstream, 0x00, extFillNibbleBits)
+			writeBits -= 8
+			for writeBits >= 8 {
+				WriteBits(bitstream, uint32(fillByte), 8)
+				writeBits -= 8
+			}
+		}
+		extBitsUsed += extFillNibbleBits + (extPayloadBits &^ 0x7) - 8
+	}
+
+	return extBitsUsed
+}
+
+func FDKaacEncWriteDataStreamElement(bitstream *BitStream, elementInstanceTag int, dataPayloadBytes int, dataBuffer []byte, alignAnchor uint32) int {
+	checkWriteDataStreamElementInputs(elementInstanceTag, dataPayloadBytes, dataBuffer)
+
+	dseBitsUsed := 0
+	offset := 0
+	for dataPayloadBytes > 0 {
+		escCount := -1
+		cnt := minInt(maxDSEDataBytes, dataPayloadBytes)
+
+		dseBitsUsed += elIDBits + elInstanceTagBits + dataByteAlignFlagBits + dataLenCountBits
+		if cnt >= 255 {
+			escCount = cnt - 255
+			dseBitsUsed += dataLenEscCountBits
+		}
+		dataPayloadBytes -= cnt
+		dseBitsUsed += cnt * 8
+
+		if bitstream != nil {
+			WriteBits(bitstream, idDSE, elIDBits)
+			WriteBits(bitstream, uint32(elementInstanceTag), elInstanceTagBits)
+			WriteBits(bitstream, dataByteAlignFlag, dataByteAlignFlagBits)
+			if escCount >= 0 {
+				WriteBits(bitstream, 255, dataLenCountBits)
+				WriteBits(bitstream, uint32(escCount), dataLenEscCountBits)
+			} else {
+				WriteBits(bitstream, uint32(cnt), dataLenCountBits)
+			}
+			for i := 0; i < cnt; i++ {
+				WriteBits(bitstream, uint32(dataBuffer[offset+i]), 8)
+			}
+		}
+		offset += cnt
+	}
+	return dseBitsUsed
+}
+
+func FDKaacEncWriteExtensionData(bitstream *BitStream, extension *QCOutExtension, elInstanceTag int, alignAnchor uint32, syntaxFlags uint32, aot int, epConfig int8) int {
+	checkWriteExtensionDataInputs(extension, elInstanceTag)
+
+	payloadBits := extension.PayloadBits
+	extBitsUsed := 0
+
+	if syntaxFlags&(acScalable|acER) != 0 {
+		if syntaxFlags&acELD != 0 && (extension.Type == ExtSBRData || extension.Type == ExtSBRDataCRC) {
+			writeExtensionPayloadBytes(bitstream, extension.Payload, payloadBits)
+			return payloadBits
+		}
+		return FDKaacEncWriteExtensionPayload(bitstream, extension.Type, extension.Payload, payloadBits)
+	}
+
+	if extension.Type == ExtDataElement {
+		return FDKaacEncWriteDataStreamElement(bitstream, elInstanceTag, extension.PayloadBits>>3, extension.Payload, alignAnchor)
+	}
+
+	for payloadBits >= elIDBits+fillElCountBits {
+		escCount := -1
+		alignBits := 7
+
+		if extension.Type == ExtFillData || extension.Type == ExtFIL {
+			payloadBits -= elIDBits + fillElCountBits
+			if payloadBits >= 15*8 {
+				payloadBits -= fillElEscCountBits
+				escCount = 0
+			}
+			alignBits = 0
+		}
+
+		cnt := minInt(maxFillDataBytes, (payloadBits+alignBits)>>3)
+		if cnt >= 15 {
+			escCount = cnt - 15 + 1
+		}
+
+		if bitstream != nil {
+			WriteBits(bitstream, idFIL, elIDBits)
+			if escCount >= 0 {
+				WriteBits(bitstream, 15, fillElCountBits)
+				WriteBits(bitstream, uint32(escCount), fillElEscCountBits)
+			} else {
+				WriteBits(bitstream, uint32(cnt), fillElCountBits)
+			}
+		}
+
+		extBitsUsed += elIDBits + fillElCountBits
+		if escCount >= 0 {
+			extBitsUsed += fillElEscCountBits
+		}
+
+		cntBits := minInt(cnt*8, payloadBits)
+		extBitsUsed += FDKaacEncWriteExtensionPayload(bitstream, extension.Type, extension.Payload, cntBits)
+		payloadBits -= cntBits
+	}
+	return extBitsUsed
+}
+
+func writeExtensionPayloadBytes(bitstream *BitStream, payload []byte, payloadBits int) {
+	if bitstream == nil {
+		return
+	}
+	writeBits := payloadBits
+	i := 0
+	for writeBits >= 8 {
+		WriteBits(bitstream, uint32(payload[i]), 8)
+		i++
+		writeBits -= 8
+	}
+	if writeBits > 0 {
+		WriteBits(bitstream, uint32(payload[i]>>(8-writeBits)), uint32(writeBits))
+	}
+}
+
 func checkEncodeSpectralDataInputs(sfbOffset []int, sectionData *SectionData, quantSpectrum []int16, bitstream *BitStream) {
 	if bitstream == nil {
 		panic("fdkaac: nil spectral-data bitstream")
@@ -477,6 +696,53 @@ func tnsCoefBits(tnsInfo *TNSInfo, window int, filter int) int {
 		}
 	}
 	return 2
+}
+
+func checkWriteExtensionPayloadInputs(extPayloadType int, extPayloadData []byte, extPayloadBits int) {
+	if extPayloadType < 0 || extPayloadType > 0xf {
+		panic("fdkaac: invalid extension payload type")
+	}
+	if extPayloadBits < 0 {
+		panic("fdkaac: invalid extension payload length")
+	}
+	if extPayloadBits < extTypeBits {
+		return
+	}
+
+	needBytes := 0
+	switch extPayloadType {
+	case ExtLDSACData:
+		needBytes = 1 + ((extPayloadBits + 7) >> 3)
+	case ExtDynamicRange, ExtSBRData, ExtSBRDataCRC:
+		needBytes = (extPayloadBits + 7) >> 3
+	case ExtDataElement:
+		needBytes = (extPayloadBits + 7) >> 3
+	}
+	if len(extPayloadData) < needBytes {
+		panic("fdkaac: short extension payload")
+	}
+}
+
+func checkWriteDataStreamElementInputs(elementInstanceTag int, dataPayloadBytes int, dataBuffer []byte) {
+	if elementInstanceTag < 0 || elementInstanceTag >= (1<<elInstanceTagBits) {
+		panic("fdkaac: invalid DSE instance tag")
+	}
+	if dataPayloadBytes < 0 {
+		panic("fdkaac: invalid DSE payload length")
+	}
+	if len(dataBuffer) < dataPayloadBytes {
+		panic("fdkaac: short DSE payload")
+	}
+}
+
+func checkWriteExtensionDataInputs(extension *QCOutExtension, elInstanceTag int) {
+	if extension == nil {
+		panic("fdkaac: nil extension payload")
+	}
+	checkWriteExtensionPayloadInputs(extension.Type, extension.Payload, extension.PayloadBits)
+	if extension.Type == ExtDataElement {
+		checkWriteDataStreamElementInputs(elInstanceTag, extension.PayloadBits>>3, extension.Payload)
+	}
 }
 
 func checkEncodeScaleFactorDataInputs(maxValueInSfb []uint32, sectionData *SectionData, scalefac []int, noiseNrg []int, isScale []int) {

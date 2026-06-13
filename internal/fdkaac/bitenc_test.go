@@ -152,6 +152,82 @@ func TestFDKaacEncEncodeOneBitToolPlaceholders(t *testing.T) {
 	runBitencVector(t, "gain-control", FDKaacEncEncodeGainControlData, 1, []byte{0x00})
 }
 
+func TestFDKaacEncWriteExtensionPayloadVectors(t *testing.T) {
+	payload := [...]byte{0xab, 0xcd}
+	runBitencVector(t, "extension-dynamic-range", func(bs *BitStream) int {
+		return FDKaacEncWriteExtensionPayload(bs, ExtDynamicRange, payload[:], 12)
+	}, 16, []byte{0xba, 0xbc})
+
+	ldsacPayload := [...]byte{0x0f, 0x12, 0x34}
+	runBitencVector(t, "extension-ldsac", func(bs *BitStream) int {
+		return FDKaacEncWriteExtensionPayload(bs, ExtLDSACData, ldsacPayload[:], 12)
+	}, 20, []byte{0x9f, 0x12, 0x30})
+
+	dataElementPayload := [...]byte{0xde, 0xad, 0xbe}
+	runBitencVector(t, "extension-data-element", func(bs *BitStream) int {
+		return FDKaacEncWriteExtensionPayload(bs, ExtDataElement, dataElementPayload[:], 20)
+	}, 40, []byte{0x20, 0x03, 0xde, 0xad, 0xbe})
+
+	runBitencVector(t, "extension-fill-data", func(bs *BitStream) int {
+		return FDKaacEncWriteExtensionPayload(bs, ExtFillData, nil, 24)
+	}, 24, []byte{0x10, 0xa5, 0xa5})
+
+	runBitencVector(t, "extension-fill", func(bs *BitStream) int {
+		return FDKaacEncWriteExtensionPayload(bs, ExtFIL, nil, 24)
+	}, 24, []byte{0x00, 0x00, 0x00})
+
+	if got := FDKaacEncWriteExtensionPayload(nil, ExtDynamicRange, payload[:], 12); got != 16 {
+		t.Fatalf("nil extension-payload count = %d, want 16", got)
+	}
+	if got := FDKaacEncWriteExtensionPayload(nil, ExtFIL, nil, 3); got != 0 {
+		t.Fatalf("too-small extension-payload count = %d, want 0", got)
+	}
+}
+
+func TestFDKaacEncWriteDataStreamElementVectors(t *testing.T) {
+	payload := [...]byte{0xab, 0xcd}
+	runBitencVector(t, "dse-small", func(bs *BitStream) int {
+		return FDKaacEncWriteDataStreamElement(bs, 3, 2, payload[:], 0)
+	}, 32, []byte{0x86, 0x02, 0xab, 0xcd})
+
+	var large [260]byte
+	if got := FDKaacEncWriteDataStreamElement(nil, 0, len(large), large[:], 0); got != 2104 {
+		t.Fatalf("large DSE count = %d, want 2104", got)
+	}
+}
+
+func TestFDKaacEncWriteExtensionDataVectors(t *testing.T) {
+	fill := QCOutExtension{Type: ExtFillData, PayloadBits: 31}
+	runBitencVector(t, "ga-fill-data", func(bs *BitStream) int {
+		return FDKaacEncWriteExtensionData(bs, &fill, 0, 0, 0, 2, 0)
+	}, 31, []byte{0xc6, 0x21, 0x4b, 0x4a})
+
+	dynamicPayload := [...]byte{0xab, 0xcd}
+	dynamic := QCOutExtension{Type: ExtDynamicRange, PayloadBits: 12, Payload: dynamicPayload[:]}
+	runBitencVector(t, "ga-dynamic-range", func(bs *BitStream) int {
+		return FDKaacEncWriteExtensionData(bs, &dynamic, 0, 0, 0, 2, 0)
+	}, 23, []byte{0xc5, 0x75, 0x78})
+
+	runBitencVector(t, "er-dynamic-range", func(bs *BitStream) int {
+		return FDKaacEncWriteExtensionData(bs, &dynamic, 0, 0, acER, 2, 0)
+	}, 16, []byte{0xba, 0xbc})
+
+	sbr := QCOutExtension{Type: ExtSBRData, PayloadBits: 12, Payload: dynamicPayload[:]}
+	runBitencVector(t, "eld-sbr-direct", func(bs *BitStream) int {
+		return FDKaacEncWriteExtensionData(bs, &sbr, 0, 0, acER|acELD, 2, 0)
+	}, 12, []byte{0xab, 0xc0})
+
+	dataElementPayload := [...]byte{0xab, 0xcd}
+	dataElement := QCOutExtension{Type: ExtDataElement, PayloadBits: 16, Payload: dataElementPayload[:]}
+	runBitencVector(t, "ga-data-element", func(bs *BitStream) int {
+		return FDKaacEncWriteExtensionData(bs, &dataElement, 3, 0, 0, 2, 0)
+	}, 32, []byte{0x86, 0x02, 0xab, 0xcd})
+
+	if got := FDKaacEncWriteExtensionData(nil, &fill, 0, 0, 0, 2, 0); got != 31 {
+		t.Fatalf("nil GA fill-data count = %d, want 31", got)
+	}
+}
+
 func TestFDKaacEncEncodeSpectralDataVectors(t *testing.T) {
 	longTC, longSD := buildBitencSectionData(t, fillDynLongCase)
 	runBitencVector(t, "long-spectral", func(bs *BitStream) int {
@@ -281,6 +357,35 @@ func TestFDKaacEncBitencRejectsInvalid(t *testing.T) {
 			tns.Coef[0][0][0] = 8
 			FDKaacEncEncodeTnsData(&tns, LongWindow, &bs)
 		}},
+		{"invalid extension type", func() {
+			FDKaacEncWriteExtensionPayload(&bs, 16, nil, 8)
+		}},
+		{"negative extension bits", func() {
+			FDKaacEncWriteExtensionPayload(&bs, ExtFIL, nil, -1)
+		}},
+		{"short extension payload", func() {
+			payload := [...]byte{0xab}
+			FDKaacEncWriteExtensionPayload(&bs, ExtDynamicRange, payload[:], 12)
+		}},
+		{"invalid DSE tag", func() {
+			payload := [...]byte{0xab}
+			FDKaacEncWriteDataStreamElement(&bs, 16, 1, payload[:], 0)
+		}},
+		{"negative DSE length", func() {
+			FDKaacEncWriteDataStreamElement(&bs, 0, -1, nil, 0)
+		}},
+		{"short DSE payload", func() {
+			payload := [...]byte{0xab}
+			FDKaacEncWriteDataStreamElement(&bs, 0, 2, payload[:], 0)
+		}},
+		{"nil extension data", func() {
+			FDKaacEncWriteExtensionData(&bs, nil, 0, 0, 0, 2, 0)
+		}},
+		{"short data-element extension", func() {
+			payload := [...]byte{0xab}
+			extension := QCOutExtension{Type: ExtDataElement, PayloadBits: 16, Payload: payload[:]}
+			FDKaacEncWriteExtensionData(&bs, &extension, 0, 0, 0, 2, 0)
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() {
@@ -291,6 +396,36 @@ func TestFDKaacEncBitencRejectsInvalid(t *testing.T) {
 			ResetBitStream(&bs, BSWriter)
 			tt.fn()
 		})
+	}
+}
+
+func TestFDKaacEncExtensionWritersAllocs(t *testing.T) {
+	payload := [...]byte{0xab, 0xcd}
+	dynamic := QCOutExtension{Type: ExtDynamicRange, PayloadBits: 12, Payload: payload[:]}
+	fill := QCOutExtension{Type: ExtFillData, PayloadBits: 31}
+	dataElement := QCOutExtension{Type: ExtDataElement, PayloadBits: 16, Payload: payload[:]}
+	var storage [128]byte
+	var out [128]byte
+	var bs BitStream
+	if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		clear(storage[:])
+		clear(out[:])
+		ResetBitStream(&bs, BSWriter)
+		FDKaacEncWriteExtensionPayload(&bs, ExtDynamicRange, payload[:], 12)
+		FDKaacEncWriteExtensionData(&bs, &dynamic, 0, 0, 0, 2, 0)
+		FDKaacEncWriteExtensionData(&bs, &fill, 0, 0, 0, 2, 0)
+		FDKaacEncWriteExtensionData(&bs, &dataElement, 3, 0, 0, 2, 0)
+		ByteAlign(&bs, 0)
+		n := FetchBuffer(&bs, out[:])
+		bitCountSink = n
+		bitCountHashSink = hashHuffBytes(out[:n])
+	})
+	if allocs != 0 {
+		t.Fatalf("extension writer allocations = %v, want 0", allocs)
 	}
 }
 
