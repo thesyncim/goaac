@@ -17,6 +17,11 @@ const maxScfDelta = 60
 const distFacShift = 3
 const scfDeltaPeLimit = FixpDBL(0x00140000) // FDK FL2FXCONST_DBL(10.0f / (1 << (2 * AS_PE_FAC_SHIFT))).
 const distFactorLdData = FixpDBL(-10802114) // FDK FL2FXCONST_DBL(-0.0050301265), ld64(1/1.25).
+const scfDistMaxFac = FixpDBL(0x2aaaaaab)
+const scfLd1e3 = FixpDBL(0x13ee7b47)
+const scfFinerDistRatio = FixpDBL(0x66666666)
+const scfDistIncreaseLimit = FixpDBL(0x0055077a)
+const scfEnergyDecreaseLimit = FixpDBL(0x00ff2bfe)
 
 type QCOutChannel struct {
 	MdctSpectrum        [1024]FixpDBL
@@ -541,6 +546,263 @@ func FDKaacEncAssimilateMultipleScf(
 			}
 		}
 		if scfAct <= scfMin {
+			break
+		}
+	}
+}
+
+func FDKaacEncAssimilateMultipleScf2(
+	psyOutChan *PsyOutChannel,
+	qcOutChannel *QCOutChannel,
+	quantSpec []int16,
+	quantSpecTmp []int16,
+	dZoneQuantEnable int,
+	scf []int,
+	minScf []int,
+	sfbDist []FixpDBL,
+	sfbConstPePart []FixpDBL,
+	sfbFormFactorLdData []FixpDBL,
+	sfbNRelevantLines []FixpDBL,
+) {
+	checkAssimilateMultipleScfInputs(
+		psyOutChan, qcOutChannel, quantSpec, quantSpecTmp, scf, minScf, sfbDist,
+		sfbConstPePart, sfbFormFactorLdData, sfbNRelevantLines,
+	)
+
+	sfbCnt := psyOutChan.SfbCnt
+	scfMin := fdkIntMax
+	scfMax := fdkIntMin
+	for sfb := 0; sfb < sfbCnt; sfb++ {
+		if scf[sfb] != fdkIntMin {
+			scfMin = minInt(scfMin, scf[sfb])
+			scfMax = maxInt(scfMax, scf[sfb])
+		}
+	}
+	if scfMax == fdkIntMin {
+		return
+	}
+
+	var scfTmp [maxGroupedSFB]int
+	var sfbDistNew [maxGroupedSFB]FixpDBL
+	var sfbDistMax [maxGroupedSFB]FixpDBL
+	deltaPe := FixpDBL(0)
+	stopSfb := 0
+	scfAct := fdkIntMin
+	for {
+		scfPrev := scfAct
+
+		sfb := stopSfb
+		for sfb < sfbCnt && scf[sfb] == fdkIntMin {
+			sfb++
+		}
+		startSfb := sfb
+		if startSfb >= sfbCnt {
+			break
+		}
+		scfAct = scf[startSfb]
+		sfb++
+		for sfb < sfbCnt && (scf[sfb] == fdkIntMin || scf[sfb] == scf[startSfb]) {
+			sfb++
+		}
+		stopSfb = sfb
+
+		scfNext := scfAct
+		if stopSfb < sfbCnt {
+			scfNext = scf[stopSfb]
+		}
+		if scfPrev == fdkIntMin {
+			scfPrev = scfAct
+		}
+
+		scfPrevNextMax := maxInt(scfPrev, scfNext)
+		scfPrevNextMin := minInt(scfPrev, scfNext)
+		scfHi := maxInt(scfPrevNextMax, scfAct)
+		scfLo := scfPrevNextMax
+		if scfPrevNextMax >= scfAct {
+			scfLo = minInt(scfAct, scfPrevNextMin)
+		}
+
+		if startSfb < sfbCnt && scfHi-scfLo <= maxScfDelta {
+			if scfHi > scf[startSfb] {
+				for sfb = startSfb; sfb < stopSfb; sfb++ {
+					if scf[sfb] != fdkIntMin {
+						sfbDistMax[sfb] = FMultDD(scfDistMaxFac, qcOutChannel.SfbThresholdLdData[sfb]) +
+							FMultDD(scfDistMaxFac, sfbDist[sfb]) +
+							FMultDD(scfDistMaxFac, sfbDist[sfb])
+						sfbDistMax[sfb] = maxFixpDBL(sfbDistMax[sfb], qcOutChannel.SfbEnergyLdData[sfb]-scfLd1e3)
+						sfbDistMax[sfb] = minFixpDBL(sfbDistMax[sfb], qcOutChannel.SfbThresholdLdData[sfb])
+					}
+				}
+
+				bCheckScf := true
+				for scfNew := scf[startSfb] + 1; scfNew <= scfHi; scfNew++ {
+					copy(scfTmp[:], scf[:])
+					for sfb = startSfb; sfb < stopSfb; sfb++ {
+						if scfTmp[sfb] != fdkIntMin {
+							scfTmp[sfb] = scfNew
+						}
+					}
+
+					deltaScfBits := FDKaacEncCountScfBitsDiff(scf, scfTmp[:], sfbCnt, startSfb, stopSfb)
+					deltaSpecPe := FDKaacEncCalcSpecPeDiff(
+						qcOutChannel.SfbEnergyLdData[:], scf, scfTmp[:],
+						sfbConstPePart, sfbFormFactorLdData, sfbNRelevantLines, startSfb, stopSfb,
+					)
+					deltaPeNew := deltaPe + deltaScfBits + deltaSpecPe
+					if deltaPeNew < 0 {
+						bSuccess := true
+						for sfb = startSfb; sfb < stopSfb; sfb++ {
+							if scfTmp[sfb] != fdkIntMin {
+								sfbOffs := psyOutChan.SfbOffsets[sfb]
+								sfbWidth := psyOutChan.SfbOffsets[sfb+1] - sfbOffs
+								sfbDistNew[sfb] = FDKaacEncCalcSfbDist(
+									qcOutChannel.MdctSpectrum[sfbOffs:],
+									quantSpecTmp[sfbOffs:],
+									sfbWidth,
+									scfNew,
+									dZoneQuantEnable,
+								)
+								if sfbDistNew[sfb] > sfbDistMax[sfb] {
+									bSuccess = false
+									if sfbDistNew[sfb] == qcOutChannel.SfbEnergyLdData[sfb] {
+										bCheckScf = false
+									}
+									break
+								}
+							}
+						}
+						if !bCheckScf {
+							break
+						}
+						if bSuccess {
+							deltaPe = deltaPeNew
+							for sfb = startSfb; sfb < stopSfb; sfb++ {
+								if scf[sfb] != fdkIntMin {
+									sfbOffs := psyOutChan.SfbOffsets[sfb]
+									sfbWidth := psyOutChan.SfbOffsets[sfb+1] - sfbOffs
+									scf[sfb] = scfNew
+									sfbDist[sfb] = sfbDistNew[sfb]
+									copy(quantSpec[sfbOffs:sfbOffs+sfbWidth], quantSpecTmp[sfbOffs:sfbOffs+sfbWidth])
+								}
+							}
+						}
+					}
+				}
+			}
+
+			if scfAct == scf[startSfb] && scfLo < scfAct && scfMax-scfMin <= maxScfDelta {
+				bminScfViolation := false
+				copy(scfTmp[:], scf[:])
+				scfNew := scfLo
+				for sfb = startSfb; sfb < stopSfb; sfb++ {
+					if scfTmp[sfb] != fdkIntMin {
+						scfTmp[sfb] = scfNew
+						if scfNew < minScf[sfb] {
+							bminScfViolation = true
+						}
+					}
+				}
+
+				deltaPeNew := FixpDBL(0)
+				if !bminScfViolation {
+					deltaScfBits := FDKaacEncCountScfBitsDiff(scf, scfTmp[:], sfbCnt, startSfb, stopSfb)
+					deltaSpecPe := FDKaacEncCalcSpecPeDiff(
+						qcOutChannel.SfbEnergyLdData[:], scf, scfTmp[:],
+						sfbConstPePart, sfbFormFactorLdData, sfbNRelevantLines, startSfb, stopSfb,
+					)
+					deltaPeNew = deltaPe + deltaScfBits + deltaSpecPe
+				}
+
+				if !bminScfViolation && deltaPeNew < 0 {
+					distOldSum := FixpDBL(0)
+					distNewSum := FixpDBL(0)
+					for sfb = startSfb; sfb < stopSfb; sfb++ {
+						if scfTmp[sfb] != fdkIntMin {
+							distOldSum += CalcInvLdData(sfbDist[sfb]) >> distFacShift
+
+							sfbOffs := psyOutChan.SfbOffsets[sfb]
+							sfbWidth := psyOutChan.SfbOffsets[sfb+1] - sfbOffs
+							sfbDistNew[sfb] = FDKaacEncCalcSfbDist(
+								qcOutChannel.MdctSpectrum[sfbOffs:],
+								quantSpecTmp[sfbOffs:],
+								sfbWidth,
+								scfNew,
+								dZoneQuantEnable,
+							)
+
+							if sfbDistNew[sfb] > qcOutChannel.SfbThresholdLdData[sfb] {
+								distNewSum = distOldSum << 1
+								break
+							}
+							distNewSum += CalcInvLdData(sfbDistNew[sfb]) >> distFacShift
+						}
+					}
+					if distNewSum < FMultDD(scfFinerDistRatio, distOldSum) {
+						deltaPe = deltaPeNew
+						for sfb = startSfb; sfb < stopSfb; sfb++ {
+							if scf[sfb] != fdkIntMin {
+								sfbOffs := psyOutChan.SfbOffsets[sfb]
+								sfbWidth := psyOutChan.SfbOffsets[sfb+1] - sfbOffs
+								scf[sfb] = scfNew
+								sfbDist[sfb] = sfbDistNew[sfb]
+								copy(quantSpec[sfbOffs:sfbOffs+sfbWidth], quantSpecTmp[sfbOffs:sfbOffs+sfbWidth])
+							}
+						}
+					}
+				}
+			}
+
+			if scfMax-scfMin <= maxScfDelta-3 {
+				copy(scfTmp[:], scf[:])
+				for i := 0; i < 3; i++ {
+					scfNew := scfTmp[startSfb] - 1
+					for sfb = startSfb; sfb < stopSfb; sfb++ {
+						if scfTmp[sfb] != fdkIntMin {
+							scfTmp[sfb] = scfNew
+						}
+					}
+					deltaScfBits := FDKaacEncCountScfBitsDiff(scf, scfTmp[:], sfbCnt, startSfb, stopSfb)
+					deltaPeNew := deltaPe + deltaScfBits
+					if deltaPeNew <= 0 {
+						bSuccess := true
+						distOldSum := FixpDBL(0)
+						distNewSum := FixpDBL(0)
+						for sfb = startSfb; sfb < stopSfb; sfb++ {
+							if scfTmp[sfb] != fdkIntMin {
+								sfbOffs := psyOutChan.SfbOffsets[sfb]
+								sfbWidth := psyOutChan.SfbOffsets[sfb+1] - sfbOffs
+								sfbEnQ, sfbDistQ := FDKaacEncCalcSfbQuantEnergyAndDist(
+									qcOutChannel.MdctSpectrum[sfbOffs:],
+									quantSpec[sfbOffs:],
+									sfbWidth,
+									scfNew,
+								)
+								sfbDistNew[sfb] = sfbDistQ
+
+								distOldSum += CalcInvLdData(sfbDist[sfb]) >> distFacShift
+								distNewSum += CalcInvLdData(sfbDistNew[sfb]) >> distFacShift
+								if sfbDistNew[sfb] > sfbDist[sfb]+scfDistIncreaseLimit ||
+									sfbEnQ < qcOutChannel.SfbEnergyLdData[sfb]-scfEnergyDecreaseLimit {
+									bSuccess = false
+									break
+								}
+							}
+						}
+						if distNewSum < distOldSum && bSuccess {
+							deltaPe = deltaPeNew
+							for sfb = startSfb; sfb < stopSfb; sfb++ {
+								if scf[sfb] != fdkIntMin {
+									scf[sfb] = scfNew
+									sfbDist[sfb] = sfbDistNew[sfb]
+								}
+							}
+						}
+					}
+				}
+			}
+		}
+
+		if stopSfb > sfbCnt {
 			break
 		}
 	}

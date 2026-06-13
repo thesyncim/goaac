@@ -522,6 +522,148 @@ func TestFDKaacEncAssimilateMultipleScfVectors(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncAssimilateMultipleScf2Vectors(t *testing.T) {
+	const min = fdkIntMin
+	tests := []struct {
+		name      string
+		scf       [5]int
+		minScf    [5]int
+		dist      [5]FixpDBL
+		threshold [5]FixpDBL
+		quantFill int16
+		tempFill  int16
+		wantScf   [5]int
+		wantDist  [5]FixpDBL
+		wantConst [5]FixpDBL
+		wantQuant [11]int16
+		wantTmp   [11]int16
+		hashScf   uint64
+		hashDist  uint64
+		hashConst uint64
+		hashQuant uint64
+		hashTmp   uint64
+	}{
+		{
+			name:      "coarser regional refinement",
+			scf:       [5]int{4, 4, 6, min, 7},
+			dist:      [5]FixpDBL{-500000000, -500000000, MaxValDBL, 0, MaxValDBL},
+			threshold: [5]FixpDBL{0, 0, 0, 0, 0},
+			quantFill: 77,
+			tempFill:  -77,
+			wantScf:   [5]int{6, 6, 7, min, 5},
+			wantDist:  [5]FixpDBL{-660286388, -458959796, -188162553, 0, MinValDBL},
+			wantConst: [5]FixpDBL{-39333917, -19333917, -39333917, FixpDBL(min), -39333917},
+			wantQuant: [11]int16{0, 0, 0, 0, 0, 0, 0, 77, 77, 77, 77},
+			wantTmp:   [11]int16{0, 0, 0, 0, 0, 0, 0, -77, -77, -77, -77},
+			hashScf:   0xb0d1ead301f31b57,
+			hashDist:  0x763f04eb3cc09920,
+			hashConst: 0xd454cc19f34a5c7a,
+			hashQuant: 0x46e7282a1342b675,
+			hashTmp:   0x192fec08242e8f95,
+		},
+		{
+			name:      "finer regional refinement",
+			scf:       [5]int{4, 7, 7, min, 4},
+			dist:      [5]FixpDBL{0, MaxValDBL, MaxValDBL, 0, 0},
+			threshold: [5]FixpDBL{0, 0, 0, 0, 0},
+			quantFill: 77,
+			tempFill:  -77,
+			wantScf:   [5]int{7, 4, 4, min, 6},
+			wantDist:  [5]FixpDBL{-660286388, -458959796, -188162553, 0, -352594892},
+			wantConst: [5]FixpDBL{-39333917, -19333917, -39333917, FixpDBL(min), -39333917},
+			wantQuant: [11]int16{0, 0, 0, 0, 0, 0, 0, 77, 77, 0, 0},
+			wantTmp:   [11]int16{0, 0, 0, 0, 0, 0, 0, -77, -77, 0, 0},
+			hashScf:   0x976dd2c7a27664a4,
+			hashDist:  0x73c5d4880a3be369,
+			hashConst: 0xd454cc19f34a5c7a,
+			hashQuant: 0x09e016fac6b2a9c5,
+			hashTmp:   0xf8ad2d2fb371dc55,
+		},
+		{
+			name:      "no-quant lowering after min rejection",
+			scf:       [5]int{4, 7, 7, min, 4},
+			minScf:    [5]int{0, 7, 7, 0, 0},
+			dist:      [5]FixpDBL{0, MaxValDBL, MaxValDBL, 0, 0},
+			threshold: [5]FixpDBL{0, 0, 0, 0, 0},
+			quantFill: 77,
+			tempFill:  -77,
+			wantScf:   [5]int{7, 5, 5, min, 7},
+			wantDist:  [5]FixpDBL{-660286388, MinValDBL, MinValDBL, 0, -352594892},
+			wantConst: [5]FixpDBL{-39333917, FixpDBL(min), FixpDBL(min), FixpDBL(min), -39333917},
+			wantQuant: [11]int16{0, 0, 77, 77, 77, 77, 77, 77, 77, 0, 0},
+			wantTmp:   [11]int16{0, 0, -77, -77, -77, -77, -77, -77, -77, 0, 0},
+			hashScf:   0x912310f7b0f300c5,
+			hashDist:  0xaa3a37a0b01b1c64,
+			hashConst: 0xa12ebc218e6b2ab5,
+			hashQuant: 0xa411277a9d818878,
+			hashTmp:   0x16ba42d630e6ca35,
+		},
+		{
+			name:      "threshold rejection keeps committed quantized spectrum",
+			scf:       [5]int{4, 4, 6, min, 7},
+			dist:      [5]FixpDBL{-500000000, -500000000, MaxValDBL, 0, MaxValDBL},
+			threshold: [5]FixpDBL{-700000000, -700000000, -700000000, 0, -700000000},
+			quantFill: 77,
+			tempFill:  -77,
+			wantScf:   [5]int{4, 4, 5, min, 5},
+			wantDist:  [5]FixpDBL{-500000000, -500000000, MinValDBL, 0, MinValDBL},
+			wantConst: [5]FixpDBL{-39333917, -19333917, -39333917, FixpDBL(min), -39333917},
+			wantQuant: [11]int16{77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77},
+			wantTmp:   [11]int16{0, 0, -77, -77, 0, 0, 0, -77, -77, 0, 0},
+			hashScf:   0x9fed975e2211e8d5,
+			hashDist:  0xf0b30aebe9e8a739,
+			hashConst: 0xd454cc19f34a5c7a,
+			hashQuant: 0x53d5c4a2713d7b78,
+			hashTmp:   0xfcde740d264b1715,
+		},
+		{
+			name:      "irrelevant scalefactors do not move",
+			scf:       [5]int{min, min, min, min, min},
+			dist:      [5]FixpDBL{0, MaxValDBL, MaxValDBL, 0, MaxValDBL},
+			quantFill: 77,
+			tempFill:  -77,
+			wantScf:   [5]int{min, min, min, min, min},
+			wantDist:  [5]FixpDBL{0, MaxValDBL, MaxValDBL, 0, MaxValDBL},
+			wantConst: [5]FixpDBL{FixpDBL(min), FixpDBL(min), FixpDBL(min), FixpDBL(min), FixpDBL(min)},
+			wantQuant: [11]int16{77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77},
+			wantTmp:   [11]int16{-77, -77, -77, -77, -77, -77, -77, -77, -77, -77, -77},
+			hashScf:   0x1dd8a261589532b5,
+			hashDist:  0xa9fe0a9be26bce89,
+			hashConst: 0x1dd8a261589532b5,
+			hashQuant: 0x53d5c4a2713d7b78,
+			hashTmp:   0x488c9dabb335b135,
+		},
+	}
+
+	for _, tt := range tests {
+		var psy PsyOutChannel
+		var qc QCOutChannel
+		var quant [11]int16
+		var quantTmp [11]int16
+		var minScf [5]int
+		var constPart [5]FixpDBL
+		var form [5]FixpDBL
+		var lines [5]FixpDBL
+		setupAssimilateSingleVector(&psy, &qc, quant[:], quantTmp[:], minScf[:], constPart[:], form[:])
+		if tt.minScf != ([5]int{}) {
+			minScf = tt.minScf
+		}
+		fillImproveScfQuant(quant[:], tt.quantFill)
+		fillImproveScfQuant(quantTmp[:], tt.tempFill)
+		copy(qc.SfbThresholdLdData[:], tt.threshold[:])
+		scf := tt.scf
+		dist := tt.dist
+
+		FDKaacEncAssimilateMultipleScf2(&psy, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:])
+
+		assertIntSlice(t, tt.name+" scf", scf[:], tt.wantScf[:], tt.hashScf)
+		assertFixpDBLSlice(t, tt.name+" distortion", dist[:], tt.wantDist[:], tt.hashDist)
+		assertFixpDBLSlice(t, tt.name+" const PE", constPart[:], tt.wantConst[:], tt.hashConst)
+		assertInt16Slice(t, tt.name+" quant", quant[:], tt.wantQuant[:], tt.hashQuant)
+		assertInt16Slice(t, tt.name+" temp quant", quantTmp[:], tt.wantTmp[:], tt.hashTmp)
+	}
+}
+
 func TestFDKaacEncCalcFormFactorRejectsInvalid(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -956,6 +1098,54 @@ func TestFDKaacEncAssimilateMultipleScfRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncAssimilateMultipleScf2RejectsInvalid(t *testing.T) {
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var quant [11]int16
+	var quantTmp [11]int16
+	var scf [5]int
+	var minScf [5]int
+	var dist [5]FixpDBL
+	var constPart [5]FixpDBL
+	var form [5]FixpDBL
+	var lines [5]FixpDBL
+	setupAssimilateSingleVector(&psy, &qc, quant[:], quantTmp[:], minScf[:], constPart[:], form[:])
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{name: "nil psy", fn: func() {
+			FDKaacEncAssimilateMultipleScf2(nil, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:])
+		}},
+		{name: "nil qc", fn: func() {
+			FDKaacEncAssimilateMultipleScf2(&psy, nil, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:])
+		}},
+		{name: "bad band count", fn: func() {
+			bad := psy
+			bad.SfbCnt = 0
+			FDKaacEncAssimilateMultipleScf2(&bad, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:])
+		}},
+		{name: "short scf", fn: func() {
+			FDKaacEncAssimilateMultipleScf2(&psy, &qc, quant[:], quantTmp[:], 0, scf[:4], minScf[:], dist[:], constPart[:], form[:], lines[:])
+		}},
+		{name: "short temp quant", fn: func() {
+			FDKaacEncAssimilateMultipleScf2(&psy, &qc, quant[:], quantTmp[:10], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:])
+		}},
+	}
+
+	for _, tt := range tests {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		}()
+	}
+}
+
 func TestFDKaacEncCalcFormFactorAllocs(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -1081,6 +1271,37 @@ func TestFDKaacEncAssimilateMultipleScfAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("assimilate-multiple allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncAssimilateMultipleScf2Allocs(t *testing.T) {
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var quant [11]int16
+	var quantTmp [11]int16
+	var minScf [5]int
+	var constPart [5]FixpDBL
+	var form [5]FixpDBL
+	var lines [5]FixpDBL
+	scfBase := [5]int{4, 7, 7, fdkIntMin, 4}
+	distBase := [5]FixpDBL{0, MaxValDBL, MaxValDBL, 0, 0}
+	threshold := [5]FixpDBL{0, 0, 0, 0, 0}
+	var scf [5]int
+	var dist [5]FixpDBL
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		setupAssimilateSingleVector(&psy, &qc, quant[:], quantTmp[:], minScf[:], constPart[:], form[:])
+		fillImproveScfQuant(quant[:], 77)
+		fillImproveScfQuant(quantTmp[:], -77)
+		copy(qc.SfbThresholdLdData[:], threshold[:])
+		copy(scf[:], scfBase[:])
+		copy(dist[:], distBase[:])
+		FDKaacEncAssimilateMultipleScf2(&psy, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:])
+		scfPeSink = dist[0] + dist[1] + dist[2] + dist[4]
+		scfPeHashSink = hashBandEnergyInts(scf[:])
+	})
+	if allocs != 0 {
+		t.Fatalf("assimilate-multiple2 allocations = %v, want 0", allocs)
 	}
 }
 
