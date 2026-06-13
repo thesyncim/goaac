@@ -20,6 +20,8 @@ const (
 	qBitFac  = 24
 	qAvgBits = 17
 
+	constPartHeadroom = 4
+
 	bitSaveSlopeLong   FixpDBL = 0x3bbbbbba
 	bitSpendSlopeLong  FixpDBL = 0x55555554
 	bitSaveSlopeShort  FixpDBL = 0x2e8ba2e9
@@ -68,6 +70,8 @@ const (
 	avoidHoleShortSpreadFac FixpDBL = 0x50a3d700
 	avoidHoleMsSpreadFac    FixpDBL = 0x73333300
 	avoidHoleNegHalf        FixpDBL = -0x40000000
+
+	minThresholdRatio29DB FixpDBL = 0x134469eb
 )
 
 type BitresMode int
@@ -367,6 +371,89 @@ func FDKaacEncInitAvoidHoleFlag(
 					ahFlag[ch][idx] = AvoidHoleNone
 				} else {
 					ahFlag[ch][idx] = AvoidHoleInactive
+				}
+			}
+		}
+	}
+}
+
+func FDKaacEncCalcPENoAH(
+	peData *PEData,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	psyOutChannel []*PsyOutChannel,
+	nChannels int,
+) (int, int, int) {
+	checkPENoAHInputs(peData, ahFlag, psyOutChannel, nChannels)
+
+	peTmp := peData.Offset
+	constPartTmp := 0
+	nActiveLinesTmp := 0
+	for ch := 0; ch < nChannels; ch++ {
+		psyCh := psyOutChannel[ch]
+		peChanData := &peData.PEChannelData[ch]
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				if ahFlag[ch][idx] < AvoidHoleActive {
+					peTmp += int(peChanData.SfbPe[idx])
+					constPartTmp += int(peChanData.SfbConstPart[idx] >> constPartHeadroom)
+					nActiveLinesTmp += int(peChanData.SfbNActiveLines[idx])
+				}
+			}
+		}
+	}
+
+	pe := peTmp >> peConstPartShift
+	constPart := constPartTmp >> (peConstPartShift - constPartHeadroom)
+	return pe, constPart, nActiveLinesTmp
+}
+
+func FDKaacEncReduceThresholdsCBR(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	thrExp *[2][maxGroupedSFB]FixpDBL,
+	nChannels int,
+	redValM FixpDBL,
+	redValE int,
+) {
+	checkThresholdReductionInputs(qcOutChannel, psyOutChannel, ahFlag, thrExp, nChannels, redValM, redValE)
+	if redValM == 0 {
+		return
+	}
+
+	for ch := 0; ch < nChannels; ch++ {
+		qcCh := qcOutChannel[ch]
+		psyCh := psyOutChannel[ch]
+		for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+			for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+				idx := sfbGrp + sfb
+				sfbEnLdData := qcCh.SfbWeightedEnergyLdData[idx]
+				sfbThrLdData := qcCh.SfbThresholdLdData[idx]
+				sfbThrExp := thrExp[ch][idx]
+				if sfbEnLdData > sfbThrLdData && ahFlag[ch][idx] != AvoidHoleActive {
+					minScale := minInt(CountLeadingBits(sfbThrExp), CountLeadingBits(redValM)-redValE) - 1
+
+					sfbThrReducedLdData := CalcLdData(fixpAbsDBL(
+						ScaleValueDBL(sfbThrExp, minScale)+
+							ScaleValueDBL(redValM, redValE+minScale),
+					)) - FixpDBL(minScale<<(DfractBits-1-ldDataShift))
+					sfbThrReducedLdData <<= 2
+
+					if sfbThrReducedLdData > qcCh.SfbMinSnrLdData[idx]+sfbEnLdData && ahFlag[ch][idx] != AvoidHoleNone {
+						if qcCh.SfbMinSnrLdData[idx] > MinValDBL-sfbEnLdData {
+							sfbThrReducedLdData = maxFixpDBL(qcCh.SfbMinSnrLdData[idx]+sfbEnLdData, sfbThrLdData)
+						} else {
+							sfbThrReducedLdData = sfbThrLdData
+						}
+						ahFlag[ch][idx] = AvoidHoleActive
+					}
+
+					if sfbEnLdData+MaxValDBL > minThresholdRatio29DB {
+						sfbThrReducedLdData = maxFixpDBL(sfbThrReducedLdData, sfbEnLdData-minThresholdRatio29DB)
+					}
+
+					qcCh.SfbThresholdLdData[idx] = sfbThrReducedLdData
 				}
 			}
 		}
@@ -775,6 +862,48 @@ func checkAvoidHoleInputs(
 		if left.SfbCnt != right.SfbCnt || left.SfbPerGroup != right.SfbPerGroup || left.MaxSfbPerGroup != right.MaxSfbPerGroup {
 			panic("fdkaac: mismatched avoid-hole stereo bands")
 		}
+	}
+}
+
+func checkPENoAHInputs(peData *PEData, ahFlag *[2][maxGroupedSFB]uint8, psyOutChannel []*PsyOutChannel, nChannels int) {
+	if peData == nil {
+		panic("fdkaac: nil no-AH PE data")
+	}
+	if ahFlag == nil {
+		panic("fdkaac: nil no-AH flag scratch")
+	}
+	if nChannels <= 0 || nChannels > 2 {
+		panic("fdkaac: invalid no-AH channel count")
+	}
+	if len(psyOutChannel) < nChannels {
+		panic("fdkaac: short no-AH channel inputs")
+	}
+	for ch := 0; ch < nChannels; ch++ {
+		if psyOutChannel[ch] == nil {
+			panic("fdkaac: nil no-AH psy output")
+		}
+		checkPEChannelShape(psyOutChannel[ch])
+	}
+}
+
+func checkThresholdReductionInputs(
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	ahFlag *[2][maxGroupedSFB]uint8,
+	thrExp *[2][maxGroupedSFB]FixpDBL,
+	nChannels int,
+	redValM FixpDBL,
+	redValE int,
+) {
+	checkThresholdAdjustmentInputs(qcOutChannel, psyOutChannel, nChannels)
+	if ahFlag == nil {
+		panic("fdkaac: nil threshold reduction avoid-hole flags")
+	}
+	if thrExp == nil {
+		panic("fdkaac: nil threshold reduction exponent scratch")
+	}
+	if redValM < 0 || redValE < -DfractBits || redValE > DfractBits {
+		panic("fdkaac: invalid threshold reduction value")
 	}
 }
 
