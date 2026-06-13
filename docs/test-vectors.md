@@ -360,6 +360,13 @@ threshold/order/filter-direction flags, long/short ACF window hashes,
 low-bitrate inactive controls, malformed controls, no-cgo compilation, and zero
 steady-state allocation.
 
+The FDK AAC-LC TNS runtime sync subset is covered with source-shaped vectors
+for `TNS_DATA` state and `FDKaacEnc_TnsSync`. Tests verify long-window
+activation and metadata copying, inactive-source clearing, coefficient
+divergence no-op behavior, short-window subblock synchronization, mixed
+long/short no-op behavior, malformed controls, no-cgo compilation, and zero
+steady-state allocation.
+
 The FDK AAC-LC PNS configuration subset is covered with source-shaped vectors
 for `FDKaacEnc_lookUpPnsUse`, `FDKaacEnc_GetPnsParam`, and
 `FDKaacEnc_InitPnsConfiguration`. Tests verify low-complexity PNS auto-level

@@ -31,6 +31,7 @@ type SFBMaxScale struct {
 
 type PsyDynamic struct {
 	PsyData [2]PsyData
+	TNSData [2]TNSData
 	PNSData [2]PNSData
 }
 
