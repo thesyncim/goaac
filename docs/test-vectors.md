@@ -375,6 +375,14 @@ smoothed-chaos hashing, SFB tonality hashing and scalar pins, `usePns=0` no-op
 behavior, malformed controls, no-cgo compilation, and zero steady-state
 allocation through caller-owned scratch.
 
+The FDK AAC-LC PNS runtime subset is covered with source-shaped vectors for
+`FDKaacEnc_noiseDetect`, `FDKaacEnc_PnsDetect`, `FDKaacEnc_CodePnsChannel`,
+`FDKaacEnc_PreProcessPnsChannelPair`, and `FDKaacEnc_PostProcessPnsChannelPair`.
+Tests verify fuzzy noise detection, PNS flag and noise-energy decisions, coded
+noise-energy clamping, stereo noise correlation, MS-mask postprocessing,
+disabled and short-window no-op controls, malformed controls, no-cgo
+compilation, and zero steady-state allocation.
+
 The FDK AAC-LC psychoacoustic main-initialization wrapper is covered with a
 source-shaped `FDKaacEnc_psyMainInit` vector. Tests compare the wrapper against
 the direct long/short psy, TNS, PNS, and pre-echo initialization sequence,
