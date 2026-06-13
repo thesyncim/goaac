@@ -297,6 +297,13 @@ Tests verify long-window weighting-patch execution, weighted energy/threshold
 mutation, short-window patch-state transition, malformed controls, and zero
 steady-state allocation.
 
+The FDK AAC-LC threshold-adjustment wrapper subset is covered with CBR and VBR
+vectors for `FDKaacEnc_AdjustThresholds`. Tests compare the wrapper branch
+wiring against the already-ported inner CBR/VBR threshold adapters, verify
+post-adjustment threshold unweighting, malformed mapping/control rejection, the
+explicit unsupported guard for multi-element global inter-CBR reduction, no-cgo
+compilation, and zero steady-state allocation.
+
 The FDK AAC-LC bit-reservoir PE distribution subset is covered with
 source-derived vectors for `FDKaacEnc_bitresCalcBitFac`,
 `FDKaacEnc_DistributeBits`, and the high/low bit-reservoir PE-correction

@@ -117,8 +117,11 @@ type bitstreamElementList struct {
 }
 
 type ElementInfo struct {
-	ElType      int
-	InstanceTag int
+	ElType        int
+	InstanceTag   int
+	NChannelsInEl int
+	ChannelIndex  [2]int
+	RelativeBits  FixpDBL
 }
 
 type ToolsInfo struct {
@@ -127,8 +130,9 @@ type ToolsInfo struct {
 }
 
 type PsyOutElement struct {
-	CommonWindow int
-	ToolsInfo    ToolsInfo
+	CommonWindow  int
+	ToolsInfo     ToolsInfo
+	PsyOutChannel [2]*PsyOutChannel
 }
 
 type TNSInfo struct {

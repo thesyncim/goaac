@@ -22,6 +22,9 @@ const (
 )
 
 const (
+	maxChannelElements   = 8
+	minBufSizePerEffChan = 6144
+
 	qBitFac  = 24
 	qAvgBits = 17
 
@@ -183,6 +186,28 @@ type AdjThrState struct {
 	BRESParamShort      BRESParam
 	BitDistributionMode int
 	MaxIter2ndGuess     int
+	AdjThrStateElem     [maxChannelElements]*ATSElement
+}
+
+type ChannelMapping struct {
+	NElements int
+	ElInfo    [maxChannelElements]ElementInfo
+}
+
+type QCOutElement struct {
+	StaticBitsUsed int
+	DynBitsUsed    int
+	ExtBitsUsed    int
+	GrantedDynBits int
+	GrantedPe      int
+	GrantedPeCorr  int
+	PEData         PEData
+	QCOutChannel   [2]*QCOutChannel
+}
+
+type QCOut struct {
+	TotalNoRedPe       int
+	TotalGrantedPeCorr int
 }
 
 type CorrectThresholdScratch struct {
@@ -206,6 +231,19 @@ type AdaptThresholdsToPeResult struct {
 type AdaptThresholdsVBRScratch struct {
 	AhFlag [2][maxGroupedSFB]uint8
 	ThrExp [2][maxGroupedSFB]FixpDBL
+}
+
+type AdjustThresholdsScratch struct {
+	CBR [maxChannelElements]AdaptThresholdsToPeScratch
+	VBR [maxChannelElements]AdaptThresholdsVBRScratch
+}
+
+type AdjustThresholdsResult struct {
+	AdaptedElements     int
+	Iterations          int
+	RedPe               int
+	LastReductionValueM FixpDBL
+	LastReductionValueE int
 }
 
 func FDKaacEncInitBitresState(state *AdjThrState) {
@@ -827,6 +865,184 @@ func FDKaacEncAdaptThresholdsVBR(
 		adjThrStateElement.VBRQualFactor,
 		&adjThrStateElement.ChaosMeasureOld,
 	)
+}
+
+func FDKaacEncAdjustThresholds(
+	adjThrState *AdjThrState,
+	qcElement []*QCOutElement,
+	qcOut *QCOut,
+	psyOutElement []*PsyOutElement,
+	cbrBitrateMode int,
+	cm *ChannelMapping,
+	scratch *AdjustThresholdsScratch,
+) AdjustThresholdsResult {
+	checkAdjustThresholdsInputs(adjThrState, qcElement, qcOut, psyOutElement, cm, scratch)
+
+	result := AdjustThresholdsResult{}
+	if cbrBitrateMode != 0 {
+		switch adjThrState.BitDistributionMode {
+		case BitDistributionModeIntraElement:
+			for elementID := 0; elementID < cm.NElements; elementID++ {
+				if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+					continue
+				}
+				qcEl := qcElement[elementID]
+				if qcEl.GrantedPeCorr < int(qcEl.PEData.Pe) {
+					res := fdkaacEncAdaptThresholdsToPeCBRElement(
+						qcEl,
+						psyOutElement[elementID],
+						adjThrState.AdjThrStateElem[elementID],
+						&scratch.CBR[elementID],
+						cm.ElInfo[elementID].NChannelsInEl,
+						qcEl.GrantedPeCorr,
+						adjThrState.MaxIter2ndGuess,
+					)
+					fdkaacEncMergeAdjustThresholdsResult(&result, res)
+				}
+			}
+
+		case BitDistributionModeInterElement:
+			if qcOut.TotalGrantedPeCorr < qcOut.TotalNoRedPe {
+				if fdkaacEncCountAdjustableElements(cm) != 1 {
+					panic("fdkaac: inter-element threshold adaptation is not ported")
+				}
+				elementID := fdkaacEncFirstAdjustableElement(cm)
+				res := fdkaacEncAdaptThresholdsToPeCBRElement(
+					qcElement[elementID],
+					psyOutElement[elementID],
+					adjThrState.AdjThrStateElem[elementID],
+					&scratch.CBR[elementID],
+					cm.ElInfo[elementID].NChannelsInEl,
+					qcOut.TotalGrantedPeCorr,
+					adjThrState.MaxIter2ndGuess,
+				)
+				fdkaacEncMergeAdjustThresholdsResult(&result, res)
+			} else {
+				for elementID := 0; elementID < cm.NElements; elementID++ {
+					if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+						continue
+					}
+					maxElementPe := fdkaacEncMaxElementPE(
+						cm.ElInfo[elementID].NChannelsInEl,
+						qcElement[elementID],
+						adjThrState.AdjThrStateElem[elementID],
+					)
+					if maxElementPe < int(qcElement[elementID].PEData.Pe) {
+						res := fdkaacEncAdaptThresholdsToPeCBRElement(
+							qcElement[elementID],
+							psyOutElement[elementID],
+							adjThrState.AdjThrStateElem[elementID],
+							&scratch.CBR[elementID],
+							cm.ElInfo[elementID].NChannelsInEl,
+							maxElementPe,
+							adjThrState.MaxIter2ndGuess,
+						)
+						fdkaacEncMergeAdjustThresholdsResult(&result, res)
+					}
+				}
+			}
+
+		default:
+			panic("fdkaac: invalid bit distribution mode")
+		}
+	} else {
+		for elementID := 0; elementID < cm.NElements; elementID++ {
+			if !fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+				continue
+			}
+			qcEl := qcElement[elementID]
+			psyEl := psyOutElement[elementID]
+			FDKaacEncAdaptThresholdsVBR(
+				qcEl.QCOutChannel[:],
+				psyEl.PsyOutChannel[:],
+				&psyEl.ToolsInfo,
+				adjThrState.AdjThrStateElem[elementID],
+				&scratch.VBR[elementID],
+				cm.ElInfo[elementID].NChannelsInEl,
+			)
+			result.AdaptedElements++
+		}
+	}
+
+	fdkaacEncUnweightThresholds(qcElement, psyOutElement, cm)
+	return result
+}
+
+func fdkaacEncAdaptThresholdsToPeCBRElement(
+	qcElement *QCOutElement,
+	psyOutElement *PsyOutElement,
+	adjThrStateElement *ATSElement,
+	scratch *AdaptThresholdsToPeScratch,
+	nChannels int,
+	desiredPe int,
+	maxIter2ndGuess int,
+) AdaptThresholdsToPeResult {
+	return FDKaacEncAdaptThresholdsToPeCBR(
+		&qcElement.PEData,
+		qcElement.QCOutChannel[:],
+		psyOutElement.PsyOutChannel[:],
+		&psyOutElement.ToolsInfo,
+		adjThrStateElement,
+		scratch,
+		nChannels,
+		desiredPe,
+		maxIter2ndGuess,
+	)
+}
+
+func fdkaacEncMergeAdjustThresholdsResult(result *AdjustThresholdsResult, res AdaptThresholdsToPeResult) {
+	result.AdaptedElements++
+	result.Iterations += res.Iterations
+	result.RedPe += res.RedPe
+	result.LastReductionValueM = res.ReductionValueM
+	result.LastReductionValueE = res.ReductionValueE
+}
+
+func fdkaacEncMaxElementPE(nChannels int, qcElement *QCOutElement, adjThrStateElement *ATSElement) int {
+	bits := nChannels*minBufSizePerEffChan - qcElement.StaticBitsUsed - qcElement.ExtBitsUsed
+	if bits < 0 {
+		panic("fdkaac: invalid maximum element PE bit budget")
+	}
+	return fdkaacEncBits2PE2(bits, adjThrStateElement.Bits2PeFactorM, adjThrStateElement.Bits2PeFactorE)
+}
+
+func fdkaacEncUnweightThresholds(qcElement []*QCOutElement, psyOutElement []*PsyOutElement, cm *ChannelMapping) {
+	for elementID := 0; elementID < cm.NElements; elementID++ {
+		nChannels := cm.ElInfo[elementID].NChannelsInEl
+		for ch := 0; ch < nChannels; ch++ {
+			qcCh := qcElement[elementID].QCOutChannel[ch]
+			psyCh := psyOutElement[elementID].PsyOutChannel[ch]
+			for sfbGrp := 0; sfbGrp < psyCh.SfbCnt; sfbGrp += psyCh.SfbPerGroup {
+				for sfb := 0; sfb < psyCh.MaxSfbPerGroup; sfb++ {
+					idx := sfbGrp + sfb
+					qcCh.SfbThresholdLdData[idx] += qcCh.SfbEnFacLd[idx]
+				}
+			}
+		}
+	}
+}
+
+func fdkaacEncIsAdjustableElement(elType int) bool {
+	return elType == idSCE || elType == idCPE || elType == idLFE
+}
+
+func fdkaacEncCountAdjustableElements(cm *ChannelMapping) int {
+	count := 0
+	for elementID := 0; elementID < cm.NElements; elementID++ {
+		if fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			count++
+		}
+	}
+	return count
+}
+
+func fdkaacEncFirstAdjustableElement(cm *ChannelMapping) int {
+	for elementID := 0; elementID < cm.NElements; elementID++ {
+		if fdkaacEncIsAdjustableElement(cm.ElInfo[elementID].ElType) {
+			return elementID
+		}
+	}
+	panic("fdkaac: missing adjustable element")
 }
 
 func FDKaacEncCalcChaosMeasure(psyOutChannel *PsyOutChannel, sfbFormFactorLdData []FixpDBL) FixpDBL {
@@ -1853,6 +2069,93 @@ func checkAdaptThresholdsVBRInputs(
 	}
 	if adjThrStateElement.VBRQualFactor < 0 {
 		panic("fdkaac: invalid VBR threshold-adaptation quality")
+	}
+}
+
+func checkAdjustThresholdsInputs(
+	adjThrState *AdjThrState,
+	qcElement []*QCOutElement,
+	qcOut *QCOut,
+	psyOutElement []*PsyOutElement,
+	cm *ChannelMapping,
+	scratch *AdjustThresholdsScratch,
+) {
+	if adjThrState == nil {
+		panic("fdkaac: nil adjust-threshold state")
+	}
+	if qcOut == nil {
+		panic("fdkaac: nil adjust-threshold qc output")
+	}
+	if cm == nil {
+		panic("fdkaac: nil adjust-threshold channel mapping")
+	}
+	if scratch == nil {
+		panic("fdkaac: nil adjust-threshold scratch")
+	}
+	if cm.NElements <= 0 || cm.NElements > maxChannelElements {
+		panic("fdkaac: invalid adjust-threshold element count")
+	}
+	if len(qcElement) < cm.NElements || len(psyOutElement) < cm.NElements {
+		panic("fdkaac: short adjust-threshold element inputs")
+	}
+	if qcOut.TotalNoRedPe < 0 || qcOut.TotalGrantedPeCorr < 0 {
+		panic("fdkaac: invalid adjust-threshold PE totals")
+	}
+	if adjThrState.BitDistributionMode != BitDistributionModeInterElement &&
+		adjThrState.BitDistributionMode != BitDistributionModeIntraElement {
+		panic("fdkaac: invalid bit distribution mode")
+	}
+	if adjThrState.MaxIter2ndGuess < 0 {
+		panic("fdkaac: invalid adjust-threshold iteration count")
+	}
+
+	for elementID := 0; elementID < cm.NElements; elementID++ {
+		elInfo := cm.ElInfo[elementID]
+		switch elInfo.ElType {
+		case idSCE, idLFE:
+			if elInfo.NChannelsInEl != 1 {
+				panic("fdkaac: invalid mono adjust-threshold element")
+			}
+		case idCPE:
+			if elInfo.NChannelsInEl != 2 {
+				panic("fdkaac: invalid stereo adjust-threshold element")
+			}
+		case idDSE:
+			if elInfo.NChannelsInEl != 0 {
+				panic("fdkaac: invalid DSE adjust-threshold element")
+			}
+			continue
+		default:
+			panic("fdkaac: unsupported adjust-threshold element")
+		}
+
+		if qcElement[elementID] == nil {
+			panic("fdkaac: nil adjust-threshold qc element")
+		}
+		if psyOutElement[elementID] == nil {
+			panic("fdkaac: nil adjust-threshold psy element")
+		}
+		if adjThrState.AdjThrStateElem[elementID] == nil {
+			panic("fdkaac: nil adjust-threshold element state")
+		}
+		if qcElement[elementID].PEData.Pe < 0 || qcElement[elementID].PEData.NActiveLines < 0 {
+			panic("fdkaac: invalid adjust-threshold PE state")
+		}
+		if adjThrState.AdjThrStateElem[elementID].Bits2PeFactorM <= 0 ||
+			adjThrState.AdjThrStateElem[elementID].Bits2PeFactorE < 0 ||
+			adjThrState.AdjThrStateElem[elementID].Bits2PeFactorE > qAvgBits {
+			panic("fdkaac: invalid adjust-threshold bits-to-PE factor")
+		}
+
+		for ch := 0; ch < elInfo.NChannelsInEl; ch++ {
+			if qcElement[elementID].QCOutChannel[ch] == nil {
+				panic("fdkaac: nil adjust-threshold qc channel")
+			}
+			if psyOutElement[elementID].PsyOutChannel[ch] == nil {
+				panic("fdkaac: nil adjust-threshold psy channel")
+			}
+			checkPEChannelShape(psyOutElement[elementID].PsyOutChannel[ch])
+		}
 	}
 }
 

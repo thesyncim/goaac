@@ -170,6 +170,158 @@ func TestFDKaacEncInitATSElementVectors(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncAdjustThresholdsCBRSingleElementVector(t *testing.T) {
+	const desiredPe = 160
+
+	var directPE PEData
+	var directPsy PsyOutChannel
+	var directQC QCOutChannel
+	var directTools ToolsInfo
+	var directElemState ATSElement
+	var directAdjState AdjThrState
+	var directQCElement QCOutElement
+	var directQCOut QCOut
+	var directPsyElement PsyOutElement
+	var directCM ChannelMapping
+	fillAdjustThresholdsCBRCase(
+		&directPE,
+		&directPsy,
+		&directQC,
+		&directTools,
+		&directElemState,
+		&directAdjState,
+		&directQCElement,
+		&directQCOut,
+		&directPsyElement,
+		&directCM,
+		desiredPe,
+	)
+	var directScratch AdaptThresholdsToPeScratch
+	directResult := FDKaacEncAdaptThresholdsToPeCBR(
+		&directQCElement.PEData,
+		directQCElement.QCOutChannel[:],
+		directPsyElement.PsyOutChannel[:],
+		&directPsyElement.ToolsInfo,
+		directAdjState.AdjThrStateElem[0],
+		&directScratch,
+		1,
+		desiredPe,
+		directAdjState.MaxIter2ndGuess,
+	)
+	directQCElements := [1]*QCOutElement{&directQCElement}
+	directPsyElements := [1]*PsyOutElement{&directPsyElement}
+	fdkaacEncUnweightThresholds(directQCElements[:], directPsyElements[:], &directCM)
+
+	var wrappedPE PEData
+	var wrappedPsy PsyOutChannel
+	var wrappedQC QCOutChannel
+	var wrappedTools ToolsInfo
+	var wrappedElemState ATSElement
+	var wrappedAdjState AdjThrState
+	var wrappedQCElement QCOutElement
+	var wrappedQCOut QCOut
+	var wrappedPsyElement PsyOutElement
+	var wrappedCM ChannelMapping
+	fillAdjustThresholdsCBRCase(
+		&wrappedPE,
+		&wrappedPsy,
+		&wrappedQC,
+		&wrappedTools,
+		&wrappedElemState,
+		&wrappedAdjState,
+		&wrappedQCElement,
+		&wrappedQCOut,
+		&wrappedPsyElement,
+		&wrappedCM,
+		desiredPe,
+	)
+	var wrappedScratch AdjustThresholdsScratch
+	wrappedQCElements := [1]*QCOutElement{&wrappedQCElement}
+	wrappedPsyElements := [1]*PsyOutElement{&wrappedPsyElement}
+	wrappedResult := FDKaacEncAdjustThresholds(
+		&wrappedAdjState,
+		wrappedQCElements[:],
+		&wrappedQCOut,
+		wrappedPsyElements[:],
+		1,
+		&wrappedCM,
+		&wrappedScratch,
+	)
+
+	if wrappedResult.AdaptedElements != 1 || wrappedResult.Iterations != directResult.Iterations || wrappedResult.RedPe != directResult.RedPe {
+		t.Fatalf("wrapped CBR result = %+v, direct = %+v", wrappedResult, directResult)
+	}
+	if wrappedQCElement.PEData.Pe != directQCElement.PEData.Pe ||
+		hashFixpDBL(wrappedQC.SfbThresholdLdData[:8]) != hashFixpDBL(directQC.SfbThresholdLdData[:8]) ||
+		hashFixpDBL(wrappedQC.SfbMinSnrLdData[:8]) != hashFixpDBL(directQC.SfbMinSnrLdData[:8]) {
+		t.Fatalf("wrapped CBR state diverged: pe %d/%d threshold %#016x/%#016x minsnr %#016x/%#016x",
+			wrappedQCElement.PEData.Pe,
+			directQCElement.PEData.Pe,
+			hashFixpDBL(wrappedQC.SfbThresholdLdData[:8]),
+			hashFixpDBL(directQC.SfbThresholdLdData[:8]),
+			hashFixpDBL(wrappedQC.SfbMinSnrLdData[:8]),
+			hashFixpDBL(directQC.SfbMinSnrLdData[:8]),
+		)
+	}
+}
+
+func TestFDKaacEncAdjustThresholdsVBRSingleElementVector(t *testing.T) {
+	var directPsy PsyOutChannel
+	var directQC QCOutChannel
+	var directState ATSElement
+	var directTools ToolsInfo
+	var directScratch AdaptThresholdsVBRScratch
+	fillAdjustThresholdsVBRCase(&directPsy, &directQC, &directState, &directTools)
+	directPsyChannels := [1]*PsyOutChannel{&directPsy}
+	directQCChannels := [1]*QCOutChannel{&directQC}
+	FDKaacEncAdaptThresholdsVBR(directQCChannels[:], directPsyChannels[:], &directTools, &directState, &directScratch, 1)
+	directQCElement := QCOutElement{QCOutChannel: [2]*QCOutChannel{&directQC}}
+	directPsyElement := PsyOutElement{ToolsInfo: directTools, PsyOutChannel: [2]*PsyOutChannel{&directPsy}}
+	directCM := ChannelMapping{NElements: 1}
+	directCM.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+	directQCElements := [1]*QCOutElement{&directQCElement}
+	directPsyElements := [1]*PsyOutElement{&directPsyElement}
+	fdkaacEncUnweightThresholds(directQCElements[:], directPsyElements[:], &directCM)
+
+	var wrappedPsy PsyOutChannel
+	var wrappedQC QCOutChannel
+	var wrappedState ATSElement
+	var wrappedTools ToolsInfo
+	fillAdjustThresholdsVBRCase(&wrappedPsy, &wrappedQC, &wrappedState, &wrappedTools)
+	wrappedAdjState := AdjThrState{BitDistributionMode: BitDistributionModeInterElement, MaxIter2ndGuess: 1}
+	wrappedAdjState.AdjThrStateElem[0] = &wrappedState
+	wrappedQCElement := QCOutElement{QCOutChannel: [2]*QCOutChannel{&wrappedQC}}
+	wrappedQCOut := QCOut{}
+	wrappedPsyElement := PsyOutElement{ToolsInfo: wrappedTools, PsyOutChannel: [2]*PsyOutChannel{&wrappedPsy}}
+	wrappedCM := ChannelMapping{NElements: 1}
+	wrappedCM.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+	wrappedQCElements := [1]*QCOutElement{&wrappedQCElement}
+	wrappedPsyElements := [1]*PsyOutElement{&wrappedPsyElement}
+	var wrappedScratch AdjustThresholdsScratch
+
+	wrappedResult := FDKaacEncAdjustThresholds(
+		&wrappedAdjState,
+		wrappedQCElements[:],
+		&wrappedQCOut,
+		wrappedPsyElements[:],
+		0,
+		&wrappedCM,
+		&wrappedScratch,
+	)
+	if wrappedResult.AdaptedElements != 1 {
+		t.Fatalf("wrapped VBR adapted elements = %d, want 1", wrappedResult.AdaptedElements)
+	}
+	if wrappedState.ChaosMeasureOld != directState.ChaosMeasureOld ||
+		hashFixpDBL(wrappedQC.SfbThresholdLdData[:8]) != hashFixpDBL(directQC.SfbThresholdLdData[:8]) {
+		t.Fatalf("wrapped VBR state diverged: chaos %d/%d threshold %#016x/%#016x",
+			wrappedState.ChaosMeasureOld,
+			directState.ChaosMeasureOld,
+			hashFixpDBL(wrappedQC.SfbThresholdLdData[:8]),
+			hashFixpDBL(directQC.SfbThresholdLdData[:8]),
+		)
+	}
+}
+
 func TestFDKaacEncBitresCalcBitFacVectors(t *testing.T) {
 	var state AdjThrState
 	FDKaacEncInitBitresState(&state)
@@ -1406,6 +1558,150 @@ func TestFDKaacEncAdjThrInitRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncAdjustThresholdsRejectsInvalid(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		fn   func()
+	}{
+		{"nil adjustment state", func() {
+			var peData PEData
+			var psy PsyOutChannel
+			var qc QCOutChannel
+			var tools ToolsInfo
+			var elemState ATSElement
+			var adjState AdjThrState
+			var qcElement QCOutElement
+			var qcOut QCOut
+			var psyElement PsyOutElement
+			var cm ChannelMapping
+			var scratch AdjustThresholdsScratch
+			fillAdjustThresholdsCBRCase(&peData, &psy, &qc, &tools, &elemState, &adjState, &qcElement, &qcOut, &psyElement, &cm, 160)
+			qcElements := [1]*QCOutElement{&qcElement}
+			psyElements := [1]*PsyOutElement{&psyElement}
+			FDKaacEncAdjustThresholds(nil, qcElements[:], &qcOut, psyElements[:], 1, &cm, &scratch)
+		}},
+		{"nil qc output", func() {
+			var peData PEData
+			var psy PsyOutChannel
+			var qc QCOutChannel
+			var tools ToolsInfo
+			var elemState ATSElement
+			var adjState AdjThrState
+			var qcElement QCOutElement
+			var qcOut QCOut
+			var psyElement PsyOutElement
+			var cm ChannelMapping
+			var scratch AdjustThresholdsScratch
+			fillAdjustThresholdsCBRCase(&peData, &psy, &qc, &tools, &elemState, &adjState, &qcElement, &qcOut, &psyElement, &cm, 160)
+			qcElements := [1]*QCOutElement{&qcElement}
+			psyElements := [1]*PsyOutElement{&psyElement}
+			FDKaacEncAdjustThresholds(&adjState, qcElements[:], nil, psyElements[:], 1, &cm, &scratch)
+		}},
+		{"nil channel mapping", func() {
+			var peData PEData
+			var psy PsyOutChannel
+			var qc QCOutChannel
+			var tools ToolsInfo
+			var elemState ATSElement
+			var adjState AdjThrState
+			var qcElement QCOutElement
+			var qcOut QCOut
+			var psyElement PsyOutElement
+			var cm ChannelMapping
+			var scratch AdjustThresholdsScratch
+			fillAdjustThresholdsCBRCase(&peData, &psy, &qc, &tools, &elemState, &adjState, &qcElement, &qcOut, &psyElement, &cm, 160)
+			qcElements := [1]*QCOutElement{&qcElement}
+			psyElements := [1]*PsyOutElement{&psyElement}
+			FDKaacEncAdjustThresholds(&adjState, qcElements[:], &qcOut, psyElements[:], 1, nil, &scratch)
+		}},
+		{"nil scratch", func() {
+			var peData PEData
+			var psy PsyOutChannel
+			var qc QCOutChannel
+			var tools ToolsInfo
+			var elemState ATSElement
+			var adjState AdjThrState
+			var qcElement QCOutElement
+			var qcOut QCOut
+			var psyElement PsyOutElement
+			var cm ChannelMapping
+			fillAdjustThresholdsCBRCase(&peData, &psy, &qc, &tools, &elemState, &adjState, &qcElement, &qcOut, &psyElement, &cm, 160)
+			qcElements := [1]*QCOutElement{&qcElement}
+			psyElements := [1]*PsyOutElement{&psyElement}
+			FDKaacEncAdjustThresholds(&adjState, qcElements[:], &qcOut, psyElements[:], 1, &cm, nil)
+		}},
+		{"unsupported multi-element inter CBR", func() {
+			var pe0, pe1 PEData
+			var psy0, psy1 PsyOutChannel
+			var qc0, qc1 QCOutChannel
+			var tools0, tools1 ToolsInfo
+			var elemState0, elemState1 ATSElement
+			var adjState0, adjState1 AdjThrState
+			var qcElement0, qcElement1 QCOutElement
+			var qcOut0, qcOut1 QCOut
+			var psyElement0, psyElement1 PsyOutElement
+			var cm0, cm1 ChannelMapping
+			fillAdjustThresholdsCBRCase(&pe0, &psy0, &qc0, &tools0, &elemState0, &adjState0, &qcElement0, &qcOut0, &psyElement0, &cm0, 160)
+			fillAdjustThresholdsCBRCase(&pe1, &psy1, &qc1, &tools1, &elemState1, &adjState1, &qcElement1, &qcOut1, &psyElement1, &cm1, 160)
+			adjState0.AdjThrStateElem[1] = &elemState1
+			cm0.NElements = 2
+			cm0.ElInfo[1] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+			qcOut0.TotalNoRedPe = int(qcElement0.PEData.Pe + qcElement1.PEData.Pe)
+			qcOut0.TotalGrantedPeCorr = 160
+			qcElements := [2]*QCOutElement{&qcElement0, &qcElement1}
+			psyElements := [2]*PsyOutElement{&psyElement0, &psyElement1}
+			var scratch AdjustThresholdsScratch
+			FDKaacEncAdjustThresholds(&adjState0, qcElements[:], &qcOut0, psyElements[:], 1, &cm0, &scratch)
+		}},
+		{"invalid element PE budget", func() {
+			var peData PEData
+			var psy PsyOutChannel
+			var qc QCOutChannel
+			var tools ToolsInfo
+			var elemState ATSElement
+			var adjState AdjThrState
+			var qcElement QCOutElement
+			var qcOut QCOut
+			var psyElement PsyOutElement
+			var cm ChannelMapping
+			var scratch AdjustThresholdsScratch
+			fillAdjustThresholdsCBRCase(&peData, &psy, &qc, &tools, &elemState, &adjState, &qcElement, &qcOut, &psyElement, &cm, 160)
+			qcOut.TotalGrantedPeCorr = qcOut.TotalNoRedPe
+			qcElement.StaticBitsUsed = minBufSizePerEffChan + 1
+			qcElements := [1]*QCOutElement{&qcElement}
+			psyElements := [1]*PsyOutElement{&psyElement}
+			FDKaacEncAdjustThresholds(&adjState, qcElements[:], &qcOut, psyElements[:], 1, &cm, &scratch)
+		}},
+		{"nil element state", func() {
+			var peData PEData
+			var psy PsyOutChannel
+			var qc QCOutChannel
+			var tools ToolsInfo
+			var elemState ATSElement
+			var adjState AdjThrState
+			var qcElement QCOutElement
+			var qcOut QCOut
+			var psyElement PsyOutElement
+			var cm ChannelMapping
+			var scratch AdjustThresholdsScratch
+			fillAdjustThresholdsCBRCase(&peData, &psy, &qc, &tools, &elemState, &adjState, &qcElement, &qcOut, &psyElement, &cm, 160)
+			adjState.AdjThrStateElem[0] = nil
+			qcElements := [1]*QCOutElement{&qcElement}
+			psyElements := [1]*PsyOutElement{&psyElement}
+			FDKaacEncAdjustThresholds(&adjState, qcElements[:], &qcOut, psyElements[:], 1, &cm, &scratch)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		})
+	}
+}
+
 func TestFDKaacEncAdjThrInitAllocs(t *testing.T) {
 	var state AdjThrState
 	var element ATSElement
@@ -1418,6 +1714,33 @@ func TestFDKaacEncAdjThrInitAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("adjustment init allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncAdjustThresholdsAllocs(t *testing.T) {
+	var peData PEData
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var tools ToolsInfo
+	var elemState ATSElement
+	var adjState AdjThrState
+	var qcElement QCOutElement
+	var qcOut QCOut
+	var psyElement PsyOutElement
+	var cm ChannelMapping
+	var scratch AdjustThresholdsScratch
+	qcElements := [1]*QCOutElement{&qcElement}
+	psyElements := [1]*PsyOutElement{&psyElement}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		scratch = AdjustThresholdsScratch{}
+		fillAdjustThresholdsCBRCase(&peData, &psy, &qc, &tools, &elemState, &adjState, &qcElement, &qcOut, &psyElement, &cm, 160)
+		result := FDKaacEncAdjustThresholds(&adjState, qcElements[:], &qcOut, psyElements[:], 1, &cm, &scratch)
+		adjThrSink = qc.SfbThresholdLdData[0] + FixpDBL(result.RedPe)
+		adjThrHashSink = hashFixpDBL(qc.SfbThresholdLdData[:8])
+	})
+	if allocs != 0 {
+		t.Fatalf("adjust thresholds allocations = %v, want 0", allocs)
 	}
 }
 
@@ -1742,6 +2065,71 @@ func buildBitresElementWithHistoryAndBounds(peLast int, dynBitsLast int, peMin i
 		PeCorrectionFactorM: peCorrectionHalf,
 		PeCorrectionFactorE: 1,
 	}
+}
+
+func primeAdjustThresholdElement(state *ATSElement) {
+	if state.PeMin == 0 && state.PeMax == 0 {
+		state.PeMin = 180
+		state.PeMax = 620
+	}
+	state.Bits2PeFactorM = defaultBitresBits2PEFactorM
+	state.Bits2PeFactorE = defaultBitresBits2PEFactorE
+	state.PeCorrectionFactorM = peCorrectionHalf
+	state.PeCorrectionFactorE = 1
+	state.DynBitsLast = -1
+	state.AHParam = AHParam{ModifyMinSnr: 1, StartSfbL: 4, StartSfbS: 3}
+	state.VBRQualFactor = peCorrectionHalf
+	if state.ChaosMeasureOld == 0 {
+		state.ChaosMeasureOld = vbrChaosHalf
+	}
+	FDKaacEncInitMinSnrAdaptParam(&state.MinSNRAdaptParam)
+}
+
+func fillAdjustThresholdsCBRCase(
+	peData *PEData,
+	psy *PsyOutChannel,
+	qc *QCOutChannel,
+	tools *ToolsInfo,
+	elemState *ATSElement,
+	adjState *AdjThrState,
+	qcElement *QCOutElement,
+	qcOut *QCOut,
+	psyElement *PsyOutElement,
+	cm *ChannelMapping,
+	desiredPe int,
+) {
+	fillAdjThrLongPatchCase(peData, psy, qc, tools, elemState)
+	primeAdjustThresholdElement(elemState)
+	psyChannels := [1]*PsyOutChannel{psy}
+	qcChannels := [1]*QCOutChannel{qc}
+	FDKaacEncPECalculation(peData, psyChannels[:], qcChannels[:], tools, elemState, 1)
+
+	*adjState = AdjThrState{BitDistributionMode: BitDistributionModeInterElement, MaxIter2ndGuess: 1}
+	adjState.AdjThrStateElem[0] = elemState
+	*qcElement = QCOutElement{
+		GrantedPeCorr: desiredPe,
+		PEData:        *peData,
+		QCOutChannel:  [2]*QCOutChannel{qc},
+	}
+	*qcOut = QCOut{
+		TotalNoRedPe:       int(peData.Pe),
+		TotalGrantedPeCorr: desiredPe,
+	}
+	*psyElement = PsyOutElement{
+		ToolsInfo:     *tools,
+		PsyOutChannel: [2]*PsyOutChannel{psy},
+	}
+	*cm = ChannelMapping{NElements: 1}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, NChannelsInEl: 1}
+}
+
+func fillAdjustThresholdsVBRCase(psy *PsyOutChannel, qc *QCOutChannel, state *ATSElement, tools *ToolsInfo) {
+	var thrExp [2][maxGroupedSFB]FixpDBL
+	var ahFlag [2][maxGroupedSFB]uint8
+	fillVBRLongThresholdReductionCase(psy, qc, &thrExp, &ahFlag)
+	*tools = ToolsInfo{}
+	*state = ATSElement{VBRQualFactor: peCorrectionHalf, ChaosMeasureOld: vbrChaosHalf}
+	primeAdjustThresholdElement(state)
 }
 
 func buildMinSnrAdaptCase() (PsyOutChannel, QCOutChannel) {
