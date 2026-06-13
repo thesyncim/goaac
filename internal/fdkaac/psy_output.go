@@ -7,8 +7,10 @@ type PsyOutChannel struct {
 	LastWindowSequence int
 	WindowShape        int
 	GroupingMask       int
+	SfbOffsets         [maxGroupedSFB + 1]int
 	MdctScale          int
 	GroupLen           [maxNoOfGroups]int
+	MdctSpectrum       []FixpDBL
 	SfbEnergy          [maxGroupedSFB]FixpDBL
 	SfbSpreadEnergy    [maxGroupedSFB]FixpDBL
 }

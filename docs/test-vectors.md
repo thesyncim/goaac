@@ -94,6 +94,11 @@ negative, and positive fixed-point energies through `CalcLdData` and
 `LdDataVector`, including in-place vector use, invalid vector transitions, and
 zero steady-state allocation.
 
+The FDK square-root subset is covered with source-derived vectors for the
+generic fixed-point `invSqrtNorm2` table/interpolation path and `sqrtFixp`.
+Tests also verify invalid negative/nil transitions and zero steady-state
+allocation.
+
 The FDK AAC-LC band-energy subset is covered with source-derived hashes for
 scalefactor-band max-scale scans, pre-shift energy checks, long-window
 energy/log-data scaling, short-window band energies, and mid/side band energies
@@ -130,6 +135,11 @@ The FDK AAC-LC psychoacoustic output handoff subset is covered with
 source-derived long and short vectors for output field selection, grouping-mask
 generation, group-length copying, grouped energy/spread-energy copying, invalid
 state transitions, and zero steady-state allocation.
+
+The FDK AAC-LC form-factor subset is covered with source-derived long and
+grouped-short vectors for `FDKaacEnc_CalcFormFactor`, including inactive-band
+`-1.0` sentinels, malformed channel/output/offset/spectrum transitions, and
+zero steady-state allocation.
 
 ## Regenerate
 
