@@ -368,6 +368,13 @@ reference power and tonality, TNS gain thresholds, low-complexity flags, PSD
 correction-curve hashing, malformed controls, no-cgo compilation, and zero
 steady-state allocation.
 
+The FDK AAC-LC tonality/chaos-measure subset is covered with source-shaped
+vectors for `FDKaacEnc_CalculateChaosMeasure`, `FDKaacEnc_CalculateFullTonality`,
+and `FDKaacEnc_CalcSfbTonality`. Tests verify peak-filter chaos output,
+smoothed-chaos hashing, SFB tonality hashing and scalar pins, `usePns=0` no-op
+behavior, malformed controls, no-cgo compilation, and zero steady-state
+allocation through caller-owned scratch.
+
 The FDK AAC-LC psychoacoustic main-initialization wrapper is covered with a
 source-shaped `FDKaacEnc_psyMainInit` vector. Tests compare the wrapper against
 the direct long/short psy, TNS, PNS, and pre-echo initialization sequence,
