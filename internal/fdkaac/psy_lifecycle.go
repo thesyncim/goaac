@@ -48,6 +48,7 @@ type PsyInternal struct {
 	PsyElement     [maxChannelElements]*PsyElement
 	PStaticChannel [maxAACChannels]*PsyStatic
 	PsyDynamic     *PsyDynamic
+	PsyConf        [2]PsyConfiguration
 	GranuleLength  int
 
 	PsyElements    [maxChannelElements]PsyElement

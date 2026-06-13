@@ -345,6 +345,13 @@ channel-to-element traversal, stereo reconfiguration offset behavior, preserved
 static-channel reset thresholds, malformed controls, no-cgo compilation, and
 zero steady-state allocation.
 
+The FDK AAC-LC psychoacoustic configuration subset is covered with
+source-shaped vectors for `FDKaacEnc_initSfbTable` and
+`FDKaacEnc_InitPsyConfiguration`. Tests verify 1024/128 SFB ROM offsets, 960
+SFB clamping, long and short tool flags, lowpass lines, PCM quantization floors,
+spreading and spread-energy factor hashes, min-SNR hashes, malformed controls,
+no-cgo compilation, and zero steady-state allocation.
+
 The FDK AAC-LC QC lifecycle subset is covered with source-shaped vectors for
 `FDKaacEnc_QCNew`, `FDKaacEnc_QCOutNew`, and `FDKaacEnc_QCOutInit`. Tests verify
 fresh fixed-state pointer linking, 5.1 WAV channel-to-element traversal,
