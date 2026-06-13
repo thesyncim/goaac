@@ -89,6 +89,12 @@ hashes for attack/no-attack frame transitions, IIR-filtered and unfiltered
 window energies, LFE and low-delay controls, stereo common-window grouping
 sync, unsupported-state rejection, and zero steady-state allocation.
 
+The FDK AAC-LC band-energy subset is covered with source-derived hashes for
+scalefactor-band max-scale scans, short-window band energies, and mid/side band
+energies with log-data output disabled. Tests also verify invalid offset/scale
+transitions, rejection of the unported log-data branch, and zero steady-state
+allocation.
+
 ## Regenerate
 
 ```sh
