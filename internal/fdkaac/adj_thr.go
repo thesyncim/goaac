@@ -23,6 +23,8 @@ const (
 
 const (
 	maxChannelElements   = 8
+	maxAACChannels       = 8
+	maxAACSubFrames      = 1
 	minBufSizePerEffChan = 6144
 
 	qBitFac  = 24
@@ -211,6 +213,8 @@ type QCOutElement struct {
 }
 
 type QCOut struct {
+	PQCOutChannels     [maxAACChannels]*QCOutChannel
+	QCElement          [maxChannelElements]*QCOutElement
 	TotalNoRedPe       int
 	TotalGrantedPeCorr int
 	MaxDynBits         int

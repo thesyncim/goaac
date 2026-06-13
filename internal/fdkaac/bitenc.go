@@ -70,6 +70,7 @@ const (
 	AACEncUnsupportedERFormat     = 0x30a0
 	AACEncUnsupportedChannelConf  = 0x30e0
 	AACEncUnsupportedSamplingRate = 0x3100
+	AACEncNoMemory                = 0x3120
 	AACEncQuantError              = 0x4020
 	AACEncWrittenBitsError        = 0x4040
 	AACEncBitresTooLow            = 0x40a0

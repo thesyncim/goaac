@@ -337,6 +337,12 @@ direct form-factor, PE-calculation, and static channel-element dry-run sequence,
 verify the nil-QC static side-info bit count, malformed controls, no-cgo
 compilation, and zero steady-state allocation.
 
+The FDK AAC-LC QC lifecycle subset is covered with source-shaped vectors for
+`FDKaacEnc_QCNew`, `FDKaacEnc_QCOutNew`, and `FDKaacEnc_QCOutInit`. Tests verify
+fresh fixed-state pointer linking, 5.1 WAV channel-to-element traversal,
+handoff into `FDKaacEnc_QCInit`, malformed controls, no-cgo compilation, and
+zero steady-state allocation.
+
 The FDK AAC-LC QC initialization subset is covered with source-shaped vectors
 for `FDKaacEnc_QCInit`. Tests verify CBR kernel budget/reservoir transfer, VBR
 multi-element relative-bit traversal, VBR quality-factor selection, FF reservoir
