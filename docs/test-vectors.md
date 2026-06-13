@@ -94,6 +94,11 @@ negative, and positive fixed-point energies through `CalcLdData` and
 `LdDataVector`, including in-place vector use, invalid vector transitions, and
 zero steady-state allocation.
 
+The FDK inverse-LD subset is covered with source-derived vectors for
+`CalcInvLdData`, including the three exponent lookup tables, interpolation,
+underflow, saturation, negative fractional inputs, zero, positive inputs, and
+zero steady-state allocation.
+
 The FDK square-root subset is covered with source-derived vectors for the
 generic fixed-point `invSqrtNorm2` table/interpolation path and `sqrtFixp`.
 Tests also verify invalid negative/nil transitions and zero steady-state
@@ -140,6 +145,11 @@ The FDK AAC-LC form-factor subset is covered with source-derived long and
 grouped-short vectors for `FDKaacEnc_CalcFormFactor`, including inactive-band
 `-1.0` sentinels, malformed channel/output/offset/spectrum transitions, and
 zero steady-state allocation.
+
+The FDK AAC-LC relevant-lines subset is covered with source-derived long and
+grouped-short vectors for `FDKaacEnc_calcSfbRelevantLines`, including
+output-clearing behavior, active-band energy/threshold gating, inactive-band
+zeros, malformed offset/data transitions, and zero steady-state allocation.
 
 ## Regenerate
 

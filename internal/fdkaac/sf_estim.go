@@ -1,6 +1,8 @@
 package fdkaac
 
 const formFacShift = 6
+const asPeFacShift = 7
+const asPeFacLdData = FixpDBL(0x0e000000)
 
 type QCOutChannel struct {
 	MdctSpectrum        [1024]FixpDBL
@@ -40,6 +42,42 @@ func FDKaacEncCalcFormFactorChannel(sfbFormFactorLdData []FixpDBL, psyOutChan *P
 	}
 }
 
+func FDKaacEncCalcSfbRelevantLines(
+	sfbFormFactorLdData []FixpDBL,
+	sfbEnergyLdData []FixpDBL,
+	sfbThresholdLdData []FixpDBL,
+	sfbOffsets []int,
+	sfbCnt int,
+	sfbPerGroup int,
+	maxSfbPerGroup int,
+	sfbNRelevantLines []FixpDBL,
+) {
+	checkSfbRelevantLinesInputs(
+		sfbFormFactorLdData, sfbEnergyLdData, sfbThresholdLdData, sfbOffsets,
+		sfbCnt, sfbPerGroup, maxSfbPerGroup, sfbNRelevantLines,
+	)
+
+	for i := 0; i < sfbCnt; i++ {
+		sfbNRelevantLines[i] = 0
+	}
+
+	for sfbOffs := 0; sfbOffs < sfbCnt; sfbOffs += sfbPerGroup {
+		for sfb := 0; sfb < maxSfbPerGroup; sfb++ {
+			idx := sfbOffs + sfb
+			if sfbEnergyLdData[idx] > sfbThresholdLdData[idx] {
+				sfbWidth := sfbOffsets[idx+1] - sfbOffsets[idx]
+				sfbWidthLdData := FixpDBL(sfbWidth << (DfractBits - 1 - asPeFacShift))
+				sfbWidthLdData = CalcLdData(sfbWidthLdData)
+
+				accu := sfbEnergyLdData[idx] - sfbWidthLdData - asPeFacLdData
+				accu = sfbFormFactorLdData[idx] - (accu >> 2)
+
+				sfbNRelevantLines[idx] = CalcInvLdData(accu) >> 1
+			}
+		}
+	}
+}
+
 func checkFormFactorInputs(sfbFormFactorLdData []FixpDBL, psyOutChan *PsyOutChannel) {
 	if psyOutChan == nil {
 		panic("fdkaac: nil form-factor psy output")
@@ -66,5 +104,43 @@ func checkFormFactorInputs(sfbFormFactorLdData []FixpDBL, psyOutChan *PsyOutChan
 	}
 	if prev > len(psyOutChan.MdctSpectrum) {
 		panic("fdkaac: short form-factor spectrum")
+	}
+}
+
+func checkSfbRelevantLinesInputs(
+	sfbFormFactorLdData []FixpDBL,
+	sfbEnergyLdData []FixpDBL,
+	sfbThresholdLdData []FixpDBL,
+	sfbOffsets []int,
+	sfbCnt int,
+	sfbPerGroup int,
+	maxSfbPerGroup int,
+	sfbNRelevantLines []FixpDBL,
+) {
+	if sfbCnt <= 0 || sfbCnt > maxGroupedSFB || sfbPerGroup <= 0 || sfbCnt%sfbPerGroup != 0 {
+		panic("fdkaac: invalid relevant-lines band count")
+	}
+	if maxSfbPerGroup <= 0 || maxSfbPerGroup > sfbPerGroup {
+		panic("fdkaac: invalid relevant-lines group width")
+	}
+	if len(sfbFormFactorLdData) < sfbCnt || len(sfbEnergyLdData) < sfbCnt || len(sfbThresholdLdData) < sfbCnt || len(sfbNRelevantLines) < sfbCnt {
+		panic("fdkaac: short relevant-lines data")
+	}
+	if len(sfbOffsets) < sfbCnt+1 {
+		panic("fdkaac: short relevant-lines offsets")
+	}
+	prev := sfbOffsets[0]
+	if prev < 0 {
+		panic("fdkaac: invalid relevant-lines offset")
+	}
+	for i := 0; i < sfbCnt; i++ {
+		next := sfbOffsets[i+1]
+		if next < prev {
+			panic("fdkaac: invalid relevant-lines offset")
+		}
+		if i%sfbPerGroup < maxSfbPerGroup && next == prev {
+			panic("fdkaac: empty relevant-lines active band")
+		}
+		prev = next
 	}
 }

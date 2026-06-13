@@ -54,6 +54,56 @@ func TestCalcLdDataVectors(t *testing.T) {
 	}
 }
 
+func TestCalcInvLdDataVectors(t *testing.T) {
+	if len(exp2TabLong) != 32 || len(exp2WTabLong) != 32 || len(exp2XTabLong) != 32 {
+		t.Fatalf("unexpected exp2 table lengths: %d/%d/%d", len(exp2TabLong), len(exp2WTabLong), len(exp2XTabLong))
+	}
+	if exp2TabLong[0] != 0x40000000 || exp2TabLong[31] != 0x7D41D96E {
+		t.Fatalf("exp2TabLong edge entries = %#x/%#x", exp2TabLong[0], exp2TabLong[31])
+	}
+	if exp2WTabLong[0] != 0x40000000 || exp2WTabLong[31] != 0x415B6EFB {
+		t.Fatalf("exp2WTabLong edge entries = %#x/%#x", exp2WTabLong[0], exp2WTabLong[31])
+	}
+	if exp2XTabLong[0] != 0x40000000 || exp2XTabLong[31] != 0x400ABF4F {
+		t.Fatalf("exp2XTabLong edge entries = %#x/%#x", exp2XTabLong[0], exp2XTabLong[31])
+	}
+
+	input := [...]FixpDBL{
+		-1040187393,
+		-1040187392,
+		-805306368,
+		-268435456,
+		-1,
+		0,
+		1,
+		16777216,
+		268435456,
+		1040187391,
+		1040187392,
+		MaxValDBL,
+	}
+	want := [...]FixpDBL{
+		0,
+		1,
+		128,
+		8388608,
+		2147483584,
+		MaxValDBL,
+		1,
+		1,
+		256,
+		2147483584,
+		MaxValDBL,
+		MaxValDBL,
+	}
+
+	var got [len(input)]FixpDBL
+	for i, v := range input {
+		got[i] = CalcInvLdData(v)
+	}
+	assertFixpDBLSlice(t, "CalcInvLdData", got[:], want[:], 0x335c2d95e0481cab)
+}
+
 func TestLdDataVectorRejectsInvalid(t *testing.T) {
 	var src [2]FixpDBL
 	var dst [2]FixpDBL
@@ -98,7 +148,7 @@ func TestCalcLdDataAllocs(t *testing.T) {
 		input := [...]FixpDBL{0, 1, 0x100000, 0x10000000, MaxValDBL}
 		var output [len(input)]FixpDBL
 		LdDataVector(input[:], output[:], len(output))
-		ldDataSink = output[0] + output[1] + output[2] + output[3] + output[4]
+		ldDataSink = output[0] + output[1] + output[2] + output[3] + output[4] + CalcInvLdData(-1)
 	})
 	if allocs != 0 {
 		t.Fatalf("LdDataVector allocations = %v, want 0", allocs)
