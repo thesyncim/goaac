@@ -114,6 +114,11 @@ The FDK scalefactor delta bit-count subset is covered with a source-derived
 Huffman length table hash, selected deltas across the legal `[-60, 60]` range,
 invalid delta transitions, and zero steady-state allocation.
 
+The FDK spectral Huffman bit-count subset is covered with mechanically derived
+ROM checksums for the spectral length tables and source-derived vectors for
+zero spectra, LAV category transitions, escape lengths, fixed-codebook recounts,
+invalid controls, and zero steady-state allocation.
+
 The FDK AAC-LC short grouping subset is covered with source-derived grouped
 offset and min-SNR vectors, saturating threshold/energy/MS/spread-energy sums,
 max-SFB scan and zero-spectrum floor checks, spectrum-regroup hashes, invalid
