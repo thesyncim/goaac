@@ -370,6 +370,57 @@ func TestFDKaacEncCalcRedValPowerVectors(t *testing.T) {
 	assertFixpDBLSlice(t, "red-value power mantissa/exponent", got[:], want[:], 0x9501b04b422044a9)
 }
 
+func TestFDKaacEncReductionValueVectors(t *testing.T) {
+	initialInput := [...]struct {
+		constPart int
+		noRedPe   int
+		desiredPe int
+		active    int
+	}{
+		{-125, 205, 120, 26},
+		{1790, 179, 90, 179},
+		{350, 260, 120, 40},
+		{0, 400, 320, 64},
+	}
+	secondInput := [...]struct {
+		redM      FixpDBL
+		redE      int
+		constPart int
+		redPe     int
+		desiredPe int
+		active    int
+	}{
+		{181429942, 0, 100, 160, 80, 20},
+		{181429942, 0, 1790, 179, 90, 179},
+		{0, 1, 350, 260, 120, 40},
+	}
+	want := [...]FixpDBL{
+		181429942, 0,
+		57431353, 4,
+		330627911, 3,
+		87922620, 1,
+		182291419, 3,
+		34385362, 5,
+		165313956, 4,
+	}
+
+	var got [len(initialInput)*2 + len(secondInput)*2]FixpDBL
+	out := 0
+	for _, tt := range initialInput {
+		m, e := fdkaacEncInitialReductionValue(tt.constPart, tt.noRedPe, tt.desiredPe, tt.active)
+		got[out] = m
+		got[out+1] = FixpDBL(e)
+		out += 2
+	}
+	for _, tt := range secondInput {
+		m, e := fdkaacEncSecondGuessReductionValue(tt.redM, tt.redE, tt.constPart, tt.redPe, tt.desiredPe, tt.active)
+		got[out] = m
+		got[out+1] = FixpDBL(e)
+		out += 2
+	}
+	assertFixpDBLSlice(t, "CBR reduction values", got[:], want[:], 0x3f552b251713cd6e)
+}
+
 func TestFDKaacEncReduceThresholdsCBRVector(t *testing.T) {
 	var psyStorage PsyOutChannel
 	var qcStorage QCOutChannel
@@ -887,6 +938,11 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 	peData, pePsy, peFlags := buildPENoAHCase()
 	chaosOld := vbrChaosHalf
 	var correctScratch CorrectThresholdScratch
+	adaptPE := PEData{Pe: 205, ConstPart: -125, NActiveLines: 26}
+	adaptState := ATSElement{AHParam: AHParam{ModifyMinSnr: 1, StartSfbL: 4, StartSfbS: 3}}
+	FDKaacEncInitMinSnrAdaptParam(&adaptState.MinSNRAdaptParam)
+	var adaptTools ToolsInfo
+	var adaptScratch AdaptThresholdsToPeScratch
 
 	for _, tt := range []struct {
 		name string
@@ -898,6 +954,29 @@ func TestFDKaacEncThresholdReductionRejectsInvalid(t *testing.T) {
 		{"nil no-AH psy", func() { FDKaacEncCalcPENoAH(&peData, &peFlags, []*PsyOutChannel{nil}, 1) }},
 		{"zero red-power denominator", func() { FDKaacEncCalcRedValPower(1, 0) }},
 		{"min red-power numerator", func() { FDKaacEncCalcRedValPower(MinValDBL, 1) }},
+		{"nil adapt PE", func() {
+			FDKaacEncAdaptThresholdsToPeCBR(nil, qc[:], psy[:], &adaptTools, &adaptState, &adaptScratch, 1, 120, 1)
+		}},
+		{"nil adapt tools", func() {
+			FDKaacEncAdaptThresholdsToPeCBR(&adaptPE, qc[:], psy[:], nil, &adaptState, &adaptScratch, 1, 120, 1)
+		}},
+		{"nil adapt state", func() {
+			FDKaacEncAdaptThresholdsToPeCBR(&adaptPE, qc[:], psy[:], &adaptTools, nil, &adaptScratch, 1, 120, 1)
+		}},
+		{"nil adapt scratch", func() {
+			FDKaacEncAdaptThresholdsToPeCBR(&adaptPE, qc[:], psy[:], &adaptTools, &adaptState, nil, 1, 120, 1)
+		}},
+		{"bad adapt desired PE", func() {
+			FDKaacEncAdaptThresholdsToPeCBR(&adaptPE, qc[:], psy[:], &adaptTools, &adaptState, &adaptScratch, 1, 0, 1)
+		}},
+		{"bad adapt iteration count", func() {
+			FDKaacEncAdaptThresholdsToPeCBR(&adaptPE, qc[:], psy[:], &adaptTools, &adaptState, &adaptScratch, 1, 120, -1)
+		}},
+		{"negative adapt PE state", func() {
+			bad := adaptPE
+			bad.Pe = -1
+			FDKaacEncAdaptThresholdsToPeCBR(&bad, qc[:], psy[:], &adaptTools, &adaptState, &adaptScratch, 1, 120, 1)
+		}},
 		{"nil reduction flags", func() { FDKaacEncReduceThresholdsCBR(qc[:], psy[:], nil, &thrExp, 1, 0x20000000, 0) }},
 		{"nil threshold exponent", func() { FDKaacEncReduceThresholdsCBR(qc[:], psy[:], &ahFlag, nil, 1, 0x20000000, 0) }},
 		{"nil reduction qc", func() {
@@ -1184,7 +1263,8 @@ func TestFDKaacEncThresholdReductionAllocs(t *testing.T) {
 		fillPENoAHCase(&peData, &psyStorage, &ahFlag)
 		pe, constPart, nActiveLines := FDKaacEncCalcPENoAH(&peData, &ahFlag, psy[:], 1)
 		redM, redE := FDKaacEncCalcRedValPower(FixpDBL(constPart-pe), FixpDBL(4*nActiveLines))
-		adjThrSink = qcStorage.SfbThresholdLdData[0] + FixpDBL(pe+constPart+nActiveLines) + redM + FixpDBL(redE)
+		reductionM, reductionE := fdkaacEncInitialReductionValue(constPart, pe, pe/2, maxInt(nActiveLines, 1))
+		adjThrSink = qcStorage.SfbThresholdLdData[0] + FixpDBL(pe+constPart+nActiveLines) + redM + FixpDBL(redE) + reductionM + FixpDBL(reductionE)
 		adjThrHashSink = uint64(ahFlag[0][3])
 	})
 	if allocs != 0 {

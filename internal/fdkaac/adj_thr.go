@@ -93,6 +93,8 @@ const (
 	correctThreshLdShift FixpDBL = 0x0c000000
 	correctThreshMaxLd   FixpDBL = 0x28000000
 
+	adaptThresholdPeTolerance05 FixpDBL = 0x06666666
+
 	reduceMinSnrMaxNLines = int(MaxValDBL>>uint(peConstPartShift-1)) / 3
 
 	allowMoreHolesNumEnergyLevels = 8
@@ -176,6 +178,19 @@ type AdjThrState struct {
 type CorrectThresholdScratch struct {
 	SfbPEFactorsLdData    [2][maxGroupedSFB]FixpDBL
 	SfbNActiveLinesLdData [2][maxGroupedSFB]FixpDBL
+}
+
+type AdaptThresholdsToPeScratch struct {
+	AhFlag           [2][maxGroupedSFB]uint8
+	ThrExp           [2][maxGroupedSFB]FixpDBL
+	CorrectThreshold CorrectThresholdScratch
+}
+
+type AdaptThresholdsToPeResult struct {
+	RedPe           int
+	Iterations      int
+	ReductionValueM FixpDBL
+	ReductionValueE int
 }
 
 func FDKaacEncInitBitresState(state *AdjThrState) {
@@ -468,6 +483,151 @@ func FDKaacEncCalcRedValPower(num FixpDBL, denum FixpDBL) (FixpDBL, int) {
 		value = -value
 	}
 	return f2Pow(value, scaling)
+}
+
+func FDKaacEncAdaptThresholdsToPeCBR(
+	peData *PEData,
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	toolsInfo *ToolsInfo,
+	adjThrStateElement *ATSElement,
+	scratch *AdaptThresholdsToPeScratch,
+	nChannels int,
+	desiredPe int,
+	maxIter2ndGuess int,
+) AdaptThresholdsToPeResult {
+	checkAdaptThresholdsToPeInputs(peData, qcOutChannel, psyOutChannel, toolsInfo, adjThrStateElement, scratch, nChannels, desiredPe, maxIter2ndGuess)
+
+	FDKaacEncCalcThresholdExp(&scratch.ThrExp, qcOutChannel, psyOutChannel, nChannels)
+	FDKaacEncAdaptMinSnr(qcOutChannel, psyOutChannel, &adjThrStateElement.MinSNRAdaptParam, nChannels)
+	FDKaacEncInitAvoidHoleFlag(qcOutChannel, psyOutChannel, &scratch.AhFlag, toolsInfo, nChannels, &adjThrStateElement.AHParam)
+
+	constPartGlobal := int(peData.ConstPart)
+	noRedPeGlobal := int(peData.Pe)
+	nActiveLinesGlobal := maxInt(int(peData.NActiveLines), 1)
+
+	reductionValueM, reductionValueE := fdkaacEncInitialReductionValue(
+		constPartGlobal,
+		noRedPeGlobal,
+		desiredPe,
+		nActiveLinesGlobal,
+	)
+
+	FDKaacEncReduceThresholdsCBR(qcOutChannel, psyOutChannel, &scratch.AhFlag, &scratch.ThrExp, nChannels, reductionValueM, reductionValueE)
+	fdkaacEncCalcPE(psyOutChannel, qcOutChannel, peData, nChannels)
+	redPeGlobal := int(peData.Pe)
+
+	iter := 0
+	for absInt(redPeGlobal-desiredPe) > FMultI(adaptThresholdPeTolerance05, desiredPe) && iter < maxIter2ndGuess {
+		redPeNoAHGlobal, constPartNoAHGlobal, nActiveLinesNoAHGlobal :=
+			FDKaacEncCalcPENoAH(peData, &scratch.AhFlag, psyOutChannel, nChannels)
+
+		if desiredPe < redPeGlobal {
+			desiredPeNoAHGlobal := desiredPe - (redPeGlobal - redPeNoAHGlobal)
+			desiredPeNoAHGlobal = maxInt(0, desiredPeNoAHGlobal)
+
+			if nActiveLinesNoAHGlobal > 0 {
+				reductionValueM, reductionValueE = fdkaacEncSecondGuessReductionValue(
+					reductionValueM,
+					reductionValueE,
+					constPartNoAHGlobal,
+					redPeNoAHGlobal,
+					desiredPeNoAHGlobal,
+					nActiveLinesNoAHGlobal,
+				)
+			}
+		} else {
+			divM, divE := fDivNormExp(FixpDBL(redPeGlobal), FixpDBL(desiredPe))
+			var multE int
+			reductionValueM, multE = fMultNorm(reductionValueM, divM)
+			reductionValueE += divE + multE
+			FDKaacEncResetAHFlags(&scratch.AhFlag, psyOutChannel, nChannels)
+		}
+
+		FDKaacEncReduceThresholdsCBR(qcOutChannel, psyOutChannel, &scratch.AhFlag, &scratch.ThrExp, nChannels, reductionValueM, reductionValueE)
+		fdkaacEncCalcPE(psyOutChannel, qcOutChannel, peData, nChannels)
+		redPeGlobal = int(peData.Pe)
+		iter++
+	}
+
+	if redPeGlobal > desiredPe {
+		FDKaacEncCorrectThresholds(
+			qcOutChannel,
+			psyOutChannel,
+			peData,
+			&scratch.AhFlag,
+			&scratch.ThrExp,
+			&scratch.CorrectThreshold,
+			nChannels,
+			reductionValueM,
+			reductionValueE,
+			desiredPe-redPeGlobal,
+		)
+		fdkaacEncCalcPE(psyOutChannel, qcOutChannel, peData, nChannels)
+		redPeGlobal = int(peData.Pe)
+	}
+
+	if redPeGlobal > desiredPe {
+		redPeLimit := FMultI(peCorrection015, desiredPe) + desiredPe
+		FDKaacEncReduceMinSnr(qcOutChannel, psyOutChannel, peData, &scratch.AhFlag, nChannels, redPeLimit, &redPeGlobal)
+		FDKaacEncAllowMoreHoles(qcOutChannel, psyOutChannel, peData, toolsInfo, adjThrStateElement, &scratch.AhFlag, nChannels, desiredPe, redPeGlobal)
+	}
+
+	return AdaptThresholdsToPeResult{
+		RedPe:           redPeGlobal,
+		Iterations:      iter,
+		ReductionValueM: reductionValueM,
+		ReductionValueE: reductionValueE,
+	}
+}
+
+func fdkaacEncInitialReductionValue(
+	constPartGlobal int,
+	noRedPeGlobal int,
+	desiredPe int,
+	nActiveLinesGlobal int,
+) (FixpDBL, int) {
+	redValM, redValE := FDKaacEncCalcRedValPower(
+		FixpDBL(constPartGlobal-desiredPe),
+		FixpDBL(4*nActiveLinesGlobal),
+	)
+	avgThrExpM, avgThrExpE := FDKaacEncCalcRedValPower(
+		FixpDBL(constPartGlobal-noRedPeGlobal),
+		FixpDBL(4*nActiveLinesGlobal),
+	)
+	resultE := maxInt(redValE, avgThrExpE) + 1
+	reductionValueM := maxFixpDBL(
+		0,
+		ScaleValueDBL(redValM, redValE-resultE)-
+			ScaleValueDBL(avgThrExpM, avgThrExpE-resultE),
+	)
+	return reductionValueM, resultE
+}
+
+func fdkaacEncSecondGuessReductionValue(
+	reductionValueM FixpDBL,
+	reductionValueE int,
+	constPartNoAHGlobal int,
+	redPeNoAHGlobal int,
+	desiredPeNoAHGlobal int,
+	nActiveLinesNoAHGlobal int,
+) (FixpDBL, int) {
+	redValM, redValE := FDKaacEncCalcRedValPower(
+		FixpDBL(constPartNoAHGlobal-desiredPeNoAHGlobal),
+		FixpDBL(4*nActiveLinesNoAHGlobal),
+	)
+	avgThrExpM, avgThrExpE := FDKaacEncCalcRedValPower(
+		FixpDBL(constPartNoAHGlobal-redPeNoAHGlobal),
+		FixpDBL(4*nActiveLinesNoAHGlobal),
+	)
+	resultE := maxInt(reductionValueE, maxInt(redValE, avgThrExpE)+1) + 1
+	reductionValueM = maxFixpDBL(
+		0,
+		ScaleValueDBL(reductionValueM, reductionValueE-resultE)+
+			ScaleValueDBL(redValM, redValE-resultE)-
+			ScaleValueDBL(avgThrExpM, avgThrExpE-resultE),
+	)
+	return reductionValueM, resultE
 }
 
 func FDKaacEncReduceThresholdsCBR(
@@ -1491,6 +1651,38 @@ func checkThresholdReductionInputs(
 	}
 	if redValM < 0 || redValE < -DfractBits || redValE > DfractBits {
 		panic("fdkaac: invalid threshold reduction value")
+	}
+}
+
+func checkAdaptThresholdsToPeInputs(
+	peData *PEData,
+	qcOutChannel []*QCOutChannel,
+	psyOutChannel []*PsyOutChannel,
+	toolsInfo *ToolsInfo,
+	adjThrStateElement *ATSElement,
+	scratch *AdaptThresholdsToPeScratch,
+	nChannels int,
+	desiredPe int,
+	maxIter2ndGuess int,
+) {
+	checkThresholdAdjustmentInputs(qcOutChannel, psyOutChannel, nChannels)
+	if peData == nil {
+		panic("fdkaac: nil threshold-adaptation PE data")
+	}
+	if toolsInfo == nil {
+		panic("fdkaac: nil threshold-adaptation tools info")
+	}
+	if adjThrStateElement == nil {
+		panic("fdkaac: nil threshold-adaptation state")
+	}
+	if scratch == nil {
+		panic("fdkaac: nil threshold-adaptation scratch")
+	}
+	if desiredPe <= 0 || maxIter2ndGuess < 0 {
+		panic("fdkaac: invalid threshold-adaptation PE target")
+	}
+	if peData.Pe < 0 || peData.NActiveLines < 0 {
+		panic("fdkaac: invalid threshold-adaptation PE state")
 	}
 }
 
