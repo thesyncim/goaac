@@ -89,11 +89,16 @@ hashes for attack/no-attack frame transitions, IIR-filtered and unfiltered
 window energies, LFE and low-delay controls, stereo common-window grouping
 sync, unsupported-state rejection, and zero steady-state allocation.
 
+The FDK log-data subset is covered with source-derived vectors for zero,
+negative, and positive fixed-point energies through `CalcLdData` and
+`LdDataVector`, including in-place vector use, invalid vector transitions, and
+zero steady-state allocation.
+
 The FDK AAC-LC band-energy subset is covered with source-derived hashes for
-scalefactor-band max-scale scans, short-window band energies, and mid/side band
-energies with log-data output disabled. Tests also verify invalid offset/scale
-transitions, rejection of the unported log-data branch, and zero steady-state
-allocation.
+scalefactor-band max-scale scans, pre-shift energy checks, long-window
+energy/log-data scaling, short-window band energies, and mid/side band energies
+with log-data output enabled. Tests also verify invalid offset/scale/output
+transitions and zero steady-state allocation.
 
 ## Regenerate
 

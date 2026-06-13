@@ -42,6 +42,102 @@ func FDKaacEncCalcBandEnergyOptimShort(mdctSpectrum []FixpDBL, sfbMaxScaleSpec [
 	}
 }
 
+func FDKaacEncCheckBandEnergyOptim(mdctSpectrum []FixpDBL, sfbMaxScaleSpec []int, bandOffset []int, numBands int, bandEnergy []FixpDBL, bandEnergyLdData []FixpDBL, minSpecShift int) FixpDBL {
+	if numBands <= 0 {
+		panic("fdkaac: empty band energy")
+	}
+	checkBandEnergySpectrum(mdctSpectrum, bandOffset, numBands)
+	checkBandEnergyScales(sfbMaxScaleSpec, numBands)
+	checkBandEnergyOutput(bandEnergy, numBands)
+	checkBandEnergyOutput(bandEnergyLdData, numBands)
+
+	nr := 0
+	maxNrgLd := ldDataMinusOne
+	for i := 0; i < numBands; i++ {
+		scale := maxInt(0, sfbMaxScaleSpec[i]-4)
+		tmp := FixpDBL(0)
+		for j := bandOffset[i]; j < bandOffset[i+1]; j++ {
+			spec := mdctSpectrum[j] << uint(scale)
+			tmp = FPow2AddDiv2D(tmp, spec)
+		}
+		bandEnergy[i] = tmp << 1
+
+		bandEnergyLdData[i] = CalcLdData(bandEnergy[i])
+		if bandEnergyLdData[i] != ldDataMinusOne {
+			bandEnergyLdData[i] -= FixpDBL(scale) * ldDataStep2Over64
+		}
+		if bandEnergyLdData[i] > maxNrgLd {
+			maxNrgLd = bandEnergyLdData[i]
+			nr = i
+		}
+	}
+
+	scale := maxInt(0, sfbMaxScaleSpec[nr]-4)
+	scale = maxInt(2*(minSpecShift-scale), -(DfractBits - 1))
+	return ScaleValueDBL(bandEnergy[nr], scale)
+}
+
+func FDKaacEncCalcBandEnergyOptimLong(mdctSpectrum []FixpDBL, sfbMaxScaleSpec []int, bandOffset []int, numBands int, bandEnergy []FixpDBL, bandEnergyLdData []FixpDBL) int {
+	checkBandEnergySpectrum(mdctSpectrum, bandOffset, numBands)
+	checkBandEnergyScales(sfbMaxScaleSpec, numBands)
+	checkBandEnergyOutput(bandEnergy, numBands)
+	checkBandEnergyOutput(bandEnergyLdData, numBands)
+
+	shiftBits := 0
+	maxNrgLd := FixpDBL(0)
+
+	for i := 0; i < numBands; i++ {
+		leadingBits := sfbMaxScaleSpec[i] - 4
+		tmp := FixpDBL(0)
+		if leadingBits >= 0 {
+			shift := uint(leadingBits)
+			for j := bandOffset[i]; j < bandOffset[i+1]; j++ {
+				spec := mdctSpectrum[j] << shift
+				tmp = FPow2AddDiv2D(tmp, spec)
+			}
+		} else {
+			shift := uint(-leadingBits)
+			for j := bandOffset[i]; j < bandOffset[i+1]; j++ {
+				spec := mdctSpectrum[j] >> shift
+				tmp = FPow2AddDiv2D(tmp, spec)
+			}
+		}
+		bandEnergy[i] = tmp << 1
+	}
+
+	LdDataVector(bandEnergy, bandEnergyLdData, numBands)
+	for i := numBands - 1; i >= 0; i-- {
+		scaleDiff := FixpDBL(sfbMaxScaleSpec[i]-4) * ldDataStep2Over64
+		if bandEnergyLdData[i] >= ((ldDataMinusOne >> 1) + (scaleDiff >> 1)) {
+			bandEnergyLdData[i] -= scaleDiff
+		} else {
+			bandEnergyLdData[i] = ldDataMinusOne
+		}
+		if bandEnergyLdData[i] > maxNrgLd {
+			maxNrgLd = bandEnergyLdData[i]
+		}
+	}
+
+	if maxNrgLd <= 0 {
+		for i := numBands - 1; i >= 0; i-- {
+			scale := minInt((sfbMaxScaleSpec[i]-4)<<1, DfractBits-1)
+			bandEnergy[i] = ScaleValueDBL(bandEnergy[i], -scale)
+		}
+		return 0
+	}
+
+	for maxNrgLd > 0 {
+		maxNrgLd -= ldDataStep2Over64
+		shiftBits++
+	}
+	for i := numBands - 1; i >= 0; i-- {
+		scale := minInt(((sfbMaxScaleSpec[i]-4)+shiftBits)<<1, DfractBits-1)
+		bandEnergyLdData[i] -= FixpDBL(shiftBits) * ldDataStep2Over64
+		bandEnergy[i] = ScaleValueDBL(bandEnergy[i], -scale)
+	}
+	return shiftBits
+}
+
 func FDKaacEncCalcBandNrgMSOpt(
 	mdctSpectrumLeft []FixpDBL,
 	mdctSpectrumRight []FixpDBL,
@@ -55,18 +151,16 @@ func FDKaacEncCalcBandNrgMSOpt(
 	bandEnergyMidLdData []FixpDBL,
 	bandEnergySideLdData []FixpDBL,
 ) {
-	if calcLdData {
-		panic("fdkaac: band energy ld-data not supported")
-	}
-	_ = bandEnergyMidLdData
-	_ = bandEnergySideLdData
-
 	checkBandEnergySpectrum(mdctSpectrumLeft, bandOffset, numBands)
 	checkBandEnergySpectrum(mdctSpectrumRight, bandOffset, numBands)
 	checkBandEnergyScales(sfbMaxScaleSpecLeft, numBands)
 	checkBandEnergyScales(sfbMaxScaleSpecRight, numBands)
 	checkBandEnergyOutput(bandEnergyMid, numBands)
 	checkBandEnergyOutput(bandEnergySide, numBands)
+	if calcLdData {
+		checkBandEnergyOutput(bandEnergyMidLdData, numBands)
+		checkBandEnergyOutput(bandEnergySideLdData, numBands)
+	}
 
 	maxNrg := MaxValDBL >> 1
 	for i := 0; i < numBands; i++ {
@@ -106,9 +200,25 @@ func FDKaacEncCalcBandNrgMSOpt(
 		bandEnergySide[i] = nrgSide << 1
 	}
 
+	if calcLdData {
+		LdDataVector(bandEnergyMid, bandEnergyMidLdData, numBands)
+		LdDataVector(bandEnergySide, bandEnergySideLdData, numBands)
+	}
+
 	for i := 0; i < numBands; i++ {
 		minScale := minInt(sfbMaxScaleSpecLeft[i], sfbMaxScaleSpecRight[i])
 		scale := maxInt(0, 2*(minScale-4))
+
+		if calcLdData {
+			minus := FixpDBL(scale) * ldDataStep1Over64
+			if bandEnergyMidLdData[i] != ldDataMinusOne {
+				bandEnergyMidLdData[i] -= minus
+			}
+			if bandEnergySideLdData[i] != ldDataMinusOne {
+				bandEnergySideLdData[i] -= minus
+			}
+		}
+
 		scale = minInt(scale, DfractBits-1)
 		bandEnergyMid[i] >>= uint(scale)
 		bandEnergySide[i] >>= uint(scale)
