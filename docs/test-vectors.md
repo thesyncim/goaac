@@ -172,6 +172,12 @@ downward refinement, minimum-scale stopping, dead-zone quantization,
 quantized-spectrum side effects, malformed controls, and zero steady-state
 allocation.
 
+The FDK AAC-LC single-SCF assimilation subset is covered with source-derived
+vectors for `FDKaacEnc_assimilateSingleScf`. Tests verify neighbouring-scale
+constraints, restart-on-success rescans, already-checked minimum-scale controls,
+no-op flat-scale controls, quantized-spectrum side effects, malformed controls,
+and zero steady-state allocation.
+
 The FDK AAC-LC line-PE subset is covered with source-derived vectors for
 `CalcLdInt`, `fMultI`, `FDKaacEnc_prepareSfbPe`, and `FDKaacEnc_calcSfbPe`.
 Tests verify active-line preparation, high/low PE branches, inactive and

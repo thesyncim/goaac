@@ -288,6 +288,127 @@ func TestFDKaacEncImproveScfVectors(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncAssimilateSingleScfVectors(t *testing.T) {
+	const min = fdkIntMin
+	tests := []struct {
+		name              string
+		restart           int
+		scf               [5]int
+		minScfCalculated  [5]int
+		dist              [5]FixpDBL
+		wantScf           [5]int
+		wantMinCalculated [5]int
+		wantDist          [5]FixpDBL
+		wantConst         [5]FixpDBL
+		wantQuant         [11]int16
+		wantTmp           [11]int16
+		hashScf           uint64
+		hashMinCalculated uint64
+		hashDist          uint64
+		hashConst         uint64
+		hashQuant         uint64
+		hashTmp           uint64
+	}{
+		{
+			name:              "single pass improves middle and trailing bands",
+			scf:               [5]int{4, 6, 4, min, 5},
+			minScfCalculated:  [5]int{4, 6, 4, min, 5},
+			dist:              [5]FixpDBL{0, MaxValDBL, 0, 0, 0},
+			wantScf:           [5]int{4, 5, 4, min, 4},
+			wantMinCalculated: [5]int{4, 4, 4, min, 4},
+			wantDist:          [5]FixpDBL{0, -458959796, 0, 0, -352594892},
+			wantConst:         [5]FixpDBL{FixpDBL(min), -19333917, FixpDBL(min), FixpDBL(min), -39333917},
+			wantQuant:         [11]int16{77, 77, 0, 0, 77, 77, 77, 77, 77, 0, 0},
+			wantTmp:           [11]int16{-77, -77, 0, 0, -77, -77, -77, -77, -77, 0, 0},
+			hashScf:           0x551b83ab62ffafb4,
+			hashMinCalculated: 0xa41999737614c7f5,
+			hashDist:          0x0d5abebe85fa03f08,
+			hashConst:         0x7226cd060404a62e,
+			hashQuant:         0xa70a552e0e56e678,
+			hashTmp:           0x15d85de3fe8564b5,
+		},
+		{
+			name:              "restart on success revisits earlier neighbours",
+			restart:           1,
+			scf:               [5]int{4, 7, 6, 4, 5},
+			minScfCalculated:  [5]int{4, 7, 6, 4, 5},
+			dist:              [5]FixpDBL{0, MaxValDBL, MaxValDBL, 0, 0},
+			wantScf:           [5]int{4, 6, 5, 4, 4},
+			wantMinCalculated: [5]int{4, 4, 4, 4, 4},
+			wantDist:          [5]FixpDBL{0, -458959796, -188162553, 0, -352594892},
+			wantConst:         [5]FixpDBL{FixpDBL(min), -19333917, -39333917, FixpDBL(min), -39333917},
+			wantQuant:         [11]int16{77, 77, 0, 0, 0, 0, 0, 77, 77, 0, 0},
+			wantTmp:           [11]int16{-77, -77, 0, 0, 0, 0, 0, -77, -77, 0, 0},
+			hashScf:           0x7176680613cad242,
+			hashMinCalculated: 0xc8bdc016486eda71,
+			hashDist:          0x5caa914a4e91dd2d,
+			hashConst:         0xfe3be15cad7d5dc0,
+			hashQuant:         0x6dadcb034cbeb975,
+			hashTmp:           0x446522701ec7e195,
+		},
+		{
+			name:              "min calculated skips already checked band",
+			scf:               [5]int{4, 6, 4, min, 5},
+			minScfCalculated:  [5]int{4, 4, 4, min, 5},
+			dist:              [5]FixpDBL{0, MaxValDBL, 0, 0, 0},
+			wantScf:           [5]int{4, 6, 4, min, 4},
+			wantMinCalculated: [5]int{4, 4, 4, min, 4},
+			wantDist:          [5]FixpDBL{0, MaxValDBL, 0, 0, -352594892},
+			wantConst:         [5]FixpDBL{FixpDBL(min), -19333917, FixpDBL(min), FixpDBL(min), -39333917},
+			wantQuant:         [11]int16{77, 77, 77, 77, 77, 77, 77, 77, 77, 0, 0},
+			wantTmp:           [11]int16{-77, -77, -77, -77, -77, -77, -77, -77, -77, 0, 0},
+			hashScf:           0x4215c5039c3ef877,
+			hashMinCalculated: 0xa41999737614c7f5,
+			hashDist:          0x55e9dc04bed6088c,
+			hashConst:         0x7226cd060404a62e,
+			hashQuant:         0x1379514c462877a8,
+			hashTmp:           0xe2b9b38b46ef21f5,
+		},
+		{
+			name:              "flat scalefactors do not move",
+			scf:               [5]int{4, 4, 4, min, 4},
+			minScfCalculated:  [5]int{4, 4, 4, min, 4},
+			dist:              [5]FixpDBL{0, MaxValDBL, 0, 0, MaxValDBL},
+			wantScf:           [5]int{4, 4, 4, min, 4},
+			wantMinCalculated: [5]int{4, 4, 4, min, 4},
+			wantDist:          [5]FixpDBL{0, MaxValDBL, 0, 0, MaxValDBL},
+			wantConst:         [5]FixpDBL{FixpDBL(min), FixpDBL(min), FixpDBL(min), FixpDBL(min), FixpDBL(min)},
+			wantQuant:         [11]int16{77, 77, 77, 77, 77, 77, 77, 77, 77, 77, 77},
+			wantTmp:           [11]int16{-77, -77, -77, -77, -77, -77, -77, -77, -77, -77, -77},
+			hashScf:           0xa41999737614c7f5,
+			hashMinCalculated: 0xa41999737614c7f5,
+			hashDist:          0xf12ac00f199b9d2d,
+			hashConst:         0x1dd8a261589532b5,
+			hashQuant:         0x53d5c4a2713d7b78,
+			hashTmp:           0x488c9dabb335b135,
+		},
+	}
+
+	for _, tt := range tests {
+		var psy PsyOutChannel
+		var qc QCOutChannel
+		var quant [11]int16
+		var quantTmp [11]int16
+		var minScf [5]int
+		var constPart [5]FixpDBL
+		var form [5]FixpDBL
+		var lines [5]FixpDBL
+		setupAssimilateSingleVector(&psy, &qc, quant[:], quantTmp[:], minScf[:], constPart[:], form[:])
+		scf := tt.scf
+		minScfCalculated := tt.minScfCalculated
+		dist := tt.dist
+
+		FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], tt.restart)
+
+		assertIntSlice(t, tt.name+" scf", scf[:], tt.wantScf[:], tt.hashScf)
+		assertIntSlice(t, tt.name+" min calculated", minScfCalculated[:], tt.wantMinCalculated[:], tt.hashMinCalculated)
+		assertFixpDBLSlice(t, tt.name+" distortion", dist[:], tt.wantDist[:], tt.hashDist)
+		assertFixpDBLSlice(t, tt.name+" const PE", constPart[:], tt.wantConst[:], tt.hashConst)
+		assertInt16Slice(t, tt.name+" quant", quant[:], tt.wantQuant[:], tt.hashQuant)
+		assertInt16Slice(t, tt.name+" temp quant", quantTmp[:], tt.wantTmp[:], tt.hashTmp)
+	}
+}
+
 func TestFDKaacEncCalcFormFactorRejectsInvalid(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -556,6 +677,91 @@ func TestFDKaacEncImproveScfRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncAssimilateSingleScfRejectsInvalid(t *testing.T) {
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var quant [11]int16
+	var quantTmp [11]int16
+	var scf [5]int
+	var minScf [5]int
+	var dist [5]FixpDBL
+	var constPart [5]FixpDBL
+	var form [5]FixpDBL
+	var lines [5]FixpDBL
+	var minScfCalculated [5]int
+	setupAssimilateSingleVector(&psy, &qc, quant[:], quantTmp[:], minScf[:], constPart[:], form[:])
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{name: "nil psy", fn: func() {
+			FDKaacEncAssimilateSingleScf(nil, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "nil qc", fn: func() {
+			FDKaacEncAssimilateSingleScf(&psy, nil, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "bad band count", fn: func() {
+			bad := psy
+			bad.SfbCnt = 0
+			FDKaacEncAssimilateSingleScf(&bad, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "bad group width", fn: func() {
+			bad := psy
+			bad.MaxSfbPerGroup = bad.SfbPerGroup + 1
+			FDKaacEncAssimilateSingleScf(&bad, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "short scf", fn: func() {
+			FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:], quantTmp[:], 0, scf[:4], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "short min scf", fn: func() {
+			FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:4], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "short dist", fn: func() {
+			FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:4], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "short const", fn: func() {
+			FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:4], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "short form", fn: func() {
+			FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:4], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "short relevant lines", fn: func() {
+			FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:4], minScfCalculated[:], 0)
+		}},
+		{name: "short min calculated", fn: func() {
+			FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:4], 0)
+		}},
+		{name: "negative offset", fn: func() {
+			bad := psy
+			bad.SfbOffsets[0] = -1
+			FDKaacEncAssimilateSingleScf(&bad, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "decreasing offset", fn: func() {
+			bad := psy
+			bad.SfbOffsets[3] = bad.SfbOffsets[2] - 1
+			FDKaacEncAssimilateSingleScf(&bad, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "short quant", fn: func() {
+			FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:10], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+		{name: "short temp quant", fn: func() {
+			FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:], quantTmp[:10], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 0)
+		}},
+	}
+
+	for _, tt := range tests {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		}()
+	}
+}
+
 func TestFDKaacEncCalcFormFactorAllocs(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -625,6 +831,36 @@ func TestFDKaacEncImproveScfAllocs(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncAssimilateSingleScfAllocs(t *testing.T) {
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var quant [11]int16
+	var quantTmp [11]int16
+	var minScf [5]int
+	var constPart [5]FixpDBL
+	var form [5]FixpDBL
+	var lines [5]FixpDBL
+	scfBase := [5]int{4, 7, 6, 4, 5}
+	minScfCalculatedBase := [5]int{4, 7, 6, 4, 5}
+	distBase := [5]FixpDBL{0, MaxValDBL, MaxValDBL, 0, 0}
+	var scf [5]int
+	var minScfCalculated [5]int
+	var dist [5]FixpDBL
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		setupAssimilateSingleVector(&psy, &qc, quant[:], quantTmp[:], minScf[:], constPart[:], form[:])
+		copy(scf[:], scfBase[:])
+		copy(minScfCalculated[:], minScfCalculatedBase[:])
+		copy(dist[:], distBase[:])
+		FDKaacEncAssimilateSingleScf(&psy, &qc, quant[:], quantTmp[:], 0, scf[:], minScf[:], dist[:], constPart[:], form[:], lines[:], minScfCalculated[:], 1)
+		scfPeSink = dist[1] + dist[2] + dist[4]
+		scfPeHashSink = hashBandEnergyInts(scf[:])
+	})
+	if allocs != 0 {
+		t.Fatalf("assimilate-single allocations = %v, want 0", allocs)
+	}
+}
+
 func TestFDKaacEncScfPeDiffAllocs(t *testing.T) {
 	const min = fdkIntMin
 	scfOld := [...]int{12, min, 8, 11, min, 14, 18, min, 16, 20}
@@ -683,6 +919,45 @@ func improveScfVectorSpec() [7]FixpDBL {
 func fillImproveScfQuant(x []int16, v int16) {
 	for i := range x {
 		x[i] = v
+	}
+}
+
+func setupAssimilateSingleVector(
+	psy *PsyOutChannel,
+	qc *QCOutChannel,
+	quant []int16,
+	quantTmp []int16,
+	minScf []int,
+	constPart []FixpDBL,
+	form []FixpDBL,
+) {
+	offsets := [...]int{0, 2, 4, 7, 9, 11}
+	spec := [...]FixpDBL{
+		0x00100000, -0x00200000,
+		0x00800000, -0x01000000,
+		0x04000000, -0x08000000, 0x10000000,
+		-0x18000000, 0x20000000,
+		0x01800000, -0x03000000,
+	}
+	energy := [...]FixpDBL{-300000000, -250000000, -280000000, -310000000, -260000000}
+	*psy = PsyOutChannel{
+		SfbCnt:         5,
+		SfbPerGroup:    5,
+		MaxSfbPerGroup: 5,
+	}
+	copy(psy.SfbOffsets[:], offsets[:])
+	copy(qc.MdctSpectrum[:], spec[:])
+	copy(qc.SfbEnergyLdData[:], energy[:])
+	fillImproveScfQuant(quant, 77)
+	fillImproveScfQuant(quantTmp, -77)
+	for i := range minScf {
+		minScf[i] = 0
+	}
+	for i := range constPart {
+		constPart[i] = FixpDBL(fdkIntMin)
+	}
+	for i := range form {
+		form[i] = -330220071 + FixpDBL(i*10000000)
 	}
 }
 
