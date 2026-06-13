@@ -114,6 +114,12 @@ for initialization, disabled-control copy-through, current-scale-larger
 limiting, and previous-scale-larger limiting, plus invalid state/shift
 transitions and zero steady-state allocation.
 
+The FDK AAC-LC threshold advance subset is covered with source-derived
+long-window and short-window vectors for clip-energy scaling, threshold
+spreading, PCM quantization floors, FDK's per-window `energyShift` mutation,
+start/stop pre-echo history transitions, spread-energy preparation, invalid
+control transitions, and zero steady-state allocation.
+
 ## Regenerate
 
 ```sh
