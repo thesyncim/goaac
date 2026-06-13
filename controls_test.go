@@ -103,6 +103,39 @@ func TestDecoderTransportMisusePreservesDst(t *testing.T) {
 	}
 }
 
+func TestEncoderTransportMisusePreservesDst(t *testing.T) {
+	var pcm [2 * encoderSamplesPerFrame]int16
+	fillEncoderSmoothPCM(pcm[:], 2)
+	dst := []byte{1, 2, 3}
+
+	adts := newTestEncoder(t, TransportADTS)
+	defer adts.Close()
+	got, _, err := adts.EncodeRawInto(dst, pcm[:])
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("ADTS encoder raw err = %v, want ErrInvalidConfig", err)
+	}
+	if !bytes.Equal(got, dst) {
+		t.Fatalf("ADTS encoder raw misuse changed dst: got %v, want %v", got, dst)
+	}
+	got, _, err = adts.EncodeRTMPMessageInto(dst, pcm[:])
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("ADTS encoder RTMP err = %v, want ErrInvalidConfig", err)
+	}
+	if !bytes.Equal(got, dst) {
+		t.Fatalf("ADTS encoder RTMP misuse changed dst: got %v, want %v", got, dst)
+	}
+
+	raw := newTestEncoder(t, TransportRaw)
+	defer raw.Close()
+	got, _, err = raw.EncodeADTSFrameInto(dst, pcm[:])
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("raw encoder ADTS err = %v, want ErrInvalidConfig", err)
+	}
+	if !bytes.Equal(got, dst) {
+		t.Fatalf("raw encoder ADTS misuse changed dst: got %v, want %v", got, dst)
+	}
+}
+
 func TestDecoderConfigReturnsCopy(t *testing.T) {
 	dec := newRawTestDecoder(t)
 	defer dec.Close()

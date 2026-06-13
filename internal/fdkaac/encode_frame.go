@@ -39,6 +39,10 @@ func FDKaacEncInitRawFrameState(state *AACEncFrameState, config AACEncConfig) in
 	return FDKaacEncInitFrameState(state, config, fdkaacEncStaticBitsZero)
 }
 
+func FDKaacEncInitADTSFrameState(state *AACEncFrameState, config AACEncConfig) int {
+	return FDKaacEncInitFrameState(state, config, fdkaacEncStaticBitsADTS)
+}
+
 func FDKaacEncInitFrameState(state *AACEncFrameState, config AACEncConfig, staticBits FDKaacEncStaticBitsFunc) int {
 	if state == nil {
 		return AACEncInvalidHandle
@@ -290,6 +294,10 @@ func fdkaacEncMirrorPsyToQC(psy *PsyOutChannel, qc *QCOutChannel) {
 
 func fdkaacEncStaticBitsZero(int) int {
 	return 0
+}
+
+func fdkaacEncStaticBitsADTS(int) int {
+	return 56
 }
 
 func checkEncodeFrameRawInputs(state *AACEncFrameState, input []int16, inputBufSize int, scratch *AACEncFrameScratch) {

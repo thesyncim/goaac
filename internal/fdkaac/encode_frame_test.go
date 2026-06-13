@@ -38,6 +38,34 @@ func TestFDKaacEncEncodeFrameRawStereoVector(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncEncodeFrameADTSBudgetVector(t *testing.T) {
+	cfg := baseAACLCConfig(48000, 128000, 2, Mode2)
+	var state AACEncFrameState
+	if errCode := FDKaacEncInitADTSFrameState(&state, cfg); errCode != AACEncOK {
+		t.Fatalf("ADTS frame init error = %#x, want OK", errCode)
+	}
+
+	var scratch AACEncFrameScratch
+	var pcm [2 * maxSpectralLines]int16
+	fillPsyMainSmoothPCM(pcm[:], cfg.FrameLength)
+	out, result, errCode := FDKaacEncEncodeFrameRaw(&state, nil, pcm[:], cfg.FrameLength, &scratch)
+	if errCode != AACEncOK {
+		t.Fatalf("ADTS-budgeted frame encode error = %#x, want OK", errCode)
+	}
+	if result.TransportStaticBits != 56 {
+		t.Fatalf("ADTS transport static bits = %d, want 56", result.TransportStaticBits)
+	}
+	if result.PayloadBytes != len(out) || result.PayloadBytes != 334 {
+		t.Fatalf("ADTS-budgeted payload = len %d result %+v, want 334", len(out), result)
+	}
+	if result.TotalBits+result.TransportStaticBits != 2728 {
+		t.Fatalf("ADTS-budgeted total+transport bits = %d+%d, want 2728", result.TotalBits, result.TransportStaticBits)
+	}
+	if got, want := hashHuffBytes(out), uint64(0x47f342b688b590a7); got != want {
+		t.Fatalf("ADTS-budgeted frame hash = %#x, want %#x; len=%d result=%+v", got, want, len(out), result)
+	}
+}
+
 func TestFDKaacEncEncodeFrameRawRejectsInvalid(t *testing.T) {
 	cfg := baseAACLCConfig(48000, 128000, 2, Mode2)
 	var state AACEncFrameState

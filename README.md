@@ -37,8 +37,10 @@ The returned PCM is interleaved signed 16-bit native-endian samples.
 
 ## Encode AAC-LC
 
-The encoder accepts one 1024-sample interleaved S16 PCM frame per call. Use raw
-AAC access units for MP4/FLV/RTMP muxers and ADTS when you need self-framed AAC:
+The encoder accepts one 1024-sample interleaved S16 PCM frame per call. The
+configured transport owns encoder bit-reservoir accounting, so create a raw
+encoder for MP4/FLV/RTMP muxers and an ADTS encoder when you need self-framed
+AAC:
 
 ```go
 enc, err := aac.NewEncoder(aac.EncoderOptions{
@@ -84,6 +86,9 @@ _ = seq
 _ = msg
 _ = info
 ```
+
+Explicit encode methods reject transport mismatches with `ErrInvalidConfig`
+instead of silently emitting incorrectly budgeted frames.
 
 ## Decoder API
 
@@ -184,10 +189,10 @@ paths. The live integration test can also synthesize a fresh fixture with
 `ffmpeg`, build a small native FAAD2 oracle from `third_party/faad2`, and
 byte-compare the Go decoder output against it.
 
-Encoder tests pin the pure-Go FDK-shaped raw access-unit SHA-256 for a
-deterministic stereo S16 frame, verify ADTS and RTMP/FLV wrappers carry the same
-payload, check invalid control transitions, and enforce zero allocations on the
-initialized raw encode hot path.
+Encoder tests pin pure-Go FDK-shaped raw and ADTS-budgeted access-unit SHA-256
+values for deterministic S16 frames, verify ADTS reservoir signaling and
+RTMP/FLV wrapping, check invalid control transitions, and enforce zero
+allocations on the initialized raw encode hot path.
 
 To regenerate the committed vectors:
 
@@ -219,6 +224,15 @@ reference. Build the native encoder oracle with:
 ```sh
 ./scripts/build_fdkaac_oracle.sh
 ```
+
+Then run the opt-in encoder parity test:
+
+```sh
+GOAAC_FDK_ENCODER_ORACLE="$PWD/dist/fdk-aac-oracle/aac-enc" go test . -run TestEncoderFDKAACOracleParity -count=1 -v
+```
+
+The oracle test is skipped by default. When enabled, it requires byte-identical
+ADTS output and reports the first header/payload divergence.
 
 See `docs/reference.md`, `docs/encoder-reference.md`, and
 `docs/parity-ledger.md` for the source-truth record.

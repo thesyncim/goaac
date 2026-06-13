@@ -78,17 +78,17 @@ func TestEncoderADTSVector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Transport != TransportADTS || info.ADTSHeaderBytes != 7 || info.PayloadBytes != 341 {
+	if info.Transport != TransportADTS || info.ADTSHeaderBytes != 7 || info.PayloadBytes != 334 || info.TransportStaticBits != 56 {
 		t.Fatalf("ADTS info = %+v", info)
 	}
 	h, err := ParseADTSHeader(out)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if h.FrameLength != len(out) || h.SampleRate != 48000 || h.Channels != 2 {
+	if h.FrameLength != len(out) || h.SampleRate != 48000 || h.Channels != 2 || h.BufferFullness != 149 {
 		t.Fatalf("ADTS header = %+v len=%d", h, len(out))
 	}
-	if got, want := sha256Hex(out[info.ADTSHeaderBytes:]), "86738e2a79887cb24c6c5897dc78acdf3fdd8d6d79dc14cf5412dfc368b60641"; got != want {
+	if got, want := sha256Hex(out[info.ADTSHeaderBytes:]), "e31b33b5a166df7b387c8d3ca682a78e02f1bf161536f751cfadc96b093c0296"; got != want {
 		t.Fatalf("ADTS payload sha256 = %s, want %s", got, want)
 	}
 }
@@ -155,7 +155,7 @@ func TestEncoderADTSMultiFrameTransitionRoundTrip(t *testing.T) {
 	if len(pcm) == 0 {
 		t.Fatal("roundtrip produced no PCM")
 	}
-	if got, want := sha256Hex(stream), "e938c13e61482af78e375768922194121c38d10295ad68aece17316a96883d6d"; got != want {
+	if got, want := sha256Hex(stream), "6b47aaa53077b7019cdece70dc2c707a7a9c45a3f748e99eb0b9b62d29910a40"; got != want {
 		t.Fatalf("transition stream sha256 = %s, want %s; len=%d payload=%d", got, want, len(stream), payloadBytes)
 	}
 	if got, want := sha256Int16(pcm), "1ae33c71f0e03ec2c4d8270901c2a489d8870bbb7539c888fc43b4b4951ef577"; got != want {

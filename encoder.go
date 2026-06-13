@@ -114,7 +114,13 @@ func NewEncoder(opts EncoderOptions) (*Encoder, error) {
 		bitRate:   bitRate,
 		transport: transport,
 	}
-	if errCode := fdkaac.FDKaacEncInitRawFrameState(&e.state, encCfg); errCode != fdkaac.AACEncOK {
+	errCode := fdkaac.AACEncOK
+	if transport == TransportADTS {
+		errCode = fdkaac.FDKaacEncInitADTSFrameState(&e.state, encCfg)
+	} else {
+		errCode = fdkaac.FDKaacEncInitRawFrameState(&e.state, encCfg)
+	}
+	if errCode != fdkaac.AACEncOK {
 		return nil, encoderCodeError(errCode)
 	}
 	return e, nil
@@ -163,6 +169,9 @@ func (e *Encoder) EncodeRawInto(dst []byte, pcm []int16) ([]byte, EncodedFrameIn
 	if e.closed {
 		return dst, EncodedFrameInfo{}, ErrClosed
 	}
+	if e.transport != TransportRaw {
+		return dst, EncodedFrameInfo{}, fmt.Errorf("%w: encoder transport is %s, not %s", ErrInvalidConfig, e.transport, TransportRaw)
+	}
 	before := len(dst)
 	out, result, err := e.encodeRawPayloadLocked(dst, pcm)
 	if err != nil {
@@ -187,13 +196,16 @@ func (e *Encoder) EncodeADTSFrameInto(dst []byte, pcm []int16) ([]byte, EncodedF
 	if e.closed {
 		return dst, EncodedFrameInfo{}, ErrClosed
 	}
+	if e.transport != TransportADTS {
+		return dst, EncodedFrameInfo{}, fmt.Errorf("%w: encoder transport is %s, not %s", ErrInvalidConfig, e.transport, TransportADTS)
+	}
 	raw, result, err := e.encodeRawPayloadLocked(e.raw[:0], pcm)
 	if err != nil {
 		return dst, EncodedFrameInfo{}, err
 	}
 
 	before := len(dst)
-	dst, err = fdkaac.AppendADTSHeaderWithScratch(dst, e.coderConfig(), len(raw), 0x7ff, &e.transportScratch)
+	dst, err = fdkaac.AppendADTSHeaderWithScratch(dst, e.coderConfig(), len(raw), e.adtsBufferFullnessLocked(), &e.transportScratch)
 	if err != nil {
 		return dst, EncodedFrameInfo{}, err
 	}
@@ -226,6 +238,9 @@ func (e *Encoder) EncodeFLVTagInto(dst []byte, pcm []int16) ([]byte, EncodedFram
 	defer e.mu.Unlock()
 	if e.closed {
 		return dst, EncodedFrameInfo{}, ErrClosed
+	}
+	if e.transport != TransportRaw {
+		return dst, EncodedFrameInfo{}, fmt.Errorf("%w: encoder transport is %s, not %s", ErrInvalidConfig, e.transport, TransportRaw)
 	}
 	raw, result, err := e.encodeRawPayloadLocked(e.raw[:0], pcm)
 	if err != nil {
@@ -323,6 +338,27 @@ func (e *Encoder) coderConfig() fdkaac.CoderConfig {
 		NSubFrames:      1,
 		Flags:           fdkaac.ConfigFlagMPEGID,
 	}
+}
+
+func (e *Encoder) adtsBufferFullnessLocked() int {
+	ncc := e.state.Init.ChannelMapping.NChannelsEff
+	if ncc <= 0 {
+		return 0x7ff
+	}
+	bits := fdkaac.FDKaacEncEncBitresToTpBitres(
+		&e.state.QC.Kernel,
+		e.state.QC.Kernel.BitrateMode,
+		e.state.Config.AudioMuxVersion,
+		ncc,
+	)
+	fullness := bits / ncc / 32
+	if fullness > 0x7ff {
+		return 0x7ff
+	}
+	if fullness < 0 {
+		return 0
+	}
+	return fullness
 }
 
 func fdkaacEncoderChannelMode(channelConfig int) (fdkaac.ChannelMode, error) {

@@ -944,7 +944,7 @@ func FDKaacEncWriteBitstream(
 	frameBits -= bitMarkUp
 	frameBits += int(BitStreamValidBits(bitstream))
 	result.FrameBits = frameBits
-	if frameBits != qcOut.TotalBits+qcKernel.GlobHdrBits {
+	if frameBits != qcOut.TotalBits {
 		return result, AACEncWrittenBitsError
 	}
 
