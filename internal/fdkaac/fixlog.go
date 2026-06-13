@@ -164,6 +164,34 @@ func fDivNormExp(num FixpDBL, denom FixpDBL) (FixpDBL, int) {
 	return schurDiv(num, denom, FractBits), exp
 }
 
+func fDivNormSignedExp(num FixpDBL, denom FixpDBL) (FixpDBL, int) {
+	sign := (num >= 0) != (denom >= 0)
+	if num == 0 {
+		return 0, 0
+	}
+	if denom == 0 {
+		return MaxValDBL, 14
+	}
+
+	normNum := CountLeadingBits(num)
+	num <<= uint(normNum)
+	num >>= 2
+	num = fixpAbsDBL(num)
+	exp := -normNum + 1
+
+	normDen := CountLeadingBits(denom)
+	denom <<= uint(normDen)
+	denom >>= 1
+	denom = fixpAbsDBL(denom)
+	exp += normDen
+
+	div := schurDiv(num, denom, FractBits)
+	if sign {
+		div = -div
+	}
+	return div, exp
+}
+
 func f2Pow(expM FixpDBL, expE int) (FixpDBL, int) {
 	if expE >= DfractBits || expE <= -DfractBits {
 		panic("fdkaac: invalid pow2 exponent")

@@ -32,6 +32,140 @@ func TestFDKaacEncTnsCoefficientQuantizerVectors(t *testing.T) {
 	}
 }
 
+func TestCLpcAutoToParcorVectors(t *testing.T) {
+	acorr := [...]FixpDBL{
+		0x50000000, -0x08000000, 0x04000000, -0x02000000, 0x01800000,
+		-0x01000000, 0x00c00000, -0x00800000, 0x00600000,
+	}
+	var refl [tnsMaxOrder]FixpSGL
+	var predictionGainM FixpDBL
+	var predictionGainE int
+
+	clpcAutoToParcor(acorr[:], 0, refl[:], len(acorr)-1, &predictionGainM, &predictionGainE)
+
+	if got, want := hashFixpSGL(refl[:len(acorr)-1]), uint64(0x586d9133718b6177); got != want {
+		t.Fatalf("autocorr parcor hash = %#016x, want %#016x", got, want)
+	}
+	if got, want := hashFixpDBL(acorr[:]), uint64(0x48ea96339ca70952); got != want {
+		t.Fatalf("mutated autocorr hash = %#016x, want %#016x", got, want)
+	}
+	if predictionGainM != 1086914560 || predictionGainE != 1 {
+		t.Fatalf("prediction gain = %d/%d, want 1086914560/1", predictionGainM, predictionGainE)
+	}
+
+	for i := range refl {
+		refl[i] = 123
+	}
+	zero := [tnsMaxOrder + 1]FixpDBL{}
+	clpcAutoToParcor(zero[:], 0, refl[:], 4, &predictionGainM, &predictionGainE)
+	if got, want := hashFixpSGL(refl[:4]), uint64(0x47fe0d7eaf8e51e3); got != want {
+		t.Fatalf("zero autocorr parcor hash = %#016x, want %#016x", got, want)
+	}
+	if predictionGainM != halfDBL || predictionGainE != 1 {
+		t.Fatalf("zero autocorr prediction gain = %d/%d, want %d/1", predictionGainM, predictionGainE, halfDBL)
+	}
+	if refl[4] != 123 {
+		t.Fatalf("zero autocorr cleared past order")
+	}
+}
+
+func TestFDKaacEncTnsMergedAutoCorrelationVectors(t *testing.T) {
+	longConf, _ := mustTnsEncodeConfig(t, LongWindow)
+	var longSpectrum [maxSpectralLines]FixpDBL
+	var rxx1, rxx2 [tnsMaxOrder + 1]FixpDBL
+	fillTnsDetectSpectrum(longSpectrum[:], 811)
+
+	fdkaacEncMergedAutoCorrelation(longSpectrum[:], &longConf, rxx1[:], rxx2[:])
+	if got, want := hashFixpDBL(rxx1[:longConf.MaxOrder+1]), uint64(0x363dd50e6c4473dc); got != want {
+		t.Fatalf("long merged autocorr low hash = %#016x, want %#016x", got, want)
+	}
+	if got, want := hashFixpDBL(rxx2[:longConf.MaxOrder+1]), uint64(0xb67d26c740d106d7); got != want {
+		t.Fatalf("long merged autocorr high hash = %#016x, want %#016x", got, want)
+	}
+
+	shortConf, _ := mustTnsEncodeConfig(t, ShortWindow)
+	var shortSpectrum [128]FixpDBL
+	rxx1 = [tnsMaxOrder + 1]FixpDBL{}
+	rxx2 = [tnsMaxOrder + 1]FixpDBL{}
+	fillTnsDetectSpectrum(shortSpectrum[:], 1201)
+
+	fdkaacEncMergedAutoCorrelation(shortSpectrum[:], &shortConf, rxx1[:], rxx2[:])
+	if got, want := hashFixpDBL(rxx1[:shortConf.MaxOrder+1]), uint64(0x1540eff77bce1b23); got != want {
+		t.Fatalf("short merged autocorr low hash = %#016x, want %#016x", got, want)
+	}
+	if got, want := hashFixpDBL(rxx2[:shortConf.MaxOrder+1]), uint64(0x98db6b1909425a6e); got != want {
+		t.Fatalf("short merged autocorr high hash = %#016x, want %#016x", got, want)
+	}
+}
+
+func TestFDKaacEncTnsDetectLongVectors(t *testing.T) {
+	conf, psy := mustTnsEncodeConfig(t, LongWindow)
+	var data TNSData
+	var info TNSInfo
+	var spectrum [maxSpectralLines]FixpDBL
+	fillTnsDetectSpectrum(spectrum[:], 1447)
+
+	data.FiltersMerged = 1
+	data.DataRaw.Long.SubBlockInfo.TnsActive = [maxTnsFilters]int{1, 1}
+	info.NumOfFilters[0] = 2
+	info.Coef[0][tnsHiFilt][0] = 7
+	info.Coef[0][tnsLoFilt][0] = -7
+
+	rc := FDKaacEncTnsDetect(&data, &conf, &info, psy.SfbCnt, spectrum[:], 0, LongWindow)
+	if rc != 0 {
+		t.Fatalf("long tns detect rc = %d, want 0", rc)
+	}
+	if got, want := hashTnsDetectState(&data, &info, 0, conf.MaxOrder), uint64(0x2e521fc24a29680c); got != want {
+		t.Fatalf("long tns detect state hash = %#016x, want %#016x", got, want)
+	}
+}
+
+func TestFDKaacEncTnsDetectShortVectors(t *testing.T) {
+	conf, psy := mustTnsEncodeConfig(t, ShortWindow)
+	var data TNSData
+	var info TNSInfo
+	var spectrum [128]FixpDBL
+	fillTnsDetectSpectrum(spectrum[:], 1693)
+
+	const subBlock = 5
+	rc := FDKaacEncTnsDetect(&data, &conf, &info, psy.SfbCnt, spectrum[:], subBlock, ShortWindow)
+	if rc != 0 {
+		t.Fatalf("short tns detect rc = %d, want 0", rc)
+	}
+	if got, want := hashTnsDetectState(&data, &info, subBlock, conf.MaxOrder), uint64(0x082438d1adcc19ad); got != want {
+		t.Fatalf("short tns detect state hash = %#016x, want %#016x", got, want)
+	}
+	if data.DataRaw.Short.SubBlockInfo[subBlock].TnsActive[tnsLoFilt] != 0 ||
+		info.NumOfFilters[subBlock] > 1 {
+		t.Fatalf("short tns detect enabled low filter")
+	}
+}
+
+func TestFDKaacEncTnsDetectInactiveResetsState(t *testing.T) {
+	conf, psy := mustTnsEncodeConfig(t, LongWindow)
+	conf.TnsActive = 0
+	var data TNSData
+	var info TNSInfo
+	var spectrum [maxSpectralLines]FixpDBL
+
+	data.FiltersMerged = 1
+	data.DataRaw.Long.SubBlockInfo.TnsActive = [maxTnsFilters]int{1, 1}
+	data.DataRaw.Long.SubBlockInfo.PredictionGain = [maxTnsFilters]int{22, 33}
+	info.NumOfFilters[0] = 2
+	info.Order[0] = [maxTnsFilters]int{4, 3}
+	info.Length[0] = [maxTnsFilters]int{9, 8}
+	info.Coef[0][tnsHiFilt][0] = 5
+	info.Coef[0][tnsLoFilt][0] = -5
+
+	rc := FDKaacEncTnsDetect(&data, &conf, &info, psy.SfbCnt, spectrum[:], 0, LongWindow)
+	if rc != 0 {
+		t.Fatalf("inactive tns detect rc = %d, want 0", rc)
+	}
+	if got, want := hashTnsDetectState(&data, &info, 0, conf.MaxOrder), uint64(0x58bd901001c70a61); got != want {
+		t.Fatalf("inactive tns detect state hash = %#016x, want %#016x", got, want)
+	}
+}
+
 func TestFDKaacEncTnsEncodeLongVectors(t *testing.T) {
 	conf, psy := mustTnsEncodeConfig(t, LongWindow)
 	var data TNSData
@@ -352,6 +486,69 @@ func TestFDKaacEncTnsEncodeRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncTnsDetectRejectsInvalid(t *testing.T) {
+	conf, psy := mustTnsEncodeConfig(t, LongWindow)
+	var data TNSData
+	var info TNSInfo
+	var spectrum [maxSpectralLines]FixpDBL
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{"nil data", func() { FDKaacEncTnsDetect(nil, &conf, &info, psy.SfbCnt, spectrum[:], 0, LongWindow) }},
+		{"nil config", func() { FDKaacEncTnsDetect(&data, nil, &info, psy.SfbCnt, spectrum[:], 0, LongWindow) }},
+		{"nil info", func() { FDKaacEncTnsDetect(&data, &conf, nil, psy.SfbCnt, spectrum[:], 0, LongWindow) }},
+		{"bad block", func() { FDKaacEncTnsDetect(&data, &conf, &info, psy.SfbCnt, spectrum[:], 0, 99) }},
+		{"bad subblock", func() { FDKaacEncTnsDetect(&data, &conf, &info, psy.SfbCnt, spectrum[:], transFac, LongWindow) }},
+		{"bad sfb count", func() { FDKaacEncTnsDetect(&data, &conf, &info, -1, spectrum[:], 0, LongWindow) }},
+		{"bad coef resolution", func() {
+			bad := conf
+			bad.CoefRes = 5
+			FDKaacEncTnsDetect(&data, &bad, &info, psy.SfbCnt, spectrum[:], 0, LongWindow)
+		}},
+		{"bad limit order", func() {
+			bad := conf
+			bad.ConfTab.TnsLimitOrder[tnsHiFilt] = bad.MaxOrder + 1
+			FDKaacEncTnsDetect(&data, &bad, &info, psy.SfbCnt, spectrum[:], 0, LongWindow)
+		}},
+		{"bad lines", func() {
+			bad := conf
+			bad.LpcStartLine[tnsLoFilt] = bad.LpcStopLine + 1
+			FDKaacEncTnsDetect(&data, &bad, &info, psy.SfbCnt, spectrum[:], 0, LongWindow)
+		}},
+		{"bad split", func() {
+			bad := conf
+			bad.ConfTab.ACFSplit = [maxTnsFilters]int{2, 3}
+			FDKaacEncTnsDetect(&data, &bad, &info, psy.SfbCnt, spectrum[:], 0, LongWindow)
+		}},
+		{"short autocorr output", func() {
+			var rxx [tnsMaxOrder + 1]FixpDBL
+			fdkaacEncMergedAutoCorrelation(spectrum[:], &conf, rxx[:conf.MaxOrder], rxx[:])
+		}},
+		{"short lpc autocorr", func() {
+			var refl [tnsMaxOrder]FixpSGL
+			clpcAutoToParcor(spectrum[:2], 0, refl[:], 2, nil, nil)
+		}},
+		{"partial gain output", func() {
+			var refl [tnsMaxOrder]FixpSGL
+			var gain FixpDBL
+			clpcAutoToParcor(spectrum[:3], 0, refl[:], 2, &gain, nil)
+		}},
+	}
+
+	for _, tt := range tests {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		}()
+	}
+}
+
 func TestFDKaacEncTnsSyncAllocs(t *testing.T) {
 	conf := TNSConfig{MaxOrder: 5}
 	var destData, srcData TNSData
@@ -368,6 +565,26 @@ func TestFDKaacEncTnsSyncAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("tns sync allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncTnsDetectAllocs(t *testing.T) {
+	conf, psy := mustTnsEncodeConfig(t, LongWindow)
+	var data TNSData
+	var info TNSInfo
+	var spectrum [maxSpectralLines]FixpDBL
+	fillTnsDetectSpectrum(spectrum[:], 2053)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		data = TNSData{}
+		info = TNSInfo{}
+		working := spectrum
+		rc := FDKaacEncTnsDetect(&data, &conf, &info, psy.SfbCnt, working[:], 0, LongWindow)
+		tnsRuntimeSink ^= uint64(rc)
+		tnsRuntimeSink ^= hashTnsDetectState(&data, &info, 0, conf.MaxOrder)
+	})
+	if allocs != 0 {
+		t.Fatalf("tns detect allocations = %v, want 0", allocs)
 	}
 }
 
@@ -412,6 +629,40 @@ func fillTnsEncodeSpectrum(spectrum []FixpDBL, seed uint32) {
 		v -= 0x100000
 		spectrum[i] = FixpDBL(v << 7)
 	}
+}
+
+func fillTnsDetectSpectrum(spectrum []FixpDBL, seed uint32) {
+	state := seed
+	acc := int32(0)
+	for i := range spectrum {
+		state = state*1103515245 + 12345
+		target := int32((state >> 10) & 0x3ffff)
+		target -= 0x20000
+		acc = (acc*7 + target) >> 3
+		spectrum[i] = FixpDBL(acc << 9)
+	}
+}
+
+func hashTnsDetectState(data *TNSData, info *TNSInfo, subBlock int, order int) uint64 {
+	h := uint64(14695981039346656037)
+	sbInfo := tnsSubblockInfo(data, LongWindow, 0)
+	if subBlock != 0 {
+		sbInfo = tnsSubblockInfo(data, ShortWindow, subBlock)
+	}
+	h = hashTnsSyncInt(h, data.FiltersMerged)
+	h = hashTnsSyncInt(h, info.NumOfFilters[subBlock])
+	h = hashTnsSyncInt(h, info.CoefRes[subBlock])
+	for filt := 0; filt < maxTnsFilters; filt++ {
+		h = hashTnsSyncInt(h, sbInfo.TnsActive[filt])
+		h = hashTnsSyncInt(h, sbInfo.PredictionGain[filt])
+		h = hashTnsSyncInt(h, info.Order[subBlock][filt])
+		h = hashTnsSyncInt(h, info.Length[subBlock][filt])
+		h = hashTnsSyncInt(h, info.Direction[subBlock][filt])
+		for i := 0; i < order; i++ {
+			h = hashTnsSyncInt(h, info.Coef[subBlock][filt][i])
+		}
+	}
+	return h
 }
 
 func hashTnsSyncShort(data *TNSData, info *TNSInfo) uint64 {
