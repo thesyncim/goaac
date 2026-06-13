@@ -95,6 +95,62 @@ func CalcLdInt(i int) FixpDBL {
 	return 0
 }
 
+func schurDiv(num FixpDBL, denum FixpDBL, count int) FixpDBL {
+	if num < 0 || denum <= 0 || num > denum || count <= 0 || count > DfractBits {
+		panic("fdkaac: invalid Schur division input")
+	}
+	lNum := int32(num) >> 1
+	lDenum := int32(denum) >> 1
+	div := int32(0)
+	k := count
+	if lNum != 0 {
+		for {
+			k--
+			if k == 0 {
+				break
+			}
+			div <<= 1
+			lNum <<= 1
+			if lNum >= lDenum {
+				lNum -= lDenum
+				div++
+			}
+		}
+	}
+	return FixpDBL(div << uint(DfractBits-count))
+}
+
+func fDivNorm(num FixpDBL, denom FixpDBL) FixpDBL {
+	if num < 0 || denom <= 0 || num > denom {
+		panic("fdkaac: invalid normalized division input")
+	}
+	res, exp := fDivNormExp(num, denom)
+	if res == FixpDBL(1<<(DfractBits-2)) && exp == 1 {
+		return MaxValDBL
+	}
+	return ScaleValueDBL(res, exp)
+}
+
+func fDivNormExp(num FixpDBL, denom FixpDBL) (FixpDBL, int) {
+	if num < 0 || denom <= 0 || num > denom {
+		panic("fdkaac: invalid normalized division input")
+	}
+	if num == 0 {
+		return 0, 0
+	}
+
+	normNum := CountLeadingBits(num)
+	num <<= uint(normNum)
+	num >>= 1
+	exp := -normNum + 1
+
+	normDen := CountLeadingBits(denom)
+	denom <<= uint(normDen)
+	exp += normDen
+
+	return schurDiv(num, denom, FractBits), exp
+}
+
 func CalcInvLdData(x FixpDBL) FixpDBL {
 	setZero := x >= -ldData31Over64
 	setMax := x >= ldData31Over64 || x == 0

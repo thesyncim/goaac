@@ -121,6 +121,31 @@ func TestCalcLdIntVectors(t *testing.T) {
 	assertFixpDBLSlice(t, "CalcLdInt", got[:], want[:], 0x5548a115d7d858d0)
 }
 
+func TestFDivNormVectors(t *testing.T) {
+	input := [...]struct {
+		num   FixpDBL
+		denom FixpDBL
+	}{
+		{0, 9},
+		{1, 2},
+		{3, 4},
+		{5, 8},
+		{7, 9},
+		{123, 456},
+		{1023, 1024},
+		{0x10000000, 0x40000000},
+	}
+	want := [...]FixpDBL{0, 1073741824, 1610612736, 1342177280, 1670250496, 579239936, 2145386496, 536870912}
+	var got [len(input)]FixpDBL
+	for i, tt := range input {
+		got[i] = fDivNorm(tt.num, tt.denom)
+	}
+	if got != want {
+		t.Fatalf("fDivNorm = %v, want %v", got, want)
+	}
+	assertFixpDBLSlice(t, "fDivNorm", got[:], want[:], 0x58a03ac09c95c12f)
+}
+
 func TestLdDataVectorRejectsInvalid(t *testing.T) {
 	var src [2]FixpDBL
 	var dst [2]FixpDBL
@@ -128,6 +153,30 @@ func TestLdDataVectorRejectsInvalid(t *testing.T) {
 		name string
 		fn   func()
 	}{
+		{
+			name: "negative fDivNorm numerator",
+			fn: func() {
+				fDivNorm(-1, 2)
+			},
+		},
+		{
+			name: "zero fDivNorm denominator",
+			fn: func() {
+				fDivNorm(1, 0)
+			},
+		},
+		{
+			name: "fDivNorm numerator larger than denominator",
+			fn: func() {
+				fDivNorm(3, 2)
+			},
+		},
+		{
+			name: "bad Schur division count",
+			fn: func() {
+				schurDiv(1, 2, 0)
+			},
+		},
 		{
 			name: "negative count",
 			fn: func() {

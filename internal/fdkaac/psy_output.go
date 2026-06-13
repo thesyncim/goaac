@@ -13,8 +13,11 @@ type PsyOutChannel struct {
 	TNSInfo            TNSInfo
 	NoiseNrg           [maxGroupedSFB]int
 	IsScale            [maxGroupedSFB]int
+	IsBook             [maxGroupedSFB]int
 	MdctSpectrum       []FixpDBL
 	SfbEnergy          [maxGroupedSFB]FixpDBL
+	SfbEnergyLdData    [maxGroupedSFB]FixpDBL
+	SfbThresholdLdData [maxGroupedSFB]FixpDBL
 	SfbSpreadEnergy    [maxGroupedSFB]FixpDBL
 }
 

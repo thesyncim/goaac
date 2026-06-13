@@ -240,6 +240,13 @@ Tests verify active-line preparation, high/low PE branches, inactive and
 intensity-book transitions, malformed controls, and zero steady-state
 allocation.
 
+The FDK AAC-LC PE threshold-adjustment subset is covered with source-derived
+vectors for normalized Schur division, `FDKaacEnc_preparePe`,
+`FDKaacEnc_calcWeighting`, `FDKaacEnc_calcPe`, and `FDKaacEnc_peCalculation`.
+Tests verify long-window weighting-patch execution, weighted energy/threshold
+mutation, short-window patch-state transition, malformed controls, and zero
+steady-state allocation.
+
 The FDK AAC-LC quantization subset is covered with mechanically derived ROM
 table checksums and source-derived vectors for `FDKaacEnc_quantizeLines`,
 `FDKaacEnc_invQuantizeLines`, `FDKaacEnc_QuantizeSpectrum`,

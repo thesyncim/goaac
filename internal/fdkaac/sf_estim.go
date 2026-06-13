@@ -29,15 +29,20 @@ const scfC1Const = FixpDBL(-581606939)
 const maxSpectralLines = 1024
 
 type QCOutChannel struct {
-	MdctSpectrum        [maxSpectralLines]FixpDBL
-	QuantSpec           [maxSpectralLines]int16
-	MaxValueInSfb       [maxGroupedSFB]uint32
-	Scf                 [maxGroupedSFB]int
-	GlobalGain          int
-	SectionData         SectionData
-	SfbFormFactorLdData [maxGroupedSFB]FixpDBL
-	SfbEnergyLdData     [maxGroupedSFB]FixpDBL
-	SfbThresholdLdData  [maxGroupedSFB]FixpDBL
+	MdctSpectrum            [maxSpectralLines]FixpDBL
+	QuantSpec               [maxSpectralLines]int16
+	MaxValueInSfb           [maxGroupedSFB]uint32
+	Scf                     [maxGroupedSFB]int
+	GlobalGain              int
+	SectionData             SectionData
+	SfbFormFactorLdData     [maxGroupedSFB]FixpDBL
+	SfbEnergy               [maxGroupedSFB]FixpDBL
+	SfbEnergyLdData         [maxGroupedSFB]FixpDBL
+	SfbThresholdLdData      [maxGroupedSFB]FixpDBL
+	SfbWeightedEnergyLdData [maxGroupedSFB]FixpDBL
+	SfbEnFacLd              [maxGroupedSFB]FixpDBL
+	SfbMinSnrLdData         [maxGroupedSFB]FixpDBL
+	SfbSpreadEnergy         [maxGroupedSFB]FixpDBL
 }
 
 func FDKaacEncCalcFormFactor(qcOutChannel []*QCOutChannel, psyOutChannel []*PsyOutChannel, nChannels int) {
