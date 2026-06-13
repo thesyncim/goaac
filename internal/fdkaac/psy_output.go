@@ -10,6 +10,9 @@ type PsyOutChannel struct {
 	SfbOffsets         [maxGroupedSFB + 1]int
 	MdctScale          int
 	GroupLen           [maxNoOfGroups]int
+	TNSInfo            TNSInfo
+	NoiseNrg           [maxGroupedSFB]int
+	IsScale            [maxGroupedSFB]int
 	MdctSpectrum       []FixpDBL
 	SfbEnergy          [maxGroupedSFB]FixpDBL
 	SfbSpreadEnergy    [maxGroupedSFB]FixpDBL

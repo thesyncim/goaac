@@ -138,6 +138,12 @@ fill-element wrapping, data-stream elements, ER en-bloc payloads, and ELD SBR
 direct payloads. Tests also verify a combined long-channel payload sequence,
 invalid writer/control transitions, and zero steady-state allocation.
 
+The FDK AAC-LC channel element writer subset is covered with source-derived
+sequence-table pins for SCE and CPE normal syntax, plus byte vectors for a mono
+SCE and a common-window stereo CPE assembled through the lower-level channel
+payload writers. Tests also verify malformed bit-count error returns, invalid
+element/control transitions, and zero steady-state allocation.
+
 The FDK AAC-LC short grouping subset is covered with source-derived grouped
 offset and min-SNR vectors, saturating threshold/energy/MS/spread-energy sums,
 max-SFB scan and zero-spectrum floor checks, spectrum-regroup hashes, invalid

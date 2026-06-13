@@ -228,6 +228,129 @@ func TestFDKaacEncWriteExtensionDataVectors(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncBitstreamElementListVectors(t *testing.T) {
+	sce := FDKaacEncGetBitstreamElementList(aotAACLC, -1, 1, 0, 0)
+	if sce == nil {
+		t.Fatal("nil AAC-LC SCE element list")
+	}
+	assertRBDSequence(t, "aac-sce", sce.ID, []rbdID{
+		rbdADTSCRCStartReg1, rbdElementInstanceTag, rbdGlobalGain, rbdICSInfo,
+		rbdSectionData, rbdScaleFactorData, rbdPulse, rbdTNSDataPresent,
+		rbdTNSData, rbdGainControlDataPresent, rbdSpectralData,
+		rbdADTSCRCEndReg1, rbdEndOfSequence,
+	}, 0xb3d2c11ed7345352)
+
+	cpe := FDKaacEncGetBitstreamElementList(aotAACLC, -1, 2, 0, 0)
+	if cpe == nil || cpe.Next[0] == nil || cpe.Next[1] == nil {
+		t.Fatal("incomplete AAC-LC CPE element list")
+	}
+	assertRBDSequence(t, "aac-cpe-root", cpe.ID, []rbdID{
+		rbdADTSCRCStartReg1, rbdElementInstanceTag, rbdCommonWindow, rbdLinkSequence,
+	}, 0xc297db298c27d64c)
+	assertRBDSequence(t, "aac-cpe-common0", cpe.Next[0].ID, []rbdID{
+		rbdGlobalGain, rbdICSInfo, rbdSectionData, rbdScaleFactorData, rbdPulse,
+		rbdTNSDataPresent, rbdTNSData, rbdGainControlDataPresent, rbdSpectralData,
+		rbdNextChannel, rbdADTSCRCStartReg2, rbdGlobalGain, rbdICSInfo,
+		rbdSectionData, rbdScaleFactorData, rbdPulse, rbdTNSDataPresent,
+		rbdTNSData, rbdGainControlDataPresent, rbdSpectralData,
+		rbdADTSCRCEndReg1, rbdADTSCRCEndReg2, rbdEndOfSequence,
+	}, 0xb4996b2e34bc0ddb)
+	assertRBDSequence(t, "aac-cpe-common1", cpe.Next[1].ID, []rbdID{
+		rbdICSInfo, rbdMS, rbdGlobalGain, rbdSectionData, rbdScaleFactorData,
+		rbdPulse, rbdTNSDataPresent, rbdTNSData, rbdGainControlDataPresent,
+		rbdSpectralData, rbdNextChannel, rbdADTSCRCStartReg2, rbdGlobalGain,
+		rbdSectionData, rbdScaleFactorData, rbdPulse, rbdTNSDataPresent,
+		rbdTNSData, rbdGainControlDataPresent, rbdSpectralData,
+		rbdADTSCRCEndReg1, rbdADTSCRCEndReg2, rbdEndOfSequence,
+	}, 0xe5e42f6ce8b8b2d)
+
+	if got := FDKaacEncGetBitstreamElementList(99, -1, 1, 0, 0); got != nil {
+		t.Fatalf("unsupported AOT list = %#v, want nil", got)
+	}
+	if got := FDKaacEncGetBitstreamElementList(aotAACLC, 0, 1, 0, 0); got != nil {
+		t.Fatalf("unsupported epConfig list = %#v, want nil", got)
+	}
+}
+
+func TestFDKaacEncChannelElementWriteSCEVector(t *testing.T) {
+	qc, psy := buildLongChannelElementCase(t)
+	element := ElementInfo{ElType: idSCE, InstanceTag: 2}
+	psyElement := PsyOutElement{}
+	runBitencVector(t, "sce-long-element", func(bs *BitStream) int {
+		bits, errCode := FDKaacEncChannelElementWrite(
+			bs, &element, []*QCOutChannel{qc}, &psyElement, []*PsyOutChannel{psy},
+			0, aotAACLC, -1, 0,
+		)
+		if errCode != AACEncOK {
+			t.Fatalf("SCE write error = %#x, want OK", errCode)
+		}
+		return bits
+	}, 202, []byte{
+		0x05, 0x18, 0x24, 0x04, 0x76, 0x55, 0x55, 0x55,
+		0x55, 0x06, 0xcf, 0x72, 0xf3, 0x8e, 0xa9, 0xc6,
+		0x2d, 0x8c, 0xfc, 0x97, 0xe6, 0x12, 0x78, 0x38,
+		0xe0, 0x40,
+	})
+}
+
+func TestFDKaacEncChannelElementWriteCPECommonWindowVector(t *testing.T) {
+	qc0, psy0 := buildLongChannelElementCase(t)
+	qc1, psy1 := buildLongChannelElementCase(t)
+	element := ElementInfo{ElType: idCPE, InstanceTag: 5}
+	psyElement := PsyOutElement{CommonWindow: 1, ToolsInfo: ToolsInfo{MsDigest: MsMaskSome}}
+	copy(psyElement.ToolsInfo.MsMask[:], []int{1, 0, 1, 0, 0, 1, 0, 0})
+
+	runBitencVector(t, "cpe-common-long-element", func(bs *BitStream) int {
+		bits, errCode := FDKaacEncChannelElementWrite(
+			bs, &element, []*QCOutChannel{qc0, qc1}, &psyElement, []*PsyOutChannel{psy0, psy1},
+			0, aotAACLC, -1, 0,
+		)
+		if errCode != AACEncOK {
+			t.Fatalf("CPE write error = %#x, want OK", errCode)
+		}
+		return bits
+	}, 397, []byte{
+		0x2b, 0x12, 0x0d, 0x24, 0x60, 0x8e, 0xca, 0xaa,
+		0xaa, 0xaa, 0xa0, 0xd9, 0xee, 0x5e, 0x71, 0xd5,
+		0x38, 0xc5, 0xb1, 0x9f, 0x92, 0xfc, 0xc2, 0x4f,
+		0x07, 0x1c, 0x0c, 0x60, 0x8e, 0xca, 0xaa, 0xaa,
+		0xaa, 0xa0, 0xd9, 0xee, 0x5e, 0x71, 0xd5, 0x38,
+		0xc5, 0xb1, 0x9f, 0x92, 0xfc, 0xc2, 0x4f, 0x07,
+		0x1c, 0x08,
+	})
+}
+
+func TestFDKaacEncChannelElementWriteErrors(t *testing.T) {
+	qc, psy := buildLongChannelElementCase(t)
+	element := ElementInfo{ElType: idSCE, InstanceTag: 0}
+	psyElement := PsyOutElement{}
+	var storage [256]byte
+	var bs BitStream
+	if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+
+	badSection := *qc
+	badSection.SectionData.SideInfoBits++
+	if _, errCode := FDKaacEncChannelElementWrite(&bs, &element, []*QCOutChannel{&badSection}, &psyElement, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 0); errCode != AACEncWriteSecError {
+		t.Fatalf("section mismatch error = %#x, want %#x", errCode, AACEncWriteSecError)
+	}
+
+	ResetBitStream(&bs, BSWriter)
+	badScale := *qc
+	badScale.SectionData.ScalefacBits++
+	if _, errCode := FDKaacEncChannelElementWrite(&bs, &element, []*QCOutChannel{&badScale}, &psyElement, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 0); errCode != AACEncWriteScalError {
+		t.Fatalf("scale mismatch error = %#x, want %#x", errCode, AACEncWriteScalError)
+	}
+
+	ResetBitStream(&bs, BSWriter)
+	badSpectral := *qc
+	badSpectral.SectionData.HuffmanBits++
+	if _, errCode := FDKaacEncChannelElementWrite(&bs, &element, []*QCOutChannel{&badSpectral}, &psyElement, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 0); errCode != AACEncWriteSpecError {
+		t.Fatalf("spectral mismatch error = %#x, want %#x", errCode, AACEncWriteSpecError)
+	}
+}
+
 func TestFDKaacEncEncodeSpectralDataVectors(t *testing.T) {
 	longTC, longSD := buildBitencSectionData(t, fillDynLongCase)
 	runBitencVector(t, "long-spectral", func(bs *BitStream) int {
@@ -386,6 +509,36 @@ func TestFDKaacEncBitencRejectsInvalid(t *testing.T) {
 			extension := QCOutExtension{Type: ExtDataElement, PayloadBits: 16, Payload: payload[:]}
 			FDKaacEncWriteExtensionData(&bs, &extension, 0, 0, 0, 2, 0)
 		}},
+		{"nil element info", func() {
+			FDKaacEncChannelElementWrite(&bs, nil, nil, &PsyOutElement{}, nil, 0, aotAACLC, -1, 0)
+		}},
+		{"invalid element type", func() {
+			qc, psy := buildLongChannelElementCase(t)
+			element := ElementInfo{ElType: idDSE, InstanceTag: 0}
+			FDKaacEncChannelElementWrite(&bs, &element, []*QCOutChannel{qc}, &PsyOutElement{}, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 0)
+		}},
+		{"invalid element tag", func() {
+			qc, psy := buildLongChannelElementCase(t)
+			element := ElementInfo{ElType: idSCE, InstanceTag: 16}
+			FDKaacEncChannelElementWrite(&bs, &element, []*QCOutChannel{qc}, &PsyOutElement{}, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 0)
+		}},
+		{"invalid common window", func() {
+			qc0, psy0 := buildLongChannelElementCase(t)
+			qc1, psy1 := buildLongChannelElementCase(t)
+			element := ElementInfo{ElType: idCPE, InstanceTag: 0}
+			psyElement := PsyOutElement{CommonWindow: 2}
+			FDKaacEncChannelElementWrite(&bs, &element, []*QCOutChannel{qc0, qc1}, &psyElement, []*PsyOutChannel{psy0, psy1}, 0, aotAACLC, -1, 0)
+		}},
+		{"unsupported channel sequence", func() {
+			qc, psy := buildLongChannelElementCase(t)
+			element := ElementInfo{ElType: idSCE, InstanceTag: 0}
+			FDKaacEncChannelElementWrite(&bs, &element, []*QCOutChannel{qc}, &PsyOutElement{}, []*PsyOutChannel{psy}, 0, 99, -1, 0)
+		}},
+		{"short channel inputs", func() {
+			qc0, psy0 := buildLongChannelElementCase(t)
+			element := ElementInfo{ElType: idCPE, InstanceTag: 0}
+			FDKaacEncChannelElementWrite(&bs, &element, []*QCOutChannel{qc0}, &PsyOutElement{}, []*PsyOutChannel{psy0}, 0, aotAACLC, -1, 0)
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() {
@@ -396,6 +549,37 @@ func TestFDKaacEncBitencRejectsInvalid(t *testing.T) {
 			ResetBitStream(&bs, BSWriter)
 			tt.fn()
 		})
+	}
+}
+
+func TestFDKaacEncChannelElementWriteAllocs(t *testing.T) {
+	qc, psy := buildLongChannelElementCase(t)
+	element := ElementInfo{ElType: idSCE, InstanceTag: 2}
+	psyElement := PsyOutElement{}
+	qcChannels := []*QCOutChannel{qc}
+	psyChannels := []*PsyOutChannel{psy}
+	var storage [256]byte
+	var out [256]byte
+	var bs BitStream
+	if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		clear(storage[:])
+		clear(out[:])
+		ResetBitStream(&bs, BSWriter)
+		bits, errCode := FDKaacEncChannelElementWrite(&bs, &element, qcChannels, &psyElement, psyChannels, 0, aotAACLC, -1, 0)
+		if errCode != AACEncOK {
+			t.Fatalf("channel element write error = %#x", errCode)
+		}
+		ByteAlign(&bs, 0)
+		n := FetchBuffer(&bs, out[:])
+		bitCountSink = bits + n
+		bitCountHashSink = hashHuffBytes(out[:n])
+	})
+	if allocs != 0 {
+		t.Fatalf("channel element writer allocations = %v, want 0", allocs)
 	}
 }
 
@@ -520,6 +704,46 @@ func shortTNSCase() TNSInfo {
 	tns.Direction[0][0] = 1
 	copy(tns.Coef[0][0][:], []int{-2, 1, 2})
 	return tns
+}
+
+func buildLongChannelElementCase(t *testing.T) (*QCOutChannel, *PsyOutChannel) {
+	t.Helper()
+	tc, sectionData := buildBitencSectionData(t, fillDynLongCase)
+	qc := &QCOutChannel{GlobalGain: 80, SectionData: sectionData}
+	copy(qc.QuantSpec[:], tc.quant[:])
+	copy(qc.MaxValueInSfb[:], tc.maxValue[:])
+	copy(qc.Scf[:], tc.scf[:])
+
+	psy := &PsyOutChannel{
+		SfbCnt:             tc.sfbCnt,
+		SfbPerGroup:        tc.sfbPerGroup,
+		MaxSfbPerGroup:     tc.maxSfbPerGroup,
+		LastWindowSequence: tc.blockType,
+		WindowShape:        WindowShapeKBD,
+		GroupingMask:       0,
+		MdctScale:          0,
+	}
+	copy(psy.SfbOffsets[:], tc.offsets[:])
+	copy(psy.NoiseNrg[:], tc.noise[:])
+	copy(psy.IsScale[:], tc.isScale[:])
+	return qc, psy
+}
+
+func assertRBDSequence(t *testing.T, name string, got []rbdID, want []rbdID, hash uint64) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("%s length = %d, want %d", name, len(got), len(want))
+	}
+	var gotInts [64]int
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("%s[%d] = %d, want %d", name, i, got[i], want[i])
+		}
+		gotInts[i] = int(got[i])
+	}
+	if h := hashBandEnergyInts(gotInts[:len(want)]); h != hash {
+		t.Fatalf("%s hash = %#016x, want %#016x", name, h, hash)
+	}
 }
 
 func buildBitencSectionData(t *testing.T, fill func(*dynBitCountCase)) (dynBitCountCase, SectionData) {

@@ -35,7 +35,16 @@ const (
 	acScalable = 0x000008
 	acELD      = 0x000010
 	acER       = 0x000040
+	acERRVLC   = 0x000002
+	acERHCR    = 0x000004
 
+	aotAACLC = 2
+	aotSBR   = 5
+	aotPS    = 29
+
+	idSCE = 0
+	idCPE = 1
+	idLFE = 3
 	idDSE = 4
 	idFIL = 6
 
@@ -46,7 +55,81 @@ const (
 	ExtDynamicRange = 0x0b
 	ExtSBRData      = 0x0d
 	ExtSBRDataCRC   = 0x0e
+
+	AACEncOK                     = 0x0000
+	AACEncUnknown                = 0x0002
+	AACEncUnsupportedAOT         = 0x3000
+	AACEncInvalidElementInfoType = 0x4120
+	AACEncWriteScalError         = 0x41e0
+	AACEncWriteSecError          = 0x4200
+	AACEncWriteSpecError         = 0x4220
 )
+
+type rbdID uint8
+
+const (
+	rbdElementInstanceTag rbdID = iota
+	rbdCommonWindow
+	rbdGlobalGain
+	rbdICSInfo
+	rbdMaxSfb
+	rbdMS
+	rbdLTPDataPresent
+	rbdLTPData
+	rbdSectionData
+	rbdScaleFactorData
+	rbdPulse
+	rbdTNSDataPresent
+	rbdTNSData
+	rbdGainControlDataPresent
+	rbdGainControlData
+	rbdEsc1HCR
+	rbdEsc2RVLC
+	rbdSpectralData
+	rbdScaleFactorDataUSAC
+	rbdCoreMode
+	rbdCommonTW
+	rbdLPDChannelStream
+	rbdTWData
+	rbdNoise
+	rbdACSpectralData
+	rbdFACData
+	rbdTNSActive
+	rbdTNSDataPresentUSAC
+	rbdCommonMaxSfb
+	rbdCoupledElements
+	rbdGainElementLists
+	rbdADTSCRCStartReg1
+	rbdADTSCRCStartReg2
+	rbdADTSCRCEndReg1
+	rbdADTSCRCEndReg2
+	rbdDRMCRCStartReg
+	rbdDRMCRCEndReg
+	rbdNextChannel
+	rbdNextChannelLoop
+	rbdLinkSequence
+	rbdEndOfSequence
+)
+
+type bitstreamElementList struct {
+	ID   []rbdID
+	Next [2]*bitstreamElementList
+}
+
+type ElementInfo struct {
+	ElType      int
+	InstanceTag int
+}
+
+type ToolsInfo struct {
+	MsDigest int
+	MsMask   [maxGroupedSFB]int
+}
+
+type PsyOutElement struct {
+	CommonWindow int
+	ToolsInfo    ToolsInfo
+}
 
 type TNSInfo struct {
 	NumOfFilters [transFac]int
@@ -63,6 +146,41 @@ type QCOutExtension struct {
 	PayloadBits int
 	Payload     []byte
 }
+
+var (
+	elAACSCE = [...]rbdID{
+		rbdADTSCRCStartReg1, rbdElementInstanceTag, rbdGlobalGain, rbdICSInfo,
+		rbdSectionData, rbdScaleFactorData, rbdPulse, rbdTNSDataPresent,
+		rbdTNSData, rbdGainControlDataPresent, rbdSpectralData,
+		rbdADTSCRCEndReg1, rbdEndOfSequence,
+	}
+	elAACCPE = [...]rbdID{
+		rbdADTSCRCStartReg1, rbdElementInstanceTag, rbdCommonWindow, rbdLinkSequence,
+	}
+	elAACCPE0 = [...]rbdID{
+		rbdGlobalGain, rbdICSInfo, rbdSectionData, rbdScaleFactorData, rbdPulse,
+		rbdTNSDataPresent, rbdTNSData, rbdGainControlDataPresent, rbdSpectralData,
+		rbdNextChannel,
+		rbdADTSCRCStartReg2, rbdGlobalGain, rbdICSInfo, rbdSectionData,
+		rbdScaleFactorData, rbdPulse, rbdTNSDataPresent, rbdTNSData,
+		rbdGainControlDataPresent, rbdSpectralData, rbdADTSCRCEndReg1,
+		rbdADTSCRCEndReg2, rbdEndOfSequence,
+	}
+	elAACCPE1 = [...]rbdID{
+		rbdICSInfo, rbdMS,
+		rbdGlobalGain, rbdSectionData, rbdScaleFactorData, rbdPulse,
+		rbdTNSDataPresent, rbdTNSData, rbdGainControlDataPresent, rbdSpectralData,
+		rbdNextChannel,
+		rbdADTSCRCStartReg2, rbdGlobalGain, rbdSectionData, rbdScaleFactorData,
+		rbdPulse, rbdTNSDataPresent, rbdTNSData, rbdGainControlDataPresent,
+		rbdSpectralData, rbdADTSCRCEndReg1, rbdADTSCRCEndReg2,
+		rbdEndOfSequence,
+	}
+	nodeAACSCE  = bitstreamElementList{ID: elAACSCE[:]}
+	nodeAACCPE0 = bitstreamElementList{ID: elAACCPE0[:]}
+	nodeAACCPE1 = bitstreamElementList{ID: elAACCPE1[:]}
+	nodeAACCPE  = bitstreamElementList{ID: elAACCPE[:], Next: [2]*bitstreamElementList{&nodeAACCPE0, &nodeAACCPE1}}
+)
 
 func FDKaacEncEncodeSpectralData(sfbOffset []int, sectionData *SectionData, quantSpectrum []int16, bitstream *BitStream) int {
 	checkEncodeSpectralDataInputs(sfbOffset, sectionData, quantSpectrum, bitstream)
@@ -529,6 +647,160 @@ func writeExtensionPayloadBytes(bitstream *BitStream, payload []byte, payloadBit
 	}
 }
 
+func FDKaacEncGetBitstreamElementList(aot int, epConfig int8, nChannels int, layer int, elFlags uint32) *bitstreamElementList {
+	if aot != aotAACLC && aot != aotSBR && aot != aotPS {
+		return nil
+	}
+	if epConfig != -1 {
+		return nil
+	}
+	if nChannels == 1 {
+		return &nodeAACSCE
+	}
+	if nChannels == 2 {
+		return &nodeAACCPE
+	}
+	return nil
+}
+
+func FDKaacEncChannelElementWrite(
+	bitstream *BitStream,
+	elInfo *ElementInfo,
+	qcOutChannel []*QCOutChannel,
+	psyOutElement *PsyOutElement,
+	psyOutChannel []*PsyOutChannel,
+	syntaxFlags uint32,
+	aot int,
+	epConfig int8,
+	minCnt byte,
+) (int, int) {
+	checkChannelElementWriteInputs(elInfo, qcOutChannel, psyOutElement, psyOutChannel, syntaxFlags, aot, epConfig, minCnt)
+
+	bitDemand := 0
+	numberOfChannels := 2
+	if elInfo.ElType == idSCE || elInfo.ElType == idLFE {
+		numberOfChannels = 1
+	} else if elInfo.ElType != idCPE {
+		return 0, AACEncInvalidElementInfoType
+	}
+
+	list := FDKaacEncGetBitstreamElementList(aot, epConfig, numberOfChannels, 0, 0)
+	if list == nil {
+		return 0, AACEncUnsupportedAOT
+	}
+
+	if syntaxFlags&(acScalable|acER) == 0 {
+		if bitstream != nil {
+			WriteBits(bitstream, uint32(elInfo.ElType), elIDBits)
+		}
+		bitDemand += elIDBits
+	}
+
+	ch := 0
+	decisionBit := 0
+	for i := 0; ; i++ {
+		if i >= len(list.ID) {
+			return bitDemand, AACEncUnknown
+		}
+		item := list.ID[i]
+		if item == rbdEndOfSequence {
+			break
+		}
+
+		qcCh := qcOutChannel[ch]
+		psyCh := psyOutChannel[ch]
+		sectionData := &qcCh.SectionData
+		chBlockType := sectionData.BlockType
+		chMaxSfbPerGrp := sectionData.MaxSfbPerGroup
+		chSfbPerGrp := sectionData.SfbPerGroup
+		chSfbCnt := sectionData.SfbCnt
+		chFirstScf := qcCh.Scf[sectionData.FirstScf]
+
+		switch item {
+		case rbdElementInstanceTag:
+			if bitstream != nil {
+				WriteBits(bitstream, uint32(elInfo.InstanceTag), elInstanceTagBits)
+			}
+			bitDemand += elInstanceTagBits
+		case rbdCommonWindow:
+			decisionBit = psyOutElement.CommonWindow
+			if bitstream != nil {
+				WriteBits(bitstream, uint32(psyOutElement.CommonWindow), 1)
+			}
+			bitDemand++
+		case rbdICSInfo:
+			bitDemand += FDKaacEncEncodeIcsInfo(chBlockType, psyCh.WindowShape, psyCh.GroupingMask, chMaxSfbPerGrp, bitstream, syntaxFlags)
+		case rbdLTPDataPresent:
+			if bitstream != nil {
+				WriteBits(bitstream, 0, 1)
+			}
+			bitDemand++
+		case rbdLTPData:
+		case rbdMS:
+			msDigest := MsMaskNone
+			if minCnt == 0 {
+				msDigest = psyOutElement.ToolsInfo.MsDigest
+			}
+			bitDemand += FDKaacEncEncodeMSInfo(chSfbCnt, chSfbPerGrp, chMaxSfbPerGrp, msDigest, psyOutElement.ToolsInfo.MsMask[:], bitstream)
+		case rbdGlobalGain:
+			bitDemand += FDKaacEncEncodeGlobalGain(qcCh.GlobalGain, chFirstScf, bitstream, psyCh.MdctScale)
+		case rbdSectionData:
+			siBits := FDKaacEncEncodeSectionData(sectionData, bitstream, syntaxFlags&acERRVLC != 0)
+			if bitstream != nil && siBits != sectionData.SideInfoBits {
+				return bitDemand + siBits, AACEncWriteSecError
+			}
+			bitDemand += siBits
+		case rbdScaleFactorData:
+			sfDataBits := FDKaacEncEncodeScaleFactorData(qcCh.MaxValueInSfb[:], sectionData, qcCh.Scf[:], bitstream, psyCh.NoiseNrg[:], psyCh.IsScale[:], qcCh.GlobalGain)
+			if bitstream != nil && sfDataBits != sectionData.ScalefacBits+sectionData.NoiseNrgBits {
+				return bitDemand + sfDataBits, AACEncWriteScalError
+			}
+			bitDemand += sfDataBits
+		case rbdEsc2RVLC:
+			if syntaxFlags&acERRVLC != 0 {
+				return bitDemand, AACEncUnsupportedAOT
+			}
+		case rbdPulse:
+			bitDemand += FDKaacEncEncodePulseData(bitstream)
+		case rbdTNSDataPresent:
+			bitDemand += FDKaacEncEncodeTnsDataPresent(&psyCh.TNSInfo, chBlockType, bitstream)
+		case rbdTNSData:
+			bitDemand += FDKaacEncEncodeTnsData(&psyCh.TNSInfo, chBlockType, bitstream)
+		case rbdGainControlDataPresent:
+			bitDemand += FDKaacEncEncodeGainControlData(bitstream)
+		case rbdGainControlData:
+		case rbdEsc1HCR:
+			if syntaxFlags&acERHCR != 0 {
+				return bitDemand, AACEncUnknown
+			}
+		case rbdSpectralData:
+			if bitstream != nil {
+				spectralBits := FDKaacEncEncodeSpectralData(psyCh.SfbOffsets[:], sectionData, qcCh.QuantSpec[:], bitstream)
+				if spectralBits != sectionData.HuffmanBits {
+					return bitDemand + spectralBits, AACEncWriteSpecError
+				}
+				bitDemand += spectralBits
+			}
+		case rbdADTSCRCStartReg1, rbdADTSCRCStartReg2, rbdADTSCRCEndReg1, rbdADTSCRCEndReg2, rbdDRMCRCStartReg, rbdDRMCRCEndReg:
+		case rbdNextChannel:
+			ch = (ch + 1) % numberOfChannels
+		case rbdLinkSequence:
+			if decisionBit != 0 {
+				decisionBit = 1
+			}
+			if list.Next[decisionBit] == nil {
+				return bitDemand, AACEncUnknown
+			}
+			list = list.Next[decisionBit]
+			i = -1
+		default:
+			return bitDemand, AACEncUnknown
+		}
+	}
+
+	return bitDemand, AACEncOK
+}
+
 func checkEncodeSpectralDataInputs(sfbOffset []int, sectionData *SectionData, quantSpectrum []int16, bitstream *BitStream) {
 	if bitstream == nil {
 		panic("fdkaac: nil spectral-data bitstream")
@@ -743,6 +1015,86 @@ func checkWriteExtensionDataInputs(extension *QCOutExtension, elInstanceTag int)
 	if extension.Type == ExtDataElement {
 		checkWriteDataStreamElementInputs(elInstanceTag, extension.PayloadBits>>3, extension.Payload)
 	}
+}
+
+func checkChannelElementWriteInputs(
+	elInfo *ElementInfo,
+	qcOutChannel []*QCOutChannel,
+	psyOutElement *PsyOutElement,
+	psyOutChannel []*PsyOutChannel,
+	syntaxFlags uint32,
+	aot int,
+	epConfig int8,
+	minCnt byte,
+) {
+	if elInfo == nil {
+		panic("fdkaac: nil element info")
+	}
+	if elInfo.InstanceTag < 0 || elInfo.InstanceTag >= (1<<elInstanceTagBits) {
+		panic("fdkaac: invalid element instance tag")
+	}
+	if elInfo.ElType != idSCE && elInfo.ElType != idCPE && elInfo.ElType != idLFE {
+		panic("fdkaac: invalid channel element type")
+	}
+	if psyOutElement == nil {
+		panic("fdkaac: nil psy element")
+	}
+	if psyOutElement.CommonWindow != 0 && psyOutElement.CommonWindow != 1 {
+		panic("fdkaac: invalid common-window flag")
+	}
+	if minCnt != 0 {
+		panic("fdkaac: minimum channel-element count is not ported")
+	}
+	if syntaxFlags&(acScalable|acER) != 0 {
+		panic("fdkaac: ER/scalable channel-element writer is not ported")
+	}
+	if FDKaacEncGetBitstreamElementList(aot, epConfig, channelElementCount(elInfo.ElType), 0, 0) == nil {
+		panic("fdkaac: unsupported channel-element sequence")
+	}
+
+	nChannels := channelElementCount(elInfo.ElType)
+	if len(qcOutChannel) < nChannels || len(psyOutChannel) < nChannels {
+		panic("fdkaac: short channel-element inputs")
+	}
+	for ch := 0; ch < nChannels; ch++ {
+		if qcOutChannel[ch] == nil {
+			panic("fdkaac: nil channel-element qc output")
+		}
+		if psyOutChannel[ch] == nil {
+			panic("fdkaac: nil channel-element psy output")
+		}
+		sectionData := &qcOutChannel[ch].SectionData
+		if sectionData.FirstScf < 0 || sectionData.FirstScf >= len(qcOutChannel[ch].Scf) {
+			panic("fdkaac: invalid channel-element first scalefactor")
+		}
+		if sectionData.SfbCnt <= 0 || sectionData.SfbCnt > maxGroupedSFB {
+			panic("fdkaac: invalid channel-element sfb count")
+		}
+		if sectionData.SfbPerGroup <= 0 || sectionData.SfbCnt%sectionData.SfbPerGroup != 0 {
+			panic("fdkaac: invalid channel-element sfb group")
+		}
+		if sectionData.MaxSfbPerGroup <= 0 || sectionData.MaxSfbPerGroup > sectionData.SfbPerGroup {
+			panic("fdkaac: invalid channel-element max sfb")
+		}
+		if psyOutChannel[ch].SfbOffsets[0] < 0 {
+			panic("fdkaac: invalid channel-element offsets")
+		}
+		for sfb := 0; sfb < sectionData.SfbCnt; sfb++ {
+			if psyOutChannel[ch].SfbOffsets[sfb+1] < psyOutChannel[ch].SfbOffsets[sfb] {
+				panic("fdkaac: invalid channel-element offsets")
+			}
+		}
+		if psyOutChannel[ch].SfbOffsets[sectionData.SfbCnt] > len(qcOutChannel[ch].QuantSpec) {
+			panic("fdkaac: short channel-element quant spectrum")
+		}
+	}
+}
+
+func channelElementCount(elType int) int {
+	if elType == idSCE || elType == idLFE {
+		return 1
+	}
+	return 2
 }
 
 func checkEncodeScaleFactorDataInputs(maxValueInSfb []uint32, sectionData *SectionData, scalefac []int, noiseNrg []int, isScale []int) {
