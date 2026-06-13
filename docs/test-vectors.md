@@ -247,6 +247,13 @@ Tests verify long-window weighting-patch execution, weighted energy/threshold
 mutation, short-window patch-state transition, malformed controls, and zero
 steady-state allocation.
 
+The FDK AAC-LC bit-reservoir PE distribution subset is covered with
+source-derived vectors for `FDKaacEnc_bitresCalcBitFac`,
+`FDKaacEnc_DistributeBits`, and the high/low bit-reservoir PE-correction
+helpers. Tests verify long/short bit-factor transitions, full/reduced/disabled
+reservoir modes, malformed controls, no-cgo compilation, and zero steady-state
+allocation.
+
 The FDK AAC-LC quantization subset is covered with mechanically derived ROM
 table checksums and source-derived vectors for `FDKaacEnc_quantizeLines`,
 `FDKaacEnc_invQuantizeLines`, `FDKaacEnc_QuantizeSpectrum`,

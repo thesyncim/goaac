@@ -132,7 +132,7 @@ func fDivNorm(num FixpDBL, denom FixpDBL) FixpDBL {
 }
 
 func fDivNormExp(num FixpDBL, denom FixpDBL) (FixpDBL, int) {
-	if num < 0 || denom <= 0 || num > denom {
+	if num < 0 || denom <= 0 {
 		panic("fdkaac: invalid normalized division input")
 	}
 	if num == 0 {

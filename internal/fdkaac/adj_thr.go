@@ -10,6 +10,60 @@ const (
 	adjThrFalse                  = 0
 )
 
+const (
+	qBitFac  = 24
+	qAvgBits = 17
+
+	bitSaveSlopeLong   FixpDBL = 0x3bbbbbba
+	bitSpendSlopeLong  FixpDBL = 0x55555554
+	bitSaveSlopeShort  FixpDBL = 0x2e8ba2e9
+	bitSpendSlopeShort         = MaxValDBL
+
+	bitresFillBias07 FixpDBL = 0x59999980
+
+	peAdjustMinFacHi FixpDBL = 0x26666680
+	peAdjustMaxFacHi         = MaxValDBL
+	peAdjustMinFacLo FixpDBL = 0x11eb8520
+	peAdjustMaxFacLo FixpDBL = 0x08f5c290
+	peAdjustMinDiff  FixpDBL = 0x15555560
+
+	peCorrection12Over2   FixpDBL = 0x4ccccd00
+	peCorrection065       FixpDBL = 0x53333300
+	peCorrection11Over2   FixpDBL = 0x46666680
+	peCorrectionHalf      FixpDBL = 0x40000000
+	peCorrection085Over2F FixpDBL = 0x36666680
+	peCorrection09Over2   FixpDBL = 0x39999980
+	peCorrection115Over2  FixpDBL = 0x49999980
+	peCorrection085       FixpDBL = 0x6ccccd00
+	peCorrection015       FixpDBL = 0x13333340
+	peCorrection07        FixpDBL = 0x59999980
+	peCorrection03        FixpDBL = 0x26666680
+	peCorrection085Over2D FixpDBL = 0x36666666
+
+	lowBitresCorrectionAmp FixpDBL = 0x00a3d70a
+	lowBitresMaxDiff       FixpDBL = 0x20000000
+	lowBitresCorrectionMin FixpDBL = 0x30000000
+)
+
+type BitresMode int
+
+const (
+	BitresModeFull BitresMode = iota
+	BitresModeReduced
+	BitresModeDisabled
+)
+
+type BRESParam struct {
+	ClipSaveLow   FixpDBL
+	ClipSaveHigh  FixpDBL
+	MinBitSave    FixpDBL
+	MaxBitSave    FixpDBL
+	ClipSpendLow  FixpDBL
+	ClipSpendHigh FixpDBL
+	MinBitSpend   FixpDBL
+	MaxBitSpend   FixpDBL
+}
+
 type AHParam struct {
 	ModifyMinSnr int
 	StartSfbL    int
@@ -40,6 +94,503 @@ type ATSElement struct {
 	ChaosMeasureOld     FixpDBL
 	ChaosMeasureEnFac   [2]FixpDBL
 	LastEnFacPatch      [2]int
+}
+
+type AdjThrState struct {
+	BRESParamLong       BRESParam
+	BRESParamShort      BRESParam
+	BitDistributionMode int
+	MaxIter2ndGuess     int
+}
+
+func FDKaacEncInitBitresState(state *AdjThrState) {
+	if state == nil {
+		panic("fdkaac: nil bit reservoir state")
+	}
+	state.BRESParamLong = BRESParam{
+		ClipSaveLow:   0x1999999a,
+		ClipSaveHigh:  0x7999999a,
+		MinBitSave:    -0x06666666,
+		MaxBitSave:    0x26666666,
+		ClipSpendLow:  0x1999999a,
+		ClipSpendHigh: 0x7999999a,
+		MinBitSpend:   -0x0ccccccd,
+		MaxBitSpend:   0x33333333,
+	}
+	state.BRESParamShort = BRESParam{
+		ClipSaveLow:   0x199999a0,
+		ClipSaveHigh:  0x5fffffff,
+		MinBitSave:    0,
+		MaxBitSave:    0x199999a0,
+		ClipSpendLow:  0x199999a0,
+		ClipSpendHigh: 0x5fffffff,
+		MinBitSpend:   -0x06666668,
+		MaxBitSpend:   0x40000000,
+	}
+	state.BitDistributionMode = 0
+	state.MaxIter2ndGuess = 1
+}
+
+func FDKaacEncBitresCalcBitFac(
+	bitresBits int,
+	maxBitresBits int,
+	pe int,
+	lastWindowSequence int,
+	avgBits int,
+	maxBitFac FixpDBL,
+	adjThr *AdjThrState,
+	adjThrChan *ATSElement,
+) (FixpDBL, int) {
+	checkBitresCalcInputs(bitresBits, maxBitresBits, pe, lastWindowSequence, avgBits, maxBitFac, adjThr, adjThrChan)
+
+	bresParam := &adjThr.BRESParamLong
+	bitsaveSlope := bitSaveSlopeLong
+	bitspendSlope := bitSpendSlopeLong
+	if lastWindowSequence == ShortWindow {
+		bresParam = &adjThr.BRESParamShort
+		bitsaveSlope = bitSaveSlopeShort
+		bitspendSlope = bitSpendSlopeShort
+	}
+
+	fillLevelFix := MaxValDBL
+	if bitresBits < maxBitresBits {
+		fillLevelFix = fDivNorm(FixpDBL(bitresBits), FixpDBL(maxBitresBits))
+	}
+
+	pex := maxInt(pe, adjThrChan.PeMin)
+	pex = minInt(pex, adjThrChan.PeMax)
+
+	bitSave := fdkaacEncCalcBitSave(
+		fillLevelFix,
+		bresParam.ClipSaveLow,
+		bresParam.ClipSaveHigh,
+		bresParam.MinBitSave,
+		bresParam.MaxBitSave,
+		bitsaveSlope,
+	)
+	bitSpend := fdkaacEncCalcBitSpend(
+		fillLevelFix,
+		bresParam.ClipSpendLow,
+		bresParam.ClipSpendHigh,
+		bresParam.MinBitSpend,
+		bresParam.MaxBitSpend,
+		bitspendSlope,
+	)
+
+	slope := schurDiv(FixpDBL(pex-adjThrChan.PeMin), FixpDBL(adjThrChan.PeMax-adjThrChan.PeMin), 31)
+
+	bitresFac := (MaxValDBL >> 1) - (bitSave >> 1)
+	bitresFacE := 1
+	bitresFac = FMultAddDiv2DD(bitresFac, slope, bitSpend+bitSave)
+
+	fillLevel, fillLevelE := fDivNormExp(FixpDBL(bitresBits), FixpDBL(avgBits))
+	if fillLevelE < 0 {
+		fillLevel = ScaleValueDBL(fillLevel, fillLevelE)
+		fillLevelE = 0
+	}
+	fillLevel >>= 1
+	fillLevelE++
+	fillLevel += ScaleValueDBL(bitresFillBias07, -fillLevelE)
+	if ScaleValueDBL(bitresFac, -fillLevelE+1) > fillLevel {
+		bitresFac = fillLevel
+		bitresFacE = fillLevelE
+	}
+
+	if ScaleValueDBL(bitresFac, bitresFacE-(DfractBits-1-qBitFac)) > maxBitFac {
+		bitresFac = maxBitFac
+		bitresFacE = DfractBits - 1 - qBitFac
+	}
+
+	fdkaacEncAdjustPEMinMax(pe, &adjThrChan.PeMin, &adjThrChan.PeMax)
+	return bitresFac, bitresFacE
+}
+
+func FDKaacEncDistributeBits(
+	adjThrState *AdjThrState,
+	adjThrStateElement *ATSElement,
+	psyOutChannel []*PsyOutChannel,
+	peData *PEData,
+	nChannels int,
+	commonWindow int,
+	grantedDynBits int,
+	bitresBits int,
+	maxBitresBits int,
+	maxBitFac FixpDBL,
+	bitResMode BitresMode,
+) (int, int) {
+	checkDistributeBitsInputs(adjThrState, adjThrStateElement, psyOutChannel, peData, nChannels, grantedDynBits, bitresBits, maxBitresBits, maxBitFac, bitResMode)
+
+	noRedPE := int(peData.Pe)
+	curWindowSequence := LongWindow
+	if nChannels == 2 {
+		if psyOutChannel[0].LastWindowSequence == ShortWindow || psyOutChannel[1].LastWindowSequence == ShortWindow {
+			curWindowSequence = ShortWindow
+		}
+	} else {
+		curWindowSequence = psyOutChannel[0].LastWindowSequence
+	}
+	_ = commonWindow
+
+	grantedPE := 0
+	if grantedDynBits >= 1 {
+		if bitResMode != BitresModeFull {
+			grantedPE = fdkaacEncBits2PE2(grantedDynBits, adjThrStateElement.Bits2PeFactorM, adjThrStateElement.Bits2PeFactorE)
+		} else {
+			bitFactor, bitFactorE := FDKaacEncBitresCalcBitFac(
+				bitresBits,
+				maxBitresBits,
+				noRedPE,
+				curWindowSequence,
+				grantedDynBits,
+				maxBitFac,
+				adjThrState,
+				adjThrStateElement,
+			)
+			grantedPE = fdkaacEncBits2PE2(
+				grantedDynBits,
+				FMultDD(bitFactor, adjThrStateElement.Bits2PeFactorM),
+				adjThrStateElement.Bits2PeFactorE+bitFactorE,
+			)
+		}
+	}
+
+	switch bitResMode {
+	case BitresModeDisabled, BitresModeReduced:
+		adjThrStateElement.PeCorrectionFactorM, adjThrStateElement.PeCorrectionFactorE =
+			fdkaacEncCalcPECorrectionLowBitres(
+				adjThrStateElement.PeCorrectionFactorM,
+				adjThrStateElement.PeLast,
+				adjThrStateElement.DynBitsLast,
+				bitresBits,
+				nChannels,
+				adjThrStateElement.Bits2PeFactorM,
+				adjThrStateElement.Bits2PeFactorE,
+			)
+	case BitresModeFull:
+		fallthrough
+	default:
+		adjThrStateElement.PeCorrectionFactorM, adjThrStateElement.PeCorrectionFactorE =
+			fdkaacEncCalcPECorrection(
+				adjThrStateElement.PeCorrectionFactorM,
+				minInt(grantedPE, noRedPE),
+				adjThrStateElement.PeLast,
+				adjThrStateElement.DynBitsLast,
+				adjThrStateElement.Bits2PeFactorM,
+				adjThrStateElement.Bits2PeFactorE,
+			)
+	}
+
+	if grantedPE > int(MaxValDBL)>>qAvgBits {
+		panic("fdkaac: PE grant exceeds fixed-point range")
+	}
+	grantedPECorr := int(FMultDD(
+		FixpDBL(grantedPE<<qAvgBits),
+		adjThrStateElement.PeCorrectionFactorM,
+	) >> uint(qAvgBits-adjThrStateElement.PeCorrectionFactorE))
+
+	adjThrStateElement.PeLast = grantedPE
+	adjThrStateElement.DynBitsLast = -1
+	return grantedPE, grantedPECorr
+}
+
+func fdkaacEncBits2PE2(bits int, factorM FixpDBL, factorE int) int {
+	if bits < 0 || factorM < 0 || factorE < 0 || factorE > qAvgBits {
+		panic("fdkaac: invalid bits-to-PE input")
+	}
+	if bits == 0 || factorM == 0 {
+		return 0
+	}
+	if bits > int(MaxValDBL)>>qAvgBits {
+		panic("fdkaac: bits-to-PE input exceeds fixed-point range")
+	}
+	return int(FMultDD(factorM, FixpDBL(bits<<qAvgBits)) >> uint(qAvgBits-factorE))
+}
+
+func fdkaacEncCalcBitSave(
+	fillLevel FixpDBL,
+	clipLow FixpDBL,
+	clipHigh FixpDBL,
+	minBitSave FixpDBL,
+	maxBitSave FixpDBL,
+	bitsaveSlope FixpDBL,
+) FixpDBL {
+	fillLevel = maxFixpDBL(fillLevel, clipLow)
+	fillLevel = minFixpDBL(fillLevel, clipHigh)
+	_ = minBitSave
+	return maxBitSave - FMultDD(fillLevel-clipLow, bitsaveSlope)
+}
+
+func fdkaacEncCalcBitSpend(
+	fillLevel FixpDBL,
+	clipLow FixpDBL,
+	clipHigh FixpDBL,
+	minBitSpend FixpDBL,
+	maxBitSpend FixpDBL,
+	bitspendSlope FixpDBL,
+) FixpDBL {
+	fillLevel = maxFixpDBL(fillLevel, clipLow)
+	fillLevel = minFixpDBL(fillLevel, clipHigh)
+	_ = maxBitSpend
+	return minBitSpend + FMultDD(fillLevel-clipLow, bitspendSlope)
+}
+
+func fdkaacEncAdjustPEMinMax(currPE int, peMin *int, peMax *int) {
+	if peMin == nil || peMax == nil {
+		panic("fdkaac: nil PE bounds")
+	}
+	if currPE < 0 || *peMin < 0 || *peMax <= *peMin {
+		panic("fdkaac: invalid PE bounds")
+	}
+
+	minDiff := FMultI(peAdjustMinDiff, currPE)
+	if currPE > *peMax {
+		diff := currPE - *peMax
+		*peMin += FMultI(peAdjustMinFacHi, diff)
+		*peMax += FMultI(peAdjustMaxFacHi, diff)
+	} else if currPE < *peMin {
+		diff := *peMin - currPE
+		*peMin -= FMultI(peAdjustMinFacLo, diff)
+		*peMax -= FMultI(peAdjustMaxFacLo, diff)
+	} else {
+		*peMin += FMultI(peAdjustMinFacHi, currPE-*peMin)
+		*peMax -= FMultI(peAdjustMaxFacLo, *peMax-currPE)
+	}
+
+	if (*peMax - *peMin) < minDiff {
+		peMaxFix := *peMax
+		peMinFix := *peMin
+		partLo := FixpDBL(maxInt(0, currPE-peMinFix))
+		partHi := FixpDBL(maxInt(0, peMaxFix-currPE))
+		denom := partLo + partHi
+		if denom <= 0 {
+			panic("fdkaac: collapsed PE bounds")
+		}
+
+		peMaxFix = currPE + FMultI(fDivNorm(partHi, denom), minDiff)
+		peMinFix = currPE - FMultI(fDivNorm(partLo, denom), minDiff)
+		peMinFix = maxInt(0, peMinFix)
+
+		*peMax = peMaxFix
+		*peMin = peMinFix
+	}
+}
+
+func fdkaacEncCalcPECorrection(
+	correctionFacM FixpDBL,
+	peAct int,
+	peLast int,
+	bitsLast int,
+	bits2PeFactorM FixpDBL,
+	bits2PeFactorE int,
+) (FixpDBL, int) {
+	if bitsLast > 0 &&
+		2*peAct < 3*peLast &&
+		10*peAct >= 7*peLast &&
+		fdkaacEncBits2PE2(bitsLast, FMultDD(peCorrection12Over2, bits2PeFactorM), bits2PeFactorE+1) > peLast &&
+		fdkaacEncBits2PE2(bitsLast, FMultDD(peCorrection065, bits2PeFactorM), bits2PeFactorE) < peLast {
+		corrFac := correctionFacM
+		denum := FixpDBL(fdkaacEncBits2PE2(bitsLast, bits2PeFactorM, bits2PeFactorE))
+		if peLast <= 0 || denum <= 0 {
+			return peCorrectionHalf, 1
+		}
+
+		newFac, scaling := fDivNormExp(FixpDBL(peLast), denum)
+		if FixpDBL(peLast) <= denum {
+			newFac = maxFixpDBL(
+				ScaleValueDBL(
+					minFixpDBL(
+						FMultDD(peCorrection11Over2, newFac),
+						ScaleValueDBL(peCorrectionHalf, -scaling),
+					),
+					scaling,
+				),
+				peCorrection085Over2F,
+			)
+		} else {
+			newFac = maxFixpDBL(
+				minFixpDBL(
+					ScaleValueDBL(FMultDD(peCorrection09Over2, newFac), scaling),
+					peCorrection115Over2,
+				),
+				peCorrectionHalf,
+			)
+		}
+
+		if (newFac > peCorrectionHalf && corrFac < peCorrectionHalf) ||
+			(newFac < peCorrectionHalf && corrFac > peCorrectionHalf) {
+			corrFac = peCorrectionHalf
+		}
+
+		if (corrFac < peCorrectionHalf && newFac < corrFac) ||
+			(corrFac > peCorrectionHalf && newFac > corrFac) {
+			corrFac = FMultDD(peCorrection085, corrFac) + FMultDD(peCorrection015, newFac)
+		} else {
+			corrFac = FMultDD(peCorrection07, corrFac) + FMultDD(peCorrection03, newFac)
+		}
+
+		corrFac = maxFixpDBL(minFixpDBL(corrFac, peCorrection115Over2), peCorrection085Over2D)
+		return corrFac, 1
+	}
+
+	return peCorrectionHalf, 1
+}
+
+func fdkaacEncCalcPECorrectionLowBitres(
+	correctionFacM FixpDBL,
+	peLast int,
+	bitsLast int,
+	bitresLevel int,
+	nChannels int,
+	bits2PeFactorM FixpDBL,
+	bits2PeFactorE int,
+) (FixpDBL, int) {
+	if bitsLast > 0 {
+		bitsBalLast := peLast - fdkaacEncBits2PE2(bitsLast, bits2PeFactorM, bits2PeFactorE)
+		headroomBits := 0
+		if bitresLevel < 50*nChannels {
+			headroomBits = 100 * nChannels
+		}
+		headroom := fdkaacEncBits2PE2(headroomBits, bits2PeFactorM, bits2PeFactorE)
+		denominator := FixpDBL(fdkaacEncBits2PE2(bitresLevel, bits2PeFactorM, bits2PeFactorE) + headroom)
+		if denominator <= 0 {
+			panic("fdkaac: invalid low-reservoir PE correction denominator")
+		}
+
+		balMinusHeadroom := bitsBalLast - headroom
+		diff := FixpDBL(0)
+		scaling := 0
+		if balMinusHeadroom >= 0 {
+			var div FixpDBL
+			div, scaling = fDivNormExp(FixpDBL(balMinusHeadroom), denominator)
+			diff = FMultDD(lowBitresCorrectionAmp, div)
+		} else {
+			var div FixpDBL
+			div, scaling = fDivNormExp(FixpDBL(-balMinusHeadroom), denominator)
+			diff = -FMultDD(lowBitresCorrectionAmp, div)
+		}
+
+		scaling--
+		if scaling <= 0 {
+			diff = maxFixpDBL(
+				minFixpDBL(diff>>uint(-scaling), lowBitresMaxDiff>>1),
+				(-lowBitresMaxDiff)>>1,
+			)
+		} else {
+			diff = maxFixpDBL(
+				minFixpDBL(diff, lowBitresMaxDiff>>uint(1+scaling)),
+				(-lowBitresMaxDiff)>>uint(1+scaling),
+			) << uint(scaling)
+		}
+
+		return maxFixpDBL(
+			minFixpDBL(correctionFacM+diff, peCorrectionHalf),
+			lowBitresCorrectionMin,
+		), 1
+	}
+
+	return lowBitresCorrectionMin, 1
+}
+
+func checkBitresCalcInputs(
+	bitresBits int,
+	maxBitresBits int,
+	pe int,
+	lastWindowSequence int,
+	avgBits int,
+	maxBitFac FixpDBL,
+	adjThr *AdjThrState,
+	adjThrChan *ATSElement,
+) {
+	if adjThr == nil {
+		panic("fdkaac: nil bit reservoir state")
+	}
+	if adjThrChan == nil {
+		panic("fdkaac: nil bit reservoir element")
+	}
+	if bitresBits < 0 || maxBitresBits <= 0 || avgBits <= 0 {
+		panic("fdkaac: invalid bit reservoir levels")
+	}
+	if pe < 0 || maxBitFac < 0 {
+		panic("fdkaac: invalid bit reservoir PE input")
+	}
+	if !validPEWindowSequence(lastWindowSequence) {
+		panic("fdkaac: invalid bit reservoir block type")
+	}
+	if adjThrChan.PeMin < 0 || adjThrChan.PeMax <= adjThrChan.PeMin {
+		panic("fdkaac: invalid bit reservoir PE bounds")
+	}
+	checkBRESParam(adjThr.BRESParamLong)
+	checkBRESParam(adjThr.BRESParamShort)
+}
+
+func checkDistributeBitsInputs(
+	adjThrState *AdjThrState,
+	adjThrStateElement *ATSElement,
+	psyOutChannel []*PsyOutChannel,
+	peData *PEData,
+	nChannels int,
+	grantedDynBits int,
+	bitresBits int,
+	maxBitresBits int,
+	maxBitFac FixpDBL,
+	bitResMode BitresMode,
+) {
+	if adjThrState == nil {
+		panic("fdkaac: nil bit distribution state")
+	}
+	if adjThrStateElement == nil {
+		panic("fdkaac: nil bit distribution element")
+	}
+	if peData == nil {
+		panic("fdkaac: nil bit distribution PE data")
+	}
+	if nChannels <= 0 || nChannels > 2 {
+		panic("fdkaac: invalid bit distribution channel count")
+	}
+	if len(psyOutChannel) < nChannels {
+		panic("fdkaac: short bit distribution channel inputs")
+	}
+	for ch := 0; ch < nChannels; ch++ {
+		if psyOutChannel[ch] == nil {
+			panic("fdkaac: nil bit distribution psy output")
+		}
+		if !validPEWindowSequence(psyOutChannel[ch].LastWindowSequence) {
+			panic("fdkaac: invalid bit distribution block type")
+		}
+	}
+	if peData.Pe < 0 || grantedDynBits < 0 || bitresBits < 0 || maxBitresBits <= 0 || maxBitFac < 0 {
+		panic("fdkaac: invalid bit distribution level")
+	}
+	if bitResMode != BitresModeFull && bitResMode != BitresModeReduced && bitResMode != BitresModeDisabled {
+		panic("fdkaac: invalid bit reservoir mode")
+	}
+	if adjThrStateElement.Bits2PeFactorM <= 0 || adjThrStateElement.Bits2PeFactorE < 0 || adjThrStateElement.Bits2PeFactorE > qAvgBits {
+		panic("fdkaac: invalid bits-to-PE factor")
+	}
+	if adjThrStateElement.PeCorrectionFactorM < 0 || adjThrStateElement.PeCorrectionFactorE < 0 || adjThrStateElement.PeCorrectionFactorE > qAvgBits {
+		panic("fdkaac: invalid PE correction factor")
+	}
+	if bitResMode == BitresModeFull && (adjThrStateElement.PeMin < 0 || adjThrStateElement.PeMax <= adjThrStateElement.PeMin) {
+		panic("fdkaac: invalid bit distribution PE bounds")
+	}
+	checkBRESParam(adjThrState.BRESParamLong)
+	checkBRESParam(adjThrState.BRESParamShort)
+}
+
+func checkBRESParam(param BRESParam) {
+	if param.ClipSaveHigh <= param.ClipSaveLow || param.ClipSpendHigh <= param.ClipSpendLow {
+		panic("fdkaac: invalid bit reservoir parameter clips")
+	}
+	if param.MaxBitSave < param.MinBitSave || param.MaxBitSpend < param.MinBitSpend {
+		panic("fdkaac: invalid bit reservoir parameter limits")
+	}
+}
+
+func validPEWindowSequence(windowSequence int) bool {
+	return windowSequence == LongWindow ||
+		windowSequence == StartWindow ||
+		windowSequence == ShortWindow ||
+		windowSequence == StopWindow
 }
 
 func FDKaacEncPECalculation(
