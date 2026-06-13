@@ -155,6 +155,13 @@ const (
 	vbrQualFactor5            = FixpDBL(0x08f5c290)
 )
 
+type frameLenResultMode int
+
+const (
+	frameLenBytesModulo frameLenResultMode = 1
+	frameLenBytesInt    frameLenResultMode = 2
+)
+
 type qcVBRQualFactorEntry struct {
 	BitrateMode   QCBitrateMode
 	VBRQualFactor FixpDBL
@@ -246,6 +253,42 @@ func fdkaacEncFMultNormInt(rate FixpDBL, value int) int {
 	}
 	m, e := fMultNorm(rate, FixpDBL(value))
 	return int(ScaleValueSaturateDBL(m, e))
+}
+
+func FDKaacEncCalcFrameLen(bitRate int, sampleRate int, granuleLength int, mode frameLenResultMode) int {
+	checkFrameLenInputs(bitRate, sampleRate, granuleLength, mode)
+
+	result := (granuleLength >> 3) * bitRate
+	switch mode {
+	case frameLenBytesModulo:
+		result %= sampleRate
+	case frameLenBytesInt:
+		result /= sampleRate
+	}
+	return result
+}
+
+func FDKaacEncFramePadding(bitRate int, sampleRate int, granuleLength int, paddingRest *int) int {
+	if paddingRest == nil {
+		panic("fdkaac: nil frame padding rest")
+	}
+	difference := FDKaacEncCalcFrameLen(bitRate, sampleRate, granuleLength, frameLenBytesModulo)
+	*paddingRest -= difference
+	if *paddingRest <= 0 {
+		*paddingRest += sampleRate
+		return 1
+	}
+	return 0
+}
+
+func FDKaacEncAdjustBitrate(qcKernel *QCKernel, cm *ChannelMapping, avgTotalBits *int, bitRate int, sampleRate int, granuleLength int) int {
+	checkAdjustBitrateInputs(qcKernel, avgTotalBits, bitRate, sampleRate, granuleLength)
+	_ = cm
+
+	paddingOn := FDKaacEncFramePadding(bitRate, sampleRate, granuleLength, &qcKernel.PaddingRest)
+	frameLen := paddingOn + FDKaacEncCalcFrameLen(bitRate, sampleRate, granuleLength, frameLenBytesInt)
+	*avgTotalBits = frameLen << 3
+	return AACEncOK
 }
 
 func FDKaacEncQCMainPrepare(
@@ -1208,6 +1251,25 @@ func FDKaacEncUpdateBitres(qcKernel *QCKernel, qcOut []*QCOut) {
 
 func fdkaacEncIsConstantBitrateMode(bitrateMode QCBitrateMode) bool {
 	return bitrateMode == QCBitrateModeCBR || bitrateMode == QCBitrateModeSFR || bitrateMode == QCBitrateModeFF
+}
+
+func checkFrameLenInputs(bitRate int, sampleRate int, granuleLength int, mode frameLenResultMode) {
+	if bitRate < 0 || sampleRate <= 0 || granuleLength <= 0 {
+		panic("fdkaac: invalid frame length input")
+	}
+	if mode != frameLenBytesModulo && mode != frameLenBytesInt {
+		panic("fdkaac: invalid frame length result mode")
+	}
+}
+
+func checkAdjustBitrateInputs(qcKernel *QCKernel, avgTotalBits *int, bitRate int, sampleRate int, granuleLength int) {
+	if qcKernel == nil {
+		panic("fdkaac: nil adjust bitrate kernel")
+	}
+	if avgTotalBits == nil {
+		panic("fdkaac: nil average total bits output")
+	}
+	checkFrameLenInputs(bitRate, sampleRate, granuleLength, frameLenBytesInt)
 }
 
 func checkQCInitInputs(qcKernel *QCKernel, adjThrState *AdjThrState, elementBits []*ElementBits, init *QCInit) {

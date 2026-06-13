@@ -344,6 +344,12 @@ preservation and reset controls, element-bit initialization, threshold-state
 seeding, malformed controls, no-cgo compilation, and zero steady-state
 allocation.
 
+The FDK AAC-LC frame bitrate-padding subset is covered with source-shaped
+vectors for `FDKaacEnc_calcFrameLen`, `FDKaacEnc_framePadding`, and
+`FDKaacEnc_AdjustBitrate`. Tests verify integer and modulo frame-byte math,
+repeated padding-rest transitions, prepared QC-kernel handoff, malformed
+controls, no-cgo compilation, and zero steady-state allocation.
+
 The FDK AAC-LC QC quantize/reduce-loop subset is covered with a source-shaped
 `FDKaacEnc_calcMaxValueInSfb` vector, `FDKaacEnc_reduceBitConsumption` normal
 and max-iteration vectors, a source-shaped `FDKaacEnc_crashRecovery` vector,

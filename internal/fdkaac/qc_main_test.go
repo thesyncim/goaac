@@ -216,6 +216,86 @@ func TestFDKaacEncQCInitRejectsInvalid(t *testing.T) {
 	_ = elementBits
 }
 
+func TestFDKaacEncAdjustBitrateFrameLenVectors(t *testing.T) {
+	if got := FDKaacEncCalcFrameLen(128000, 48000, 1024, frameLenBytesInt); got != 341 {
+		t.Fatalf("frame length bytes = %d, want 341", got)
+	}
+	if got := FDKaacEncCalcFrameLen(128000, 48000, 1024, frameLenBytesModulo); got != 16000 {
+		t.Fatalf("frame length modulo = %d, want 16000", got)
+	}
+	if got := FDKaacEncCalcFrameLen(96000, 48000, 1024, frameLenBytesInt); got != 256 {
+		t.Fatalf("aligned frame length bytes = %d, want 256", got)
+	}
+	if got := FDKaacEncCalcFrameLen(96000, 48000, 1024, frameLenBytesModulo); got != 0 {
+		t.Fatalf("aligned frame length modulo = %d, want 0", got)
+	}
+}
+
+func TestFDKaacEncAdjustBitratePaddingSequence(t *testing.T) {
+	kernel := QCKernel{PaddingRest: 48000}
+	var avgTotalBits int
+	var cm ChannelMapping
+	if errCode := FDKaacEncInitChannelMapping(Mode2, ChannelOrderMPEG, &cm); errCode != AACEncOK {
+		t.Fatalf("mapping error = %#x", errCode)
+	}
+	wantBits := [...]int{2728, 2728, 2736, 2728, 2728, 2736}
+	wantRest := [...]int{32000, 16000, 48000, 32000, 16000, 48000}
+	for i := range wantBits {
+		if errCode := FDKaacEncAdjustBitrate(&kernel, &cm, &avgTotalBits, 128000, 48000, 1024); errCode != AACEncOK {
+			t.Fatalf("adjust bitrate frame %d error = %#x, want %#x", i, errCode, AACEncOK)
+		}
+		if avgTotalBits != wantBits[i] || kernel.PaddingRest != wantRest[i] {
+			t.Fatalf("frame %d avg/rest = %d/%d, want %d/%d", i, avgTotalBits, kernel.PaddingRest, wantBits[i], wantRest[i])
+		}
+	}
+}
+
+func TestFDKaacEncAdjustBitrateFeedsPreparedKernel(t *testing.T) {
+	cfg := baseAACLCConfig(48000, 128000, 2, Mode2)
+	var state AACEncInitState
+	if errCode := FDKaacEncPrepareQCInitFromConfig(&state, &cfg, staticBits56); errCode != AACEncOK {
+		t.Fatalf("prepare QC init error = %#x, want %#x", errCode, AACEncOK)
+	}
+	_, elementBitsPtrs := initializedElementBits()
+	adjState, _ := initializedQCInitAdjThrState()
+	var kernel QCKernel
+	if errCode := FDKaacEncQCInit(&kernel, adjState, elementBitsPtrs[:], &state.QCInit, 1); errCode != AACEncOK {
+		t.Fatalf("QC init error = %#x, want %#x", errCode, AACEncOK)
+	}
+	var avgTotalBits int
+	if errCode := FDKaacEncAdjustBitrate(&kernel, &state.ChannelMapping, &avgTotalBits, cfg.BitRate, cfg.SampleRate, cfg.FrameLength); errCode != AACEncOK {
+		t.Fatalf("adjust bitrate error = %#x, want %#x", errCode, AACEncOK)
+	}
+	if avgTotalBits != 2728 || kernel.PaddingRest != 32000 {
+		t.Fatalf("prepared kernel avg/rest = %d/%d, want 2728/32000", avgTotalBits, kernel.PaddingRest)
+	}
+	if kernel.GlobHdrBits != 56 || kernel.BitResTot != 9552 {
+		t.Fatalf("prepared kernel header/reservoir changed = %+v", kernel)
+	}
+}
+
+func TestFDKaacEncAdjustBitrateRejectsInvalid(t *testing.T) {
+	kernel := QCKernel{PaddingRest: 48000}
+	var avgTotalBits int
+	tests := []struct {
+		name string
+		run  func()
+	}{
+		{name: "bad result mode", run: func() { _ = FDKaacEncCalcFrameLen(128000, 48000, 1024, frameLenResultMode(99)) }},
+		{name: "negative bitrate", run: func() { _ = FDKaacEncCalcFrameLen(-1, 48000, 1024, frameLenBytesInt) }},
+		{name: "zero sample rate", run: func() { _ = FDKaacEncCalcFrameLen(128000, 0, 1024, frameLenBytesInt) }},
+		{name: "zero granule", run: func() { _ = FDKaacEncCalcFrameLen(128000, 48000, 0, frameLenBytesInt) }},
+		{name: "nil padding rest", run: func() { _ = FDKaacEncFramePadding(128000, 48000, 1024, nil) }},
+		{name: "nil kernel", run: func() { _ = FDKaacEncAdjustBitrate(nil, nil, &avgTotalBits, 128000, 48000, 1024) }},
+		{name: "nil output", run: func() { _ = FDKaacEncAdjustBitrate(&kernel, nil, nil, 128000, 48000, 1024) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			expectQCInitPanic(t, tt.run)
+		})
+	}
+}
+
 func TestFDKaacEncCalcMaxValueInSfbVector(t *testing.T) {
 	quant := [...]int16{0, -2, 5, -7, 4, 1, 12, -3}
 	offsets := [...]int{0, 3, 6, 8, 8}
@@ -1465,6 +1545,18 @@ func TestFDKaacEncQCInitAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("QC init allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncAdjustBitrateAllocs(t *testing.T) {
+	kernel := QCKernel{PaddingRest: 48000}
+	var avgTotalBits int
+	allocs := testing.AllocsPerRun(1000, func() {
+		errCode := FDKaacEncAdjustBitrate(&kernel, nil, &avgTotalBits, 128000, 48000, 1024)
+		qcMainPrepareSink = errCode + avgTotalBits + kernel.PaddingRest
+	})
+	if allocs != 0 {
+		t.Fatalf("adjust bitrate allocations = %v, want 0", allocs)
 	}
 }
 
