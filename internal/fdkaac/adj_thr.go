@@ -17,6 +17,11 @@ const (
 )
 
 const (
+	BitDistributionModeInterElement = 0
+	BitDistributionModeIntraElement = 1
+)
+
+const (
 	qBitFac  = 24
 	qAvgBits = 17
 
@@ -37,11 +42,16 @@ const (
 
 	bitresFillBias07 FixpDBL = 0x59999980
 
-	peAdjustMinFacHi FixpDBL = 0x26666680
-	peAdjustMaxFacHi         = MaxValDBL
-	peAdjustMinFacLo FixpDBL = 0x11eb8520
-	peAdjustMaxFacLo FixpDBL = 0x08f5c290
-	peAdjustMinDiff  FixpDBL = 0x15555560
+	adjThrPoint8                FixpDBL = 0x66666680
+	adjThrPoint6                FixpDBL = 0x4ccccd00
+	adjThrLowBitrateOffsetSlope FixpDBL = 0x00666667
+	adjThrDefaultBits2PEFactorM FixpDBL = 0x4b851e80
+	adjThrDefaultBits2PEFactorE         = 1
+	peAdjustMinFacHi            FixpDBL = 0x26666680
+	peAdjustMaxFacHi                    = MaxValDBL
+	peAdjustMinFacLo            FixpDBL = 0x11eb8520
+	peAdjustMaxFacLo            FixpDBL = 0x08f5c290
+	peAdjustMinDiff             FixpDBL = 0x15555560
 
 	peCorrection12Over2   FixpDBL = 0x4ccccd00
 	peCorrection065       FixpDBL = 0x53333300
@@ -226,6 +236,25 @@ func FDKaacEncInitBitresState(state *AdjThrState) {
 	state.MaxIter2ndGuess = 1
 }
 
+func FDKaacEncInitAdjThrState(state *AdjThrState, nElements int, isLowDelay int, bitDistributionMode int) {
+	if state == nil {
+		panic("fdkaac: nil threshold adjustment state")
+	}
+	if nElements <= 0 {
+		panic("fdkaac: invalid threshold adjustment element count")
+	}
+
+	FDKaacEncInitBitresState(state)
+	if bitDistributionMode == 1 {
+		state.BitDistributionMode = BitDistributionModeIntraElement
+	} else {
+		state.BitDistributionMode = BitDistributionModeInterElement
+	}
+	if isLowDelay != 0 || nElements > 1 {
+		state.MaxIter2ndGuess = 3
+	}
+}
+
 func FDKaacEncInitMinSnrAdaptParam(param *MinSNRAdaptParam) {
 	if param == nil {
 		panic("fdkaac: nil min-SNR adaptation parameter")
@@ -235,6 +264,95 @@ func FDKaacEncInitMinSnrAdaptParam(param *MinSNRAdaptParam) {
 	param.MaxRatio = 0
 	param.RedRatioFac = minSnrAdaptDefaultRedRatioFac
 	param.RedOffs = minSnrAdaptDefaultRedOffs
+}
+
+func FDKaacEncInitATSElement(
+	elem *ATSElement,
+	meanPe int,
+	bitrateInElement int,
+	nChannelsInElement int,
+	sampleRate int,
+	isLowDelay int,
+	dZoneQuantEnable int,
+	invQuant int,
+	vbrQualFactor FixpDBL,
+) {
+	if elem == nil {
+		panic("fdkaac: nil threshold adjustment element")
+	}
+	if meanPe <= 0 {
+		panic("fdkaac: invalid threshold adjustment mean PE")
+	}
+	if bitrateInElement <= 0 || nChannelsInElement <= 0 || sampleRate <= 0 {
+		panic("fdkaac: invalid threshold adjustment bitrate configuration")
+	}
+	if vbrQualFactor < 0 {
+		panic("fdkaac: invalid threshold adjustment VBR quality")
+	}
+
+	*elem = ATSElement{}
+	if isLowDelay != 0 {
+		elem.PeMin = FMultI(adjThrPoint8, meanPe)
+		elem.PeMax = FMultI(adjThrPoint6, meanPe) << 1
+	} else {
+		elem.PeMin = FMultI(adjThrPoint8, meanPe) >> 1
+		elem.PeMax = FMultI(adjThrPoint6, meanPe)
+	}
+
+	elem.ChaosMeasureOld = peCorrection03
+	elem.PeOffset = 0
+	elem.VBRQualFactor = vbrQualFactor
+
+	chBitrate := bitrateInElement
+	if nChannelsInElement != 1 {
+		chBitrate >>= 1
+	}
+	if chBitrate < 32000 {
+		elem.PeOffset = maxInt(50, 100-FMultI(adjThrLowBitrateOffsetSlope, chBitrate))
+	}
+
+	if chBitrate >= 20000 {
+		elem.AHParam.ModifyMinSnr = adjThrTrue
+		elem.AHParam.StartSfbL = 15
+		elem.AHParam.StartSfbS = 3
+	} else {
+		elem.AHParam.ModifyMinSnr = adjThrFalse
+		elem.AHParam.StartSfbL = 0
+		elem.AHParam.StartSfbS = 0
+	}
+
+	FDKaacEncInitMinSnrAdaptParam(&elem.MinSNRAdaptParam)
+	elem.PeCorrectionFactorM = peCorrectionHalf
+	elem.PeCorrectionFactorE = 1
+	elem.DynBitsLast = -1
+	elem.PeLast = 0
+	elem.Bits2PeFactorM, elem.Bits2PeFactorE = FDKaacEncInitBits2PeFactor(
+		bitrateInElement,
+		nChannelsInElement,
+		sampleRate,
+		isLowDelay,
+		dZoneQuantEnable,
+		invQuant,
+	)
+}
+
+func FDKaacEncInitBits2PeFactor(
+	bitRate int,
+	nChannels int,
+	sampleRate int,
+	advancedBitsToPe int,
+	dZoneQuantEnable int,
+	invQuant int,
+) (FixpDBL, int) {
+	if bitRate <= 0 || nChannels <= 0 || sampleRate <= 0 {
+		panic("fdkaac: invalid bits-to-PE configuration")
+	}
+	_ = dZoneQuantEnable
+	_ = invQuant
+	if advancedBitsToPe != 0 && nChannels <= 2 {
+		panic("fdkaac: advanced bits-to-PE table is not ported")
+	}
+	return adjThrDefaultBits2PEFactorM, adjThrDefaultBits2PEFactorE
 }
 
 func FDKaacEncCalcThresholdExp(

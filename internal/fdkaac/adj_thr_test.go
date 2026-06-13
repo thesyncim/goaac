@@ -35,6 +35,141 @@ func TestFDKaacEncPECalculationShortTransitionVector(t *testing.T) {
 	assertFixpDBLSlice(t, "short PE threshold", qc[0].SfbThresholdLdData[:8], wantThreshold[:], 0x73a0d18b723496d1)
 }
 
+func TestFDKaacEncAdjThrInitStateVectors(t *testing.T) {
+	var state AdjThrState
+
+	FDKaacEncInitAdjThrState(&state, 1, 0, 0)
+	gotSingle := [...]int{
+		state.BitDistributionMode,
+		state.MaxIter2ndGuess,
+		int(state.BRESParamLong.MinBitSave),
+		int(state.BRESParamLong.MaxBitSpend),
+		int(state.BRESParamShort.MinBitSpend),
+		int(state.BRESParamShort.MaxBitSpend),
+	}
+	wantSingle := [...]int{
+		BitDistributionModeInterElement,
+		1,
+		-0x06666666,
+		0x33333333,
+		-0x06666668,
+		0x40000000,
+	}
+	if gotSingle != wantSingle {
+		t.Fatalf("single-element adjustment state = %v, want %v", gotSingle, wantSingle)
+	}
+
+	FDKaacEncInitAdjThrState(&state, 2, 1, 1)
+	gotMulti := [...]int{
+		state.BitDistributionMode,
+		state.MaxIter2ndGuess,
+		int(state.BRESParamLong.ClipSaveLow),
+		int(state.BRESParamLong.ClipSaveHigh),
+		int(state.BRESParamShort.ClipSaveLow),
+		int(state.BRESParamShort.ClipSaveHigh),
+	}
+	wantMulti := [...]int{
+		BitDistributionModeIntraElement,
+		3,
+		0x1999999a,
+		0x7999999a,
+		0x199999a0,
+		0x5fffffff,
+	}
+	if gotMulti != wantMulti {
+		t.Fatalf("multi-element adjustment state = %v, want %v", gotMulti, wantMulti)
+	}
+}
+
+func TestFDKaacEncInitATSElementVectors(t *testing.T) {
+	stereo := ATSElement{
+		ChaosMeasureEnFac: [2]FixpDBL{1234, 5678},
+		LastEnFacPatch:    [2]int{9, 8},
+	}
+	FDKaacEncInitATSElement(&stereo, 1000, 64000, 2, 48000, 0, 0, 0, peCorrectionHalf)
+
+	gotStereo := [...]int{
+		stereo.PeMin,
+		stereo.PeMax,
+		stereo.PeOffset,
+		stereo.AHParam.ModifyMinSnr,
+		stereo.AHParam.StartSfbL,
+		stereo.AHParam.StartSfbS,
+		int(stereo.ChaosMeasureOld),
+		int(stereo.VBRQualFactor),
+		int(stereo.MinSNRAdaptParam.MaxRed),
+		int(stereo.MinSNRAdaptParam.StartRatio),
+		int(stereo.MinSNRAdaptParam.MaxRatio),
+		int(stereo.MinSNRAdaptParam.RedRatioFac),
+		int(stereo.MinSNRAdaptParam.RedOffs),
+		int(stereo.PeCorrectionFactorM),
+		stereo.PeCorrectionFactorE,
+		stereo.DynBitsLast,
+		stereo.PeLast,
+		int(stereo.Bits2PeFactorM),
+		stereo.Bits2PeFactorE,
+		int(stereo.ChaosMeasureEnFac[0]),
+		stereo.LastEnFacPatch[0],
+	}
+	wantStereo := [...]int{
+		400,
+		600,
+		0,
+		adjThrTrue,
+		15,
+		3,
+		int(peCorrection03),
+		int(peCorrectionHalf),
+		int(minSnrAdaptDefaultMaxRed),
+		int(minSnrAdaptDefaultStartRatio),
+		0,
+		int(minSnrAdaptDefaultRedRatioFac),
+		int(minSnrAdaptDefaultRedOffs),
+		int(peCorrectionHalf),
+		1,
+		-1,
+		0,
+		int(adjThrDefaultBits2PEFactorM),
+		adjThrDefaultBits2PEFactorE,
+		0,
+		0,
+	}
+	if gotStereo != wantStereo {
+		t.Fatalf("stereo adjustment element = %v, want %v", gotStereo, wantStereo)
+	}
+
+	var lowBitrate ATSElement
+	FDKaacEncInitATSElement(&lowBitrate, 1000, 16000, 1, 48000, 0, 0, 0, peCorrectionHalf)
+	gotLowBitrate := [...]int{
+		lowBitrate.PeMin,
+		lowBitrate.PeMax,
+		lowBitrate.PeOffset,
+		lowBitrate.AHParam.ModifyMinSnr,
+		lowBitrate.AHParam.StartSfbL,
+		lowBitrate.AHParam.StartSfbS,
+		int(lowBitrate.Bits2PeFactorM),
+		lowBitrate.Bits2PeFactorE,
+	}
+	wantLowBitrate := [...]int{
+		400,
+		600,
+		50,
+		adjThrFalse,
+		0,
+		0,
+		int(adjThrDefaultBits2PEFactorM),
+		adjThrDefaultBits2PEFactorE,
+	}
+	if gotLowBitrate != wantLowBitrate {
+		t.Fatalf("low-bitrate adjustment element = %v, want %v", gotLowBitrate, wantLowBitrate)
+	}
+
+	defaultM, defaultE := FDKaacEncInitBits2PeFactor(128000, 3, 48000, 1, 1, 1)
+	if defaultM != adjThrDefaultBits2PEFactorM || defaultE != adjThrDefaultBits2PEFactorE {
+		t.Fatalf("default bits-to-PE = (%d, %d), want (%d, %d)", defaultM, defaultE, adjThrDefaultBits2PEFactorM, adjThrDefaultBits2PEFactorE)
+	}
+}
+
 func TestFDKaacEncBitresCalcBitFacVectors(t *testing.T) {
 	var state AdjThrState
 	FDKaacEncInitBitresState(&state)
@@ -1218,6 +1353,71 @@ func TestFDKaacEncDistributeBitsRejectsInvalid(t *testing.T) {
 			}()
 			tt.fn()
 		})
+	}
+}
+
+func TestFDKaacEncAdjThrInitRejectsInvalid(t *testing.T) {
+	var state AdjThrState
+	var element ATSElement
+
+	for _, tt := range []struct {
+		name string
+		fn   func()
+	}{
+		{"nil adjustment state", func() {
+			FDKaacEncInitAdjThrState(nil, 1, 0, 0)
+		}},
+		{"bad element count", func() {
+			FDKaacEncInitAdjThrState(&state, 0, 0, 0)
+		}},
+		{"nil element", func() {
+			FDKaacEncInitATSElement(nil, 1000, 64000, 2, 48000, 0, 0, 0, peCorrectionHalf)
+		}},
+		{"bad mean PE", func() {
+			FDKaacEncInitATSElement(&element, 0, 64000, 2, 48000, 0, 0, 0, peCorrectionHalf)
+		}},
+		{"bad bitrate", func() {
+			FDKaacEncInitATSElement(&element, 1000, 0, 2, 48000, 0, 0, 0, peCorrectionHalf)
+		}},
+		{"bad channel count", func() {
+			FDKaacEncInitATSElement(&element, 1000, 64000, 0, 48000, 0, 0, 0, peCorrectionHalf)
+		}},
+		{"bad sample rate", func() {
+			FDKaacEncInitATSElement(&element, 1000, 64000, 2, 0, 0, 0, 0, peCorrectionHalf)
+		}},
+		{"bad VBR quality", func() {
+			FDKaacEncInitATSElement(&element, 1000, 64000, 2, 48000, 0, 0, 0, -1)
+		}},
+		{"bad bits-to-PE configuration", func() {
+			FDKaacEncInitBits2PeFactor(0, 2, 48000, 0, 0, 0)
+		}},
+		{"unsupported advanced bits-to-PE", func() {
+			FDKaacEncInitBits2PeFactor(64000, 2, 48000, 1, 0, 0)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		})
+	}
+}
+
+func TestFDKaacEncAdjThrInitAllocs(t *testing.T) {
+	var state AdjThrState
+	var element ATSElement
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		FDKaacEncInitAdjThrState(&state, 2, 0, 1)
+		FDKaacEncInitATSElement(&element, 1000, 64000, 2, 48000, 0, 0, 0, peCorrectionHalf)
+		adjThrSink = state.BRESParamLong.MaxBitSpend + element.Bits2PeFactorM
+		adjThrHashSink = uint64(element.PeMin + state.MaxIter2ndGuess)
+	})
+	if allocs != 0 {
+		t.Fatalf("adjustment init allocations = %v, want 0", allocs)
 	}
 }
 
