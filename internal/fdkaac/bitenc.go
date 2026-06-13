@@ -31,6 +31,8 @@ const (
 	dataLenCountBits      = 8
 	dataLenEscCountBits   = 8
 	maxDSEDataBytes       = 510
+	maxElementExtensions  = 1
+	maxGlobalExtensions   = 4
 
 	acScalable = 0x000008
 	acELD      = 0x000010
@@ -47,6 +49,7 @@ const (
 	idLFE = 3
 	idDSE = 4
 	idFIL = 6
+	idEnd = 7
 
 	ExtFIL          = 0x00
 	ExtFillData     = 0x01
@@ -59,6 +62,7 @@ const (
 	AACEncOK                     = 0x0000
 	AACEncUnknown                = 0x0002
 	AACEncQuantError             = 0x4020
+	AACEncWrittenBitsError       = 0x4040
 	AACEncBitresTooLow           = 0x40a0
 	AACEncBitresTooHigh          = 0x40a1
 	AACEncUnsupportedAOT         = 0x3000
@@ -152,6 +156,13 @@ type QCOutExtension struct {
 	Type        int
 	PayloadBits int
 	Payload     []byte
+}
+
+type WriteBitstreamResult struct {
+	FrameBits         int
+	ChannelElements   int
+	ElementExtensions int
+	GlobalExtensions  int
 }
 
 var (
@@ -834,6 +845,100 @@ func FDKaacEncChannelElementWrite(
 	return bitDemand, AACEncOK
 }
 
+func FDKaacEncWriteBitstream(
+	bitstream *BitStream,
+	cm *ChannelMapping,
+	qcOut *QCOut,
+	qcElement []*QCOutElement,
+	psyOutElement []*PsyOutElement,
+	qcKernel *QCKernel,
+	aot int,
+	syntaxFlags uint32,
+	epConfig int8,
+) (WriteBitstreamResult, int) {
+	checkWriteBitstreamInputs(bitstream, cm, qcOut, qcElement, psyOutElement, qcKernel, aot, syntaxFlags, epConfig)
+
+	result := WriteBitstreamResult{}
+	alignAnchor := BitStreamValidBits(bitstream)
+	bitMarkUp := int(alignAnchor)
+	frameBits := bitMarkUp
+
+	for i := 0; i < cm.NElements; i++ {
+		elInfo := cm.ElInfo[i]
+		elementUsedBits := 0
+
+		switch elInfo.ElType {
+		case idSCE, idCPE, idLFE:
+			nChannels := elInfo.NChannelsInEl
+			qcChannels := qcElement[i].QCOutChannel[:nChannels]
+			psyChannels := psyOutElement[i].PsyOutChannel[:nChannels]
+			if _, errCode := FDKaacEncChannelElementWrite(
+				bitstream,
+				&elInfo,
+				qcChannels,
+				psyOutElement[i],
+				psyChannels,
+				syntaxFlags,
+				aot,
+				epConfig,
+				0,
+			); errCode != AACEncOK {
+				return result, errCode
+			}
+
+			if syntaxFlags&acER == 0 {
+				for n := 0; n < qcElement[i].NExtensions; n++ {
+					FDKaacEncWriteExtensionData(bitstream, &qcElement[i].Extension[n], 0, alignAnchor, syntaxFlags, aot, epConfig)
+					result.ElementExtensions++
+				}
+			}
+		default:
+			return result, AACEncInvalidElementInfoType
+		}
+
+		if elInfo.ElType != idDSE {
+			elementUsedBits -= bitMarkUp
+			bitMarkUp = int(BitStreamValidBits(bitstream))
+			elementUsedBits += bitMarkUp
+			frameBits += elementUsedBits
+			result.ChannelElements++
+		}
+	}
+
+	n := qcOut.NExtensions
+	qcOut.Extension[n] = QCOutExtension{Type: ExtFillData, PayloadBits: qcOut.TotFillBits}
+	qcOut.NExtensions++
+
+	for n = 0; n < qcOut.NExtensions && n < maxGlobalExtensions; n++ {
+		FDKaacEncWriteExtensionData(bitstream, &qcOut.Extension[n], 0, alignAnchor, syntaxFlags, aot, epConfig)
+		result.GlobalExtensions++
+	}
+
+	if syntaxFlags&(acScalable|acER) == 0 {
+		WriteBits(bitstream, idEnd, elIDBits)
+	}
+
+	if ((BitStreamValidBits(bitstream) - alignAnchor + uint32(qcOut.AlignBits)) & 0x7) != 0 {
+		return result, AACEncWrittenBitsError
+	}
+	FDKaacEncByteAlignment(bitstream, qcOut.AlignBits)
+
+	frameBits -= bitMarkUp
+	frameBits += int(BitStreamValidBits(bitstream))
+	result.FrameBits = frameBits
+	if frameBits != qcOut.TotalBits+qcKernel.GlobHdrBits {
+		return result, AACEncWrittenBitsError
+	}
+
+	return result, AACEncOK
+}
+
+func FDKaacEncByteAlignment(bitstream *BitStream, alignBits int) {
+	if alignBits > 0 {
+		WriteBits(bitstream, 0, uint32(alignBits))
+	}
+}
+
 func checkEncodeSpectralDataInputs(sfbOffset []int, sectionData *SectionData, quantSpectrum []int16, bitstream *BitStream) {
 	if bitstream == nil {
 		panic("fdkaac: nil spectral-data bitstream")
@@ -1147,6 +1252,82 @@ func checkChannelElementWriteInputs(
 		}
 		if psyOutChannel[ch].SfbOffsets[sectionData.SfbCnt] > len(qcOutChannel[ch].QuantSpec) {
 			panic("fdkaac: short channel-element quant spectrum")
+		}
+	}
+}
+
+func checkWriteBitstreamInputs(
+	bitstream *BitStream,
+	cm *ChannelMapping,
+	qcOut *QCOut,
+	qcElement []*QCOutElement,
+	psyOutElement []*PsyOutElement,
+	qcKernel *QCKernel,
+	aot int,
+	syntaxFlags uint32,
+	epConfig int8,
+) {
+	if bitstream == nil {
+		panic("fdkaac: nil write-bitstream bitstream")
+	}
+	if cm == nil {
+		panic("fdkaac: nil write-bitstream channel mapping")
+	}
+	if qcOut == nil {
+		panic("fdkaac: nil write-bitstream QC output")
+	}
+	if qcKernel == nil {
+		panic("fdkaac: nil write-bitstream kernel")
+	}
+	if syntaxFlags&(acScalable|acER) != 0 {
+		panic("fdkaac: ER/scalable write-bitstream path is not ported")
+	}
+	if FDKaacEncGetBitstreamElementList(aot, epConfig, 1, 0, 0) == nil {
+		panic("fdkaac: unsupported write-bitstream sequence")
+	}
+	if cm.NElements < 0 || cm.NElements > maxChannelElements ||
+		len(qcElement) < cm.NElements || len(psyOutElement) < cm.NElements {
+		panic("fdkaac: invalid write-bitstream element count")
+	}
+	if qcOut.NExtensions < 0 || qcOut.NExtensions >= maxGlobalExtensions {
+		panic("fdkaac: invalid write-bitstream global extension count")
+	}
+	if qcOut.TotFillBits < 0 || qcOut.AlignBits < 0 || qcOut.AlignBits > 7 ||
+		qcOut.TotalBits < 0 || qcKernel.GlobHdrBits < 0 {
+		panic("fdkaac: invalid write-bitstream bit accounting")
+	}
+	for n := 0; n < qcOut.NExtensions; n++ {
+		checkWriteExtensionDataInputs(&qcOut.Extension[n], 0)
+	}
+	for i := 0; i < cm.NElements; i++ {
+		elInfo := cm.ElInfo[i]
+		switch elInfo.ElType {
+		case idSCE, idCPE, idLFE:
+		default:
+			continue
+		}
+		if elInfo.NChannelsInEl != channelElementCount(elInfo.ElType) {
+			panic("fdkaac: invalid write-bitstream channel count")
+		}
+		if qcElement[i] == nil {
+			panic("fdkaac: nil write-bitstream QC element")
+		}
+		if psyOutElement[i] == nil {
+			panic("fdkaac: nil write-bitstream psy element")
+		}
+		if qcElement[i].NExtensions < 0 || qcElement[i].NExtensions > maxElementExtensions {
+			panic("fdkaac: invalid write-bitstream element extension count")
+		}
+		for n := 0; n < qcElement[i].NExtensions; n++ {
+			checkWriteExtensionDataInputs(&qcElement[i].Extension[n], 0)
+		}
+		for ch := 0; ch < elInfo.NChannelsInEl; ch++ {
+			if qcElement[i].QCOutChannel[ch] == nil {
+				panic("fdkaac: nil write-bitstream QC channel")
+			}
+			if psyOutElement[i].PsyOutChannel[ch] == nil {
+				panic("fdkaac: nil write-bitstream psy channel")
+			}
 		}
 	}
 }

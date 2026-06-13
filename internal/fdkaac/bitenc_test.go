@@ -382,6 +382,102 @@ func TestFDKaacEncChannelElementWriteCPECommonWindowVector(t *testing.T) {
 	})
 }
 
+func TestFDKaacEncWriteBitstreamSCEVector(t *testing.T) {
+	qc, psy := buildLongChannelElementCase(t)
+	cm := ChannelMapping{NElements: 1}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, InstanceTag: 2, NChannelsInEl: 1}
+	psyElement := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{psy}}
+	qcElement := QCOutElement{QCOutChannel: [2]*QCOutChannel{qc}}
+	qcOut := QCOut{TotalBits: 208, AlignBits: 3}
+	kernel := QCKernel{}
+	qcElements := []*QCOutElement{&qcElement}
+	psyElements := []*PsyOutElement{&psyElement}
+	var storage [256]byte
+	var out [256]byte
+	var bs BitStream
+	if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+
+	result, errCode := FDKaacEncWriteBitstream(&bs, &cm, &qcOut, qcElements, psyElements, &kernel, aotAACLC, 0, -1)
+	if errCode != AACEncOK {
+		t.Fatalf("write bitstream error = %#x, want OK", errCode)
+	}
+	if result != (WriteBitstreamResult{FrameBits: 208, ChannelElements: 1, GlobalExtensions: 1}) {
+		t.Fatalf("write bitstream result = %+v", result)
+	}
+	if bits := BitStreamValidBits(&bs); bits != 208 {
+		t.Fatalf("write bitstream bits = %d, want 208", bits)
+	}
+	n := FetchBuffer(&bs, out[:])
+	want := []byte{
+		0x05, 0x18, 0x24, 0x04, 0x76, 0x55, 0x55, 0x55,
+		0x55, 0x06, 0xcf, 0x72, 0xf3, 0x8e, 0xa9, 0xc6,
+		0x2d, 0x8c, 0xfc, 0x97, 0xe6, 0x12, 0x78, 0x38,
+		0xe0, 0x78,
+	}
+	if !bytes.Equal(out[:n], want) {
+		t.Fatalf("write bitstream bytes = % x, want % x", out[:n], want)
+	}
+}
+
+func TestFDKaacEncWriteBitstreamExtensionOrderVector(t *testing.T) {
+	qc, psy := buildLongChannelElementCase(t)
+	cm := ChannelMapping{NElements: 1}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, InstanceTag: 2, NChannelsInEl: 1}
+	psyElement := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{psy}}
+	dynamicPayload := [...]byte{0xab, 0xcd}
+	dataPayload := [...]byte{0x11, 0x22}
+	qcElement := QCOutElement{
+		NExtensions:  1,
+		QCOutChannel: [2]*QCOutChannel{qc},
+	}
+	qcElement.Extension[0] = QCOutExtension{Type: ExtDynamicRange, PayloadBits: 12, Payload: dynamicPayload[:]}
+	qcOut := QCOut{NExtensions: 1, TotalBits: 264, AlignBits: 4}
+	qcOut.Extension[0] = QCOutExtension{Type: ExtDataElement, PayloadBits: 16, Payload: dataPayload[:]}
+	kernel := QCKernel{}
+	qcElements := []*QCOutElement{&qcElement}
+	psyElements := []*PsyOutElement{&psyElement}
+
+	var directStorage [256]byte
+	var directOut [256]byte
+	var directBS BitStream
+	if err := InitBitStream(&directBS, directStorage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+	if _, errCode := FDKaacEncChannelElementWrite(&directBS, &cm.ElInfo[0], []*QCOutChannel{qc}, &psyElement, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 0); errCode != AACEncOK {
+		t.Fatalf("direct channel write error = %#x", errCode)
+	}
+	FDKaacEncWriteExtensionData(&directBS, &qcElement.Extension[0], 0, 0, 0, aotAACLC, -1)
+	FDKaacEncWriteExtensionData(&directBS, &qcOut.Extension[0], 0, 0, 0, aotAACLC, -1)
+	fill := QCOutExtension{Type: ExtFillData}
+	FDKaacEncWriteExtensionData(&directBS, &fill, 0, 0, 0, aotAACLC, -1)
+	WriteBits(&directBS, idEnd, elIDBits)
+	FDKaacEncByteAlignment(&directBS, qcOut.AlignBits)
+	if bits := BitStreamValidBits(&directBS); bits != 264 {
+		t.Fatalf("direct extension-order bits = %d, want 264", bits)
+	}
+	directN := FetchBuffer(&directBS, directOut[:])
+
+	var storage [256]byte
+	var out [256]byte
+	var bs BitStream
+	if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+	result, errCode := FDKaacEncWriteBitstream(&bs, &cm, &qcOut, qcElements, psyElements, &kernel, aotAACLC, 0, -1)
+	if errCode != AACEncOK {
+		t.Fatalf("extension-order write error = %#x, want OK", errCode)
+	}
+	if result != (WriteBitstreamResult{FrameBits: 264, ChannelElements: 1, ElementExtensions: 1, GlobalExtensions: 2}) {
+		t.Fatalf("extension-order result = %+v", result)
+	}
+	n := FetchBuffer(&bs, out[:])
+	if !bytes.Equal(out[:n], directOut[:directN]) {
+		t.Fatalf("extension-order bytes = % x, want % x", out[:n], directOut[:directN])
+	}
+}
+
 func TestFDKaacEncChannelElementWriteErrors(t *testing.T) {
 	qc, psy := buildLongChannelElementCase(t)
 	element := ElementInfo{ElType: idSCE, InstanceTag: 0}
@@ -410,6 +506,41 @@ func TestFDKaacEncChannelElementWriteErrors(t *testing.T) {
 	badSpectral.SectionData.HuffmanBits++
 	if _, errCode := FDKaacEncChannelElementWrite(&bs, &element, []*QCOutChannel{&badSpectral}, &psyElement, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 0); errCode != AACEncWriteSpecError {
 		t.Fatalf("spectral mismatch error = %#x, want %#x", errCode, AACEncWriteSpecError)
+	}
+}
+
+func TestFDKaacEncWriteBitstreamErrors(t *testing.T) {
+	qc, psy := buildLongChannelElementCase(t)
+	cm := ChannelMapping{NElements: 1}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, InstanceTag: 2, NChannelsInEl: 1}
+	psyElement := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{psy}}
+	qcElement := QCOutElement{QCOutChannel: [2]*QCOutChannel{qc}}
+	kernel := QCKernel{}
+	qcElements := []*QCOutElement{&qcElement}
+	psyElements := []*PsyOutElement{&psyElement}
+	var storage [256]byte
+	var bs BitStream
+	if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+
+	badAlign := QCOut{TotalBits: 207, AlignBits: 2}
+	if _, errCode := FDKaacEncWriteBitstream(&bs, &cm, &badAlign, qcElements, psyElements, &kernel, aotAACLC, 0, -1); errCode != AACEncWrittenBitsError {
+		t.Fatalf("bad alignment error = %#x, want %#x", errCode, AACEncWrittenBitsError)
+	}
+
+	ResetBitStream(&bs, BSWriter)
+	badTotal := QCOut{TotalBits: 207, AlignBits: 3}
+	if _, errCode := FDKaacEncWriteBitstream(&bs, &cm, &badTotal, qcElements, psyElements, &kernel, aotAACLC, 0, -1); errCode != AACEncWrittenBitsError {
+		t.Fatalf("bad total error = %#x, want %#x", errCode, AACEncWrittenBitsError)
+	}
+
+	ResetBitStream(&bs, BSWriter)
+	badMapping := ChannelMapping{NElements: 1}
+	badMapping.ElInfo[0] = ElementInfo{ElType: idDSE}
+	qcOut := QCOut{TotalBits: 208, AlignBits: 3}
+	if _, errCode := FDKaacEncWriteBitstream(&bs, &badMapping, &qcOut, qcElements, psyElements, &kernel, aotAACLC, 0, -1); errCode != AACEncInvalidElementInfoType {
+		t.Fatalf("invalid element error = %#x, want %#x", errCode, AACEncInvalidElementInfoType)
 	}
 }
 
@@ -616,6 +747,27 @@ func TestFDKaacEncBitencRejectsInvalid(t *testing.T) {
 			element := ElementInfo{ElType: idSCE, InstanceTag: 0}
 			FDKaacEncChannelElementWrite(&bs, &element, nil, &PsyOutElement{}, []*PsyOutChannel{psy}, 0, aotAACLC, -1, 1)
 		}},
+		{"nil write bitstream", func() {
+			FDKaacEncWriteBitstream(nil, &ChannelMapping{}, &QCOut{}, nil, nil, &QCKernel{}, aotAACLC, 0, -1)
+		}},
+		{"full global extensions", func() {
+			qc, psy := buildLongChannelElementCase(t)
+			cm := ChannelMapping{NElements: 1}
+			cm.ElInfo[0] = ElementInfo{ElType: idSCE, InstanceTag: 0, NChannelsInEl: 1}
+			psyElement := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{psy}}
+			qcElement := QCOutElement{QCOutChannel: [2]*QCOutChannel{qc}}
+			qcOut := QCOut{NExtensions: maxGlobalExtensions, TotalBits: 208, AlignBits: 3}
+			FDKaacEncWriteBitstream(&bs, &cm, &qcOut, []*QCOutElement{&qcElement}, []*PsyOutElement{&psyElement}, &QCKernel{}, aotAACLC, 0, -1)
+		}},
+		{"unsupported write syntax", func() {
+			qc, psy := buildLongChannelElementCase(t)
+			cm := ChannelMapping{NElements: 1}
+			cm.ElInfo[0] = ElementInfo{ElType: idSCE, InstanceTag: 0, NChannelsInEl: 1}
+			psyElement := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{psy}}
+			qcElement := QCOutElement{QCOutChannel: [2]*QCOutChannel{qc}}
+			qcOut := QCOut{TotalBits: 208, AlignBits: 3}
+			FDKaacEncWriteBitstream(&bs, &cm, &qcOut, []*QCOutElement{&qcElement}, []*PsyOutElement{&psyElement}, &QCKernel{}, aotAACLC, acER, -1)
+		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			defer func() {
@@ -657,6 +809,41 @@ func TestFDKaacEncChannelElementWriteAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("channel element writer allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncWriteBitstreamAllocs(t *testing.T) {
+	qc, psy := buildLongChannelElementCase(t)
+	cm := ChannelMapping{NElements: 1}
+	cm.ElInfo[0] = ElementInfo{ElType: idSCE, InstanceTag: 2, NChannelsInEl: 1}
+	psyElement := PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{psy}}
+	qcElement := QCOutElement{QCOutChannel: [2]*QCOutChannel{qc}}
+	baseOut := QCOut{TotalBits: 208, AlignBits: 3}
+	kernel := QCKernel{}
+	qcElements := []*QCOutElement{&qcElement}
+	psyElements := []*PsyOutElement{&psyElement}
+	var storage [256]byte
+	var out [256]byte
+	var bs BitStream
+	if err := InitBitStream(&bs, storage[:], 0, BSWriter); err != nil {
+		t.Fatal(err)
+	}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		clear(storage[:])
+		clear(out[:])
+		ResetBitStream(&bs, BSWriter)
+		qcOut := baseOut
+		result, errCode := FDKaacEncWriteBitstream(&bs, &cm, &qcOut, qcElements, psyElements, &kernel, aotAACLC, 0, -1)
+		if errCode != AACEncOK {
+			t.Fatalf("write bitstream error = %#x", errCode)
+		}
+		n := FetchBuffer(&bs, out[:])
+		bitCountSink = result.FrameBits + n
+		bitCountHashSink = hashHuffBytes(out[:n])
+	})
+	if allocs != 0 {
+		t.Fatalf("write bitstream allocations = %v, want 0", allocs)
 	}
 }
 

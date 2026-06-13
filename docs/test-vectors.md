@@ -141,8 +141,16 @@ invalid writer/control transitions, and zero steady-state allocation.
 The FDK AAC-LC channel element writer subset is covered with source-derived
 sequence-table pins for SCE and CPE normal syntax, plus byte vectors for a mono
 SCE and a common-window stereo CPE assembled through the lower-level channel
-payload writers. Tests also verify malformed bit-count error returns, invalid
+payload writers. Tests also verify minimum static-count vectors for SCE TNS
+suppression and CPE MS suppression, malformed bit-count error returns, invalid
 element/control transitions, and zero steady-state allocation.
+
+The FDK AAC-LC raw AU bitstream writer subset is covered with source-shaped
+vectors for `FDKaacEnc_WriteBitstream` and `FDKaacEnc_ByteAlignment`. Tests
+verify top-level SCE raw payload bytes, element-associated extension payload
+ordering, global extension payload ordering, the synthetic fill-data entry,
+`ID_END` emission, explicit alignment bits, written-bit mismatch errors,
+malformed controls, no-cgo compilation, and zero steady-state allocation.
 
 The FDK AAC-LC short grouping subset is covered with source-derived grouped
 offset and min-SNR vectors, saturating threshold/energy/MS/spread-energy sums,

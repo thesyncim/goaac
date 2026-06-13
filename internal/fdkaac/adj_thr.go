@@ -198,6 +198,8 @@ type QCOutElement struct {
 	StaticBitsUsed int
 	DynBitsUsed    int
 	ExtBitsUsed    int
+	NExtensions    int
+	Extension      [maxElementExtensions]QCOutExtension
 	GrantedDynBits int
 	GrantedPe      int
 	GrantedPeCorr  int
@@ -214,6 +216,8 @@ type QCOut struct {
 	ElementExtBits     int
 	GlobalExtBits      int
 	StaticBits         int
+	NExtensions        int
+	Extension          [maxGlobalExtensions]QCOutExtension
 	UsedDynBits        int
 	AlignBits          int
 	TotalBits          int
