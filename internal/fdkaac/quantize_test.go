@@ -154,10 +154,10 @@ func TestFDKaacEncQuantizeRejectsInvalid(t *testing.T) {
 			FDKaacEncQuantizeSpectrum(4, 3, 4, bad[:], spec[:], -20, scalefactors[:], quant[:], 0)
 		}},
 		{name: "short quantize mdct", fn: func() {
-			FDKaacEncQuantizeSpectrum(4, 3, 4, offsets[:], spec[:9], -20, scalefactors[:], quant[:], 0)
+			FDKaacEncQuantizeSpectrum(4, 3, 4, offsets[:], spec[:7], -20, scalefactors[:], quant[:], 0)
 		}},
 		{name: "short quantize output", fn: func() {
-			FDKaacEncQuantizeSpectrum(4, 3, 4, offsets[:], spec[:], -20, scalefactors[:], quant[:9], 0)
+			FDKaacEncQuantizeSpectrum(4, 3, 4, offsets[:], spec[:], -20, scalefactors[:], quant[:7], 0)
 		}},
 		{name: "negative SFB distortion lines", fn: func() {
 			FDKaacEncCalcSfbDist(spec[:], quant[:], -1, -20, 0)

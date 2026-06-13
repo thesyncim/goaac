@@ -220,7 +220,7 @@ func FDKaacEncEncodeSpectralData(sfbOffset []int, sectionData *SectionData, quan
 	startBits := BitStreamValidBits(bitstream)
 	for i := 0; i < sectionData.NoOfSections; i++ {
 		section := sectionData.Huffsection[i]
-		if section.CodeBook != codeBookPNSNo {
+		if isSpectralSectionCodeBook(section.CodeBook) {
 			tmp := section.SfbStart + section.SfbCnt
 			for sfb := section.SfbStart; sfb < tmp; sfb++ {
 				FDKaacEncCodeValues(
@@ -233,6 +233,10 @@ func FDKaacEncEncodeSpectralData(sfbOffset []int, sectionData *SectionData, quan
 		}
 	}
 	return int(BitStreamValidBits(bitstream) - startBits)
+}
+
+func isSpectralSectionCodeBook(codeBook int) bool {
+	return codeBook > codeBookZeroNo && codeBook <= codeBookEscNo
 }
 
 func FDKaacEncEncodeGlobalGain(globalGain int, scalefac int, bitstream *BitStream, mdctScale int) int {
@@ -966,12 +970,24 @@ func checkEncodeSpectralDataInputs(sfbOffset []int, sectionData *SectionData, qu
 	if len(sfbOffset) < sectionData.SfbCnt+1 {
 		panic("fdkaac: short spectral-data offsets")
 	}
+	if sectionData.MaxSfbPerGroup > 0 {
+		checkGroupedSfbOffsets(
+			sfbOffset,
+			sectionData.SfbCnt,
+			sectionData.SfbPerGroup,
+			sectionData.MaxSfbPerGroup,
+			false,
+			"fdkaac: malformed spectral-data offsets",
+			"fdkaac: short spectral-data offsets",
+			len(quantSpectrum),
+		)
+	}
 	for i := 0; i < sectionData.NoOfSections; i++ {
 		section := sectionData.Huffsection[i]
 		if section.SfbStart < 0 || section.SfbCnt < 0 || section.SfbStart+section.SfbCnt > sectionData.SfbCnt {
 			panic("fdkaac: invalid spectral-data section")
 		}
-		if section.CodeBook == codeBookPNSNo {
+		if !isSpectralSectionCodeBook(section.CodeBook) {
 			continue
 		}
 		for sfb := section.SfbStart; sfb < section.SfbStart+section.SfbCnt; sfb++ {
@@ -1256,16 +1272,17 @@ func checkChannelElementWriteInputs(
 		if sectionData.MaxSfbPerGroup < 0 || sectionData.MaxSfbPerGroup > sectionData.SfbPerGroup {
 			panic("fdkaac: invalid channel-element max sfb")
 		}
-		if psyOutChannel[ch].SfbOffsets[0] < 0 {
-			panic("fdkaac: invalid channel-element offsets")
-		}
-		for sfb := 0; sfb < sectionData.SfbCnt; sfb++ {
-			if psyOutChannel[ch].SfbOffsets[sfb+1] < psyOutChannel[ch].SfbOffsets[sfb] {
-				panic("fdkaac: invalid channel-element offsets")
-			}
-		}
-		if psyOutChannel[ch].SfbOffsets[sectionData.SfbCnt] > len(qcOutChannel[ch].QuantSpec) {
-			panic("fdkaac: short channel-element quant spectrum")
+		if sectionData.MaxSfbPerGroup > 0 {
+			checkGroupedSfbOffsets(
+				psyOutChannel[ch].SfbOffsets[:],
+				sectionData.SfbCnt,
+				sectionData.SfbPerGroup,
+				sectionData.MaxSfbPerGroup,
+				false,
+				"fdkaac: invalid channel-element offsets",
+				"fdkaac: short channel-element quant spectrum",
+				len(qcOutChannel[ch].QuantSpec),
+			)
 		}
 	}
 }

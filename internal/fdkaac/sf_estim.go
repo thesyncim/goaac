@@ -1084,20 +1084,16 @@ func checkFormFactorInputs(sfbFormFactorLdData []FixpDBL, psyOutChan *PsyOutChan
 	if len(sfbFormFactorLdData) < psyOutChan.SfbCnt {
 		panic("fdkaac: short form-factor output")
 	}
-	prev := psyOutChan.SfbOffsets[0]
-	if prev < 0 {
-		panic("fdkaac: invalid form-factor offset")
-	}
-	for i := 0; i < psyOutChan.SfbCnt; i++ {
-		next := psyOutChan.SfbOffsets[i+1]
-		if next < prev {
-			panic("fdkaac: invalid form-factor offset")
-		}
-		prev = next
-	}
-	if prev > len(psyOutChan.MdctSpectrum) {
-		panic("fdkaac: short form-factor spectrum")
-	}
+	checkGroupedSfbOffsets(
+		psyOutChan.SfbOffsets[:],
+		psyOutChan.SfbCnt,
+		psyOutChan.SfbPerGroup,
+		psyOutChan.MaxSfbPerGroup,
+		false,
+		"fdkaac: invalid form-factor offset",
+		"fdkaac: short form-factor spectrum",
+		len(psyOutChan.MdctSpectrum),
+	)
 }
 
 func checkSfbRelevantLinesInputs(
@@ -1119,23 +1115,15 @@ func checkSfbRelevantLinesInputs(
 	if len(sfbFormFactorLdData) < sfbCnt || len(sfbEnergyLdData) < sfbCnt || len(sfbThresholdLdData) < sfbCnt || len(sfbNRelevantLines) < sfbCnt {
 		panic("fdkaac: short relevant-lines data")
 	}
-	if len(sfbOffsets) < sfbCnt+1 {
-		panic("fdkaac: short relevant-lines offsets")
-	}
-	prev := sfbOffsets[0]
-	if prev < 0 {
-		panic("fdkaac: invalid relevant-lines offset")
-	}
-	for i := 0; i < sfbCnt; i++ {
-		next := sfbOffsets[i+1]
-		if next < prev {
-			panic("fdkaac: invalid relevant-lines offset")
-		}
-		if i%sfbPerGroup < maxSfbPerGroup && next == prev {
-			panic("fdkaac: empty relevant-lines active band")
-		}
-		prev = next
-	}
+	checkGroupedSfbOffsets(
+		sfbOffsets,
+		sfbCnt,
+		sfbPerGroup,
+		maxSfbPerGroup,
+		true,
+		"fdkaac: invalid relevant-lines offset",
+		"fdkaac: short relevant-lines offsets",
+	)
 }
 
 func checkScfDiffInputs(scfOld []int, scfNew []int, sfbCnt int, startSfb int, stopSfb int) {
@@ -1214,23 +1202,16 @@ func checkEstimateScaleFactorsChannelInputs(
 		panic("fdkaac: short estimate-scalefactor band data")
 	}
 
-	prev := psyOutChannel.SfbOffsets[0]
-	if prev < 0 {
-		panic("fdkaac: invalid estimate-scalefactor offset")
-	}
-	for i := 0; i < psyOutChannel.SfbCnt; i++ {
-		next := psyOutChannel.SfbOffsets[i+1]
-		if next < prev {
-			panic("fdkaac: invalid estimate-scalefactor offset")
-		}
-		if i%psyOutChannel.SfbPerGroup < psyOutChannel.MaxSfbPerGroup && next == prev {
-			panic("fdkaac: empty estimate-scalefactor active band")
-		}
-		prev = next
-	}
-	if prev > len(qcOutChannel.MdctSpectrum) {
-		panic("fdkaac: short estimate-scalefactor spectrum")
-	}
+	prev := checkGroupedSfbOffsets(
+		psyOutChannel.SfbOffsets[:],
+		psyOutChannel.SfbCnt,
+		psyOutChannel.SfbPerGroup,
+		psyOutChannel.MaxSfbPerGroup,
+		true,
+		"fdkaac: invalid estimate-scalefactor offset",
+		"fdkaac: short estimate-scalefactor spectrum",
+		len(qcOutChannel.MdctSpectrum),
+	)
 	if invQuant > 0 && (len(quantSpec) < prev || len(quantSpecTmp) < prev) {
 		panic("fdkaac: short estimate-scalefactor quant data")
 	}
@@ -1282,18 +1263,17 @@ func checkAssimilateSingleScfInputs(
 		len(sfbNRelevantLines) < psyOutChan.SfbCnt || len(minScfCalculated) < psyOutChan.SfbCnt {
 		panic("fdkaac: short assimilate-single band data")
 	}
-	prev := psyOutChan.SfbOffsets[0]
-	if prev < 0 {
-		panic("fdkaac: invalid assimilate-single offset")
-	}
-	for i := 0; i < psyOutChan.SfbCnt; i++ {
-		next := psyOutChan.SfbOffsets[i+1]
-		if next < prev {
-			panic("fdkaac: invalid assimilate-single offset")
-		}
-		prev = next
-	}
-	if prev > len(qcOutChannel.MdctSpectrum) || len(quantSpec) < prev || len(quantSpecTmp) < prev {
+	prev := checkGroupedSfbOffsets(
+		psyOutChan.SfbOffsets[:],
+		psyOutChan.SfbCnt,
+		psyOutChan.SfbPerGroup,
+		psyOutChan.MaxSfbPerGroup,
+		false,
+		"fdkaac: invalid assimilate-single offset",
+		"fdkaac: short assimilate-single spectrum",
+		len(qcOutChannel.MdctSpectrum),
+	)
+	if len(quantSpec) < prev || len(quantSpecTmp) < prev {
 		panic("fdkaac: short assimilate-single spectrum")
 	}
 }
@@ -1327,18 +1307,17 @@ func checkAssimilateMultipleScfInputs(
 		len(sfbNRelevantLines) < psyOutChan.SfbCnt {
 		panic("fdkaac: short assimilate-multiple band data")
 	}
-	prev := psyOutChan.SfbOffsets[0]
-	if prev < 0 {
-		panic("fdkaac: invalid assimilate-multiple offset")
-	}
-	for i := 0; i < psyOutChan.SfbCnt; i++ {
-		next := psyOutChan.SfbOffsets[i+1]
-		if next < prev {
-			panic("fdkaac: invalid assimilate-multiple offset")
-		}
-		prev = next
-	}
-	if prev > len(qcOutChannel.MdctSpectrum) || len(quantSpec) < prev || len(quantSpecTmp) < prev {
+	prev := checkGroupedSfbOffsets(
+		psyOutChan.SfbOffsets[:],
+		psyOutChan.SfbCnt,
+		psyOutChan.SfbPerGroup,
+		psyOutChan.MaxSfbPerGroup,
+		false,
+		"fdkaac: invalid assimilate-multiple offset",
+		"fdkaac: short assimilate-multiple spectrum",
+		len(qcOutChannel.MdctSpectrum),
+	)
+	if len(quantSpec) < prev || len(quantSpecTmp) < prev {
 		panic("fdkaac: short assimilate-multiple spectrum")
 	}
 }

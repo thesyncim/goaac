@@ -1634,16 +1634,17 @@ func checkCrashRecoveryInputs(
 		if sectionData.NoOfSections < 0 || sectionData.NoOfSections > maxSections {
 			panic("fdkaac: invalid crash-recovery section count")
 		}
-		if psyChannel.SfbOffsets[0] < 0 {
-			panic("fdkaac: invalid crash-recovery offsets")
-		}
-		for sfb := 0; sfb < sectionData.SfbCnt; sfb++ {
-			if psyChannel.SfbOffsets[sfb+1] < psyChannel.SfbOffsets[sfb] {
-				panic("fdkaac: invalid crash-recovery offsets")
-			}
-		}
-		if psyChannel.SfbOffsets[sectionData.SfbCnt] > len(qcChannel.QuantSpec) {
-			panic("fdkaac: short crash-recovery spectrum")
+		if sectionData.MaxSfbPerGroup > 0 {
+			checkGroupedSfbOffsets(
+				psyChannel.SfbOffsets[:],
+				sectionData.SfbCnt,
+				sectionData.SfbPerGroup,
+				sectionData.MaxSfbPerGroup,
+				false,
+				"fdkaac: invalid crash-recovery offsets",
+				"fdkaac: short crash-recovery spectrum",
+				len(qcChannel.QuantSpec),
+			)
 		}
 		for sect := 0; sect < sectionData.NoOfSections; sect++ {
 			section := sectionData.Huffsection[sect]

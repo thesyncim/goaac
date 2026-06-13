@@ -3262,15 +3262,16 @@ func checkPEChannelShape(psyCh *PsyOutChannel) {
 	if psyCh.LastWindowSequence != LongWindow && psyCh.LastWindowSequence != StartWindow && psyCh.LastWindowSequence != ShortWindow && psyCh.LastWindowSequence != StopWindow {
 		panic("fdkaac: invalid PE channel block type")
 	}
-	if psyCh.SfbOffsets[0] < 0 {
-		panic("fdkaac: invalid PE channel offset")
-	}
-	for sfb := 0; sfb < psyCh.SfbCnt; sfb++ {
-		if psyCh.SfbOffsets[sfb+1] < psyCh.SfbOffsets[sfb] {
-			panic("fdkaac: invalid PE channel offset")
-		}
-	}
-	if psyCh.SfbOffsets[psyCh.SfbCnt] <= 0 {
+	maxOffset := checkGroupedSfbOffsets(
+		psyCh.SfbOffsets[:],
+		psyCh.SfbCnt,
+		psyCh.SfbPerGroup,
+		psyCh.MaxSfbPerGroup,
+		false,
+		"fdkaac: invalid PE channel offset",
+		"fdkaac: short PE channel offsets",
+	)
+	if maxOffset <= 0 {
 		panic("fdkaac: empty PE channel spectrum")
 	}
 }

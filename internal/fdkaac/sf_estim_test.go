@@ -901,7 +901,7 @@ func TestFDKaacEncCalcFormFactorRejectsInvalid(t *testing.T) {
 		}},
 		{name: "short spectrum", fn: func() {
 			bad := psy
-			bad.MdctSpectrum = bad.MdctSpectrum[:bad.SfbOffsets[bad.SfbCnt]-1]
+			bad.MdctSpectrum = bad.MdctSpectrum[:bad.SfbOffsets[bad.MaxSfbPerGroup]-1]
 			FDKaacEncCalcFormFactorChannel(qc.SfbFormFactorLdData[:], &bad)
 		}},
 	}

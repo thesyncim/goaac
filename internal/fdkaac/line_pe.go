@@ -129,22 +129,22 @@ func checkPrepareSfbPeInputs(
 	if len(sfbEnergyLdData) < sfbCnt || len(sfbThresholdLdData) < sfbCnt || len(sfbFormFactorLdData) < sfbCnt {
 		panic("fdkaac: short PE prepare data")
 	}
-	if len(sfbOffset) < sfbCnt+1 {
-		panic("fdkaac: short PE prepare offsets")
-	}
-	prev := sfbOffset[0]
-	if prev < 0 {
-		panic("fdkaac: invalid PE prepare offset")
-	}
-	for i := 0; i < sfbCnt; i++ {
-		next := sfbOffset[i+1]
-		if next < prev {
-			panic("fdkaac: invalid PE prepare offset")
+	checkGroupedSfbOffsets(
+		sfbOffset,
+		sfbCnt,
+		sfbPerGroup,
+		maxSfbPerGroup,
+		false,
+		"fdkaac: invalid PE prepare offset",
+		"fdkaac: short PE prepare offsets",
+	)
+	for sfbGrp := 0; sfbGrp < sfbCnt; sfbGrp += sfbPerGroup {
+		for sfb := 0; sfb < maxSfbPerGroup; sfb++ {
+			idx := sfbGrp + sfb
+			if sfbEnergyLdData[idx] > sfbThresholdLdData[idx] && sfbOffset[idx+1] == sfbOffset[idx] {
+				panic("fdkaac: empty PE prepare active band")
+			}
 		}
-		if i%sfbPerGroup < maxSfbPerGroup && sfbEnergyLdData[i] > sfbThresholdLdData[i] && next == prev {
-			panic("fdkaac: empty PE prepare active band")
-		}
-		prev = next
 	}
 }
 

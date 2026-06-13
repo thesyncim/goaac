@@ -196,23 +196,17 @@ func checkMsStereoInputs(
 	if maxSfbPerGroup <= 0 || maxSfbPerGroup > sfbPerGroup {
 		panic("fdkaac: invalid ms stereo group width")
 	}
-	if len(sfbOffset) < sfbCnt+1 {
-		panic("fdkaac: short ms stereo offsets")
-	}
-	prev := sfbOffset[0]
-	if prev < 0 {
-		panic("fdkaac: invalid ms stereo offset")
-	}
-	for i := 0; i < sfbCnt; i++ {
-		next := sfbOffset[i+1]
-		if next < prev {
-			panic("fdkaac: invalid ms stereo offset")
-		}
-		prev = next
-	}
-	if prev > len(mdctSpectrumLeft) || prev > len(mdctSpectrumRight) {
-		panic("fdkaac: short ms stereo spectrum")
-	}
+	checkGroupedSfbOffsets(
+		sfbOffset,
+		sfbCnt,
+		sfbPerGroup,
+		maxSfbPerGroup,
+		false,
+		"fdkaac: invalid ms stereo offset",
+		"fdkaac: short ms stereo offsets",
+		len(mdctSpectrumLeft),
+		len(mdctSpectrumRight),
+	)
 	if isBook != nil && len(isBook) < sfbCnt {
 		panic("fdkaac: short ms stereo is-book")
 	}

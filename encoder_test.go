@@ -1,6 +1,8 @@
 package aac
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"testing"
 )
@@ -32,6 +34,39 @@ func TestEncoderRawVector(t *testing.T) {
 	}
 }
 
+func TestEncoderRawMonoVector(t *testing.T) {
+	enc, err := NewEncoder(EncoderOptions{
+		Config: Config{
+			ObjectType:    AOTAACLC,
+			SampleRate:    48000,
+			ChannelConfig: 1,
+		},
+		BitRate:   64000,
+		Transport: TransportRaw,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer enc.Close()
+	var pcm [encoderSamplesPerFrame]int16
+	fillEncoderSmoothPCM(pcm[:], 1)
+	var storage [512]byte
+
+	out, info, err := enc.EncodeRawInto(storage[:0], pcm[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Transport != TransportRaw || info.SampleRate != 48000 || info.Channels != 1 || info.BitRate != 64000 {
+		t.Fatalf("mono raw info = %+v", info)
+	}
+	if info.ChannelElements != 1 || info.PayloadBytes != len(out) || info.PayloadBytes == 0 {
+		t.Fatalf("mono raw lengths/state = len %d info %+v", len(out), info)
+	}
+	if got, want := sha256Hex(out), "1b844a1a68e3540e53c5b4185d2596b65ccaba4eb7a3062905d5fc35efb4ca65"; got != want {
+		t.Fatalf("mono raw sha256 = %s, want %s; len=%d info=%+v", got, want, len(out), info)
+	}
+}
+
 func TestEncoderADTSVector(t *testing.T) {
 	enc := newTestEncoder(t, TransportADTS)
 	defer enc.Close()
@@ -55,6 +90,76 @@ func TestEncoderADTSVector(t *testing.T) {
 	}
 	if got, want := sha256Hex(out[info.ADTSHeaderBytes:]), "86738e2a79887cb24c6c5897dc78acdf3fdd8d6d79dc14cf5412dfc368b60641"; got != want {
 		t.Fatalf("ADTS payload sha256 = %s, want %s", got, want)
+	}
+}
+
+func TestEncoderADTSMultiFrameTransitionRoundTrip(t *testing.T) {
+	enc := newTestEncoder(t, TransportADTS)
+	defer enc.Close()
+	var frame [2 * encoderSamplesPerFrame]int16
+	var stream []byte
+	var payloadBytes int
+
+	for i := 0; i < 6; i++ {
+		fillEncoderTransitionPCM(frame[:], 2, i)
+		before := len(stream)
+		var info EncodedFrameInfo
+		var err error
+		stream, info, err = enc.EncodeADTSFrameInto(stream, frame[:])
+		if err != nil {
+			t.Fatalf("encode frame %d: %v", i, err)
+		}
+		if !info.QuantizationDone || info.Transport != TransportADTS || info.ADTSHeaderBytes != ADTSHeaderSize {
+			t.Fatalf("frame %d info = %+v", i, info)
+		}
+		if info.OutputBytes != len(stream)-before || info.PayloadBytes <= 0 {
+			t.Fatalf("frame %d lengths = before %d after %d info %+v", i, before, len(stream), info)
+		}
+		payloadBytes += info.PayloadBytes
+	}
+
+	frames, err := SplitADTSFrames(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 6 {
+		t.Fatalf("ADTS frames = %d, want 6", len(frames))
+	}
+	if gotPayload := len(stream) - len(frames)*ADTSHeaderSize; gotPayload != payloadBytes {
+		t.Fatalf("payload bytes = %d, want encoder sum %d", gotPayload, payloadBytes)
+	}
+
+	dec, err := NewADTSDecoder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dec.Close()
+	var pcm []int16
+	for i, frame := range frames {
+		before := len(pcm)
+		var info FrameInfo
+		pcm, info, err = dec.DecodeADTSFrameInto(pcm, frame.Data)
+		if err != nil {
+			t.Fatalf("decode frame %d: %v", i, err)
+		}
+		if info.SampleRate != 48000 || info.Channels != 2 || info.InputBytes != frame.Header.FrameLength {
+			t.Fatalf("decode frame %d info = %+v header=%+v", i, info, frame.Header)
+		}
+		if i == 0 && info.OutputSamples != 0 {
+			t.Fatalf("first decode frame output = %d, want decoder delay", info.OutputSamples)
+		}
+		if i > 1 && len(pcm) == before {
+			t.Fatalf("decode frame %d produced no PCM after warmup", i)
+		}
+	}
+	if len(pcm) == 0 {
+		t.Fatal("roundtrip produced no PCM")
+	}
+	if got, want := sha256Hex(stream), "e938c13e61482af78e375768922194121c38d10295ad68aece17316a96883d6d"; got != want {
+		t.Fatalf("transition stream sha256 = %s, want %s; len=%d payload=%d", got, want, len(stream), payloadBytes)
+	}
+	if got, want := sha256Int16(pcm), "1ae33c71f0e03ec2c4d8270901c2a489d8870bbb7539c888fc43b4b4951ef577"; got != want {
+		t.Fatalf("transition PCM sha256 = %s, want %s; samples=%d", got, want, len(pcm))
 	}
 }
 
@@ -169,4 +274,47 @@ func fillEncoderSmoothPCM(dst []int16, channels int) {
 			dst[i*channels+ch] = int16(v / 8)
 		}
 	}
+}
+
+func fillEncoderTransitionPCM(dst []int16, channels int, frame int) {
+	clear(dst)
+	switch frame {
+	case 0, 5:
+		return
+	case 1, 4:
+		fillEncoderSmoothPCM(dst, channels)
+	case 2:
+		for i := 0; i < encoderSamplesPerFrame; i++ {
+			for ch := 0; ch < channels; ch++ {
+				v := 0
+				if i >= 736 && i < 832 {
+					if (i+ch)&1 == 0 {
+						v = 24000
+					} else {
+						v = -24000
+					}
+				}
+				dst[i*channels+ch] = int16(v)
+			}
+		}
+	default:
+		for i := 0; i < encoderSamplesPerFrame; i++ {
+			for ch := 0; ch < channels; ch++ {
+				v := ((i*3 + ch*11) % 96) - 48
+				dst[i*channels+ch] = int16(v * 32)
+			}
+		}
+	}
+}
+
+func sha256Int16(samples []int16) string {
+	h := sha256.New()
+	var b [2]byte
+	for _, sample := range samples {
+		u := uint16(sample)
+		b[0] = byte(u)
+		b[1] = byte(u >> 8)
+		_, _ = h.Write(b[:])
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }

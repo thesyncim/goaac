@@ -478,23 +478,17 @@ func checkIntensityStereoInputs(
 	if maxSfbPerGroup <= 0 || maxSfbPerGroup > sfbPerGroup {
 		panic("fdkaac: invalid intensity stereo group width")
 	}
-	if len(sfbOffset) < sfbCnt+1 {
-		panic("fdkaac: short intensity stereo offsets")
-	}
-	prev := sfbOffset[0]
-	if prev < 0 {
-		panic("fdkaac: invalid intensity stereo offset")
-	}
-	for i := 0; i < sfbCnt; i++ {
-		next := sfbOffset[i+1]
-		if next < prev {
-			panic("fdkaac: invalid intensity stereo offset")
-		}
-		prev = next
-	}
-	if prev > len(mdctSpectrumLeft) || prev > len(mdctSpectrumRight) {
-		panic("fdkaac: short intensity stereo spectrum")
-	}
+	checkGroupedSfbOffsets(
+		sfbOffset,
+		sfbCnt,
+		sfbPerGroup,
+		maxSfbPerGroup,
+		false,
+		"fdkaac: invalid intensity stereo offset",
+		"fdkaac: short intensity stereo offsets",
+		len(mdctSpectrumLeft),
+		len(mdctSpectrumRight),
+	)
 	if len(sfbEnergyLeft) < sfbCnt || len(sfbEnergyRight) < sfbCnt ||
 		len(sfbThresholdLeft) < sfbCnt || len(sfbThresholdRight) < sfbCnt ||
 		len(sfbThresholdLdDataRight) < sfbCnt || len(sfbSpreadEnLeft) < sfbCnt ||

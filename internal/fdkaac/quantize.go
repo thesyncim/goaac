@@ -208,23 +208,20 @@ func checkQuantizeSpectrumInputs(
 	if maxSfbPerGroup <= 0 || maxSfbPerGroup > sfbPerGroup {
 		panic("fdkaac: invalid quantize group width")
 	}
-	if len(sfbOffset) < sfbCnt+1 || len(scalefactors) < sfbCnt {
+	if len(scalefactors) < sfbCnt {
 		panic("fdkaac: short quantize band data")
 	}
-	prev := sfbOffset[0]
-	if prev < 0 {
-		panic("fdkaac: invalid quantize offset")
-	}
-	for i := 0; i < sfbCnt; i++ {
-		next := sfbOffset[i+1]
-		if next < prev {
-			panic("fdkaac: invalid quantize offset")
-		}
-		prev = next
-	}
-	if prev > len(mdctSpectrum) || prev > len(quantizedSpectrum) {
-		panic("fdkaac: short quantize spectrum")
-	}
+	checkGroupedSfbOffsets(
+		sfbOffset,
+		sfbCnt,
+		sfbPerGroup,
+		maxSfbPerGroup,
+		false,
+		"fdkaac: invalid quantize offset",
+		"fdkaac: short quantize spectrum",
+		len(mdctSpectrum),
+		len(quantizedSpectrum),
+	)
 }
 
 func checkCalcSfbDistInputs(mdctSpectrum []FixpDBL, quantSpectrum []int16, noOfLines int) {
