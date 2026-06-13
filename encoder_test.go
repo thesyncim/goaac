@@ -150,6 +150,128 @@ func TestEncoderFlushADTSVector(t *testing.T) {
 	}
 }
 
+func TestEncoderSamplesIntoMatchesFrameAPI(t *testing.T) {
+	var pcm [2 * encoderSamplesPerFrame]int16
+	fillEncoderTransitionPCM(pcm[:], 2, 3)
+
+	exact := newTestEncoder(t, TransportADTS)
+	defer exact.Close()
+	want, wantInfo, err := exact.EncodeADTSFrameInto(nil, pcm[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chunked := newTestEncoder(t, TransportADTS)
+	defer chunked.Close()
+	var out []byte
+	chunks := []int{17, 333, 674}
+	off := 0
+	for i, samplesPerChannel := range chunks {
+		chunk := pcm[off : off+samplesPerChannel*2]
+		var info EncodedFrameInfo
+		var consumed int
+		var ready bool
+		out, info, consumed, ready, err = chunked.EncodeSamplesInto(out, chunk)
+		if err != nil {
+			t.Fatalf("chunk %d: %v", i, err)
+		}
+		if consumed != len(chunk) {
+			t.Fatalf("chunk %d consumed = %d, want %d", i, consumed, len(chunk))
+		}
+		if i < len(chunks)-1 {
+			if ready || len(out) != 0 {
+				t.Fatalf("chunk %d ready=%v len=%d, want buffered only", i, ready, len(out))
+			}
+		} else {
+			if !ready || !bytes.Equal(out, want) {
+				t.Fatalf("chunked frame ready=%v equal=%v len=%d want=%d", ready, bytes.Equal(out, want), len(out), len(want))
+			}
+			if info.InputSamples != consumed || info.PayloadBytes != wantInfo.PayloadBytes || info.ADTSHeaderBytes != wantInfo.ADTSHeaderBytes {
+				t.Fatalf("chunked info = %+v want payload/header from %+v consumed=%d", info, wantInfo, consumed)
+			}
+		}
+		off += len(chunk)
+	}
+}
+
+func TestEncoderSamplesIntoConsumesOneFrame(t *testing.T) {
+	enc := newTestEncoder(t, TransportRaw)
+	defer enc.Close()
+	var pcm [3 * encoderSamplesPerFrame]int16
+	fillEncoderTransitionPCM(pcm[:2*encoderSamplesPerFrame], 2, 2)
+	var tail [2 * encoderSamplesPerFrame]int16
+	fillEncoderTransitionPCM(tail[:], 2, 3)
+	copy(pcm[2*encoderSamplesPerFrame:], tail[:encoderSamplesPerFrame])
+
+	out, info, consumed, ready, err := enc.EncodeSamplesInto(nil, pcm[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ready || consumed != 2*encoderSamplesPerFrame || len(out) == 0 || info.PayloadBytes != len(out) {
+		t.Fatalf("first call ready=%v consumed=%d len=%d info=%+v", ready, consumed, len(out), info)
+	}
+	out, info, consumed, ready, err = enc.EncodeSamplesInto(out[:0], pcm[consumed:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready || consumed != encoderSamplesPerFrame || len(out) != 0 || info.OutputBytes != 0 || info.PayloadBytes != 0 || info.InputSamples != 0 {
+		t.Fatalf("second call ready=%v consumed=%d len=%d info=%+v", ready, consumed, len(out), info)
+	}
+}
+
+func TestEncoderPartialFlushADTSVector(t *testing.T) {
+	enc := newTestEncoder(t, TransportADTS)
+	defer enc.Close()
+	var pcm [2 * encoderSamplesPerFrame]int16
+	fillEncoderSmoothPCM(pcm[:], 2)
+
+	out, info, consumed, ready, err := enc.EncodeSamplesInto(nil, pcm[:encoderSamplesPerFrame])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready || consumed != encoderSamplesPerFrame || len(out) != 0 || info.OutputBytes != 0 || info.PayloadBytes != 0 || info.InputSamples != 0 {
+		t.Fatalf("partial encode ready=%v consumed=%d len=%d info=%+v", ready, consumed, len(out), info)
+	}
+
+	flushFrames := 0
+	payloadBytes := 0
+	for {
+		before := len(out)
+		var more bool
+		out, info, more, err = enc.FlushFrameInto(out)
+		if err != nil {
+			t.Fatalf("flush frame %d: %v", flushFrames, err)
+		}
+		if !more {
+			break
+		}
+		if info.InputSamples != 0 || info.Transport != TransportADTS || info.ADTSHeaderBytes != ADTSHeaderSize {
+			t.Fatalf("flush frame %d info = %+v", flushFrames, info)
+		}
+		if info.OutputBytes != len(out)-before || info.PayloadBytes <= 0 {
+			t.Fatalf("flush frame %d lengths = before %d after %d info %+v", flushFrames, before, len(out), info)
+		}
+		payloadBytes += info.PayloadBytes
+		flushFrames++
+	}
+	if flushFrames != 3 {
+		t.Fatalf("partial flush frames = %d, want 3", flushFrames)
+	}
+	frames, err := SplitADTSFrames(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 3 {
+		t.Fatalf("partial ADTS frames = %d, want 3", len(frames))
+	}
+	if gotPayload := len(out) - len(frames)*ADTSHeaderSize; gotPayload != payloadBytes {
+		t.Fatalf("partial payload bytes = %d, want encoder sum %d", gotPayload, payloadBytes)
+	}
+	if got, want := sha256Hex(out), "086f295e59ca5fc55cfea82ab380d486a41ca3cb17bf2eb0a575fc9b55790b1f"; got != want {
+		t.Fatalf("partial flush ADTS sha256 = %s, want %s; len=%d payload=%d", got, want, len(out), payloadBytes)
+	}
+}
+
 func TestEncoderADTSMultiFrameTransitionRoundTrip(t *testing.T) {
 	enc := newTestEncoder(t, TransportADTS)
 	defer enc.Close()
@@ -332,6 +454,38 @@ func TestEncoderRTMPFlushFrames(t *testing.T) {
 	}
 }
 
+func TestEncoderRTMPSamplesIntoMatchesFrameAPI(t *testing.T) {
+	var pcm [2 * encoderSamplesPerFrame]int16
+	fillEncoderSmoothPCM(pcm[:], 2)
+
+	exact := newTestEncoder(t, TransportRaw)
+	defer exact.Close()
+	want, wantInfo, err := exact.EncodeRTMPMessageInto(nil, pcm[:])
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	chunked := newTestEncoder(t, TransportRaw)
+	defer chunked.Close()
+	msg, info, consumed, ready, err := chunked.EncodeRTMPSamplesInto(nil, pcm[:512])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready || consumed != 512 || len(msg) != 0 || info.OutputBytes != 0 || info.PayloadBytes != 0 || info.InputSamples != 0 {
+		t.Fatalf("first RTMP chunk ready=%v consumed=%d len=%d info=%+v", ready, consumed, len(msg), info)
+	}
+	msg, info, consumed, ready, err = chunked.EncodeRTMPSamplesInto(msg, pcm[512:])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ready || consumed != len(pcm)-512 || !bytes.Equal(msg, want) {
+		t.Fatalf("second RTMP chunk ready=%v consumed=%d equal=%v len=%d want=%d", ready, consumed, bytes.Equal(msg, want), len(msg), len(want))
+	}
+	if info.InputSamples != consumed || info.PayloadBytes != wantInfo.PayloadBytes || info.OutputBytes != wantInfo.OutputBytes {
+		t.Fatalf("RTMP chunked info = %+v want %+v consumed=%d", info, wantInfo, consumed)
+	}
+}
+
 func TestEncoderRejectsInvalid(t *testing.T) {
 	_, err := NewEncoder(EncoderOptions{
 		Config:  Config{ObjectType: AOTAACLC, SampleRate: 48000, Channels: 6},
@@ -363,6 +517,8 @@ func TestEncoderRejectsInvalid(t *testing.T) {
 func TestEncoderRawAllocs(t *testing.T) {
 	enc := newTestEncoder(t, TransportRaw)
 	defer enc.Close()
+	streaming := newTestEncoder(t, TransportRaw)
+	defer streaming.Close()
 	var pcm [2 * encoderSamplesPerFrame]int16
 	fillEncoderSmoothPCM(pcm[:], 2)
 	var storage [512]byte
@@ -376,6 +532,20 @@ func TestEncoderRawAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("allocs = %.2f, want 0", allocs)
+	}
+
+	allocs = testing.AllocsPerRun(100, func() {
+		out, info, consumed, ready, err := streaming.EncodeSamplesInto(storage[:0], pcm[:])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !ready || consumed != len(pcm) {
+			t.Fatalf("streaming ready=%v consumed=%d", ready, consumed)
+		}
+		encoderAPILenSink = len(out) + info.PayloadBytes
+	})
+	if allocs != 0 {
+		t.Fatalf("streaming allocs = %.2f, want 0", allocs)
 	}
 }
 

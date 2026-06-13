@@ -37,12 +37,14 @@ The returned PCM is interleaved signed 16-bit native-endian samples.
 
 ## Encode AAC-LC
 
-The encoder accepts one 1024-sample interleaved S16 PCM frame per call. The
-configured transport owns encoder bit-reservoir accounting, so create a raw
-encoder for MP4/FLV/RTMP muxers and an ADTS encoder when you need self-framed
-AAC. At end of input, call the flush method for the selected output shape until
-it returns `more=false`; AAC-LC drains two delayed frames for the default
-1024-sample configuration:
+The exact-frame encoder calls accept one 1024-sample interleaved S16 PCM frame
+per call. The chunked calls buffer arbitrary channel-aligned PCM and emit at
+most one AAC frame per call when enough input has arrived. The configured
+transport owns encoder bit-reservoir accounting, so create a raw encoder for
+MP4/FLV/RTMP muxers and an ADTS encoder when you need self-framed AAC. At end
+of input, call the flush method for the selected output shape until it returns
+`more=false`; partial final input is zero-padded and AAC-LC then drains the FDK
+delay frames.
 
 ```go
 enc, err := aac.NewEncoder(aac.EncoderOptions{
@@ -71,6 +73,23 @@ for more := true; more; {
         panic(err)
     }
     if more {
+        writeAccessUnit(au, info)
+    }
+}
+```
+
+For channel-aligned PCM chunks:
+
+```go
+pcm := incomingInterleavedS16
+var au []byte
+for len(pcm) > 0 {
+    au, info, consumed, ready, err := enc.EncodeSamplesInto(au[:0], pcm)
+    if err != nil {
+        panic(err)
+    }
+    pcm = pcm[consumed:]
+    if ready {
         writeAccessUnit(au, info)
     }
 }
@@ -113,6 +132,9 @@ for more := true; more; {
 _ = seq
 _ = info
 ```
+
+Use `EncodeRTMPSamplesInto` the same way as `EncodeSamplesInto` when RTMP input
+arrives in arbitrary PCM chunk sizes.
 
 Explicit encode methods reject transport mismatches with `ErrInvalidConfig`
 instead of silently emitting incorrectly budgeted frames.
@@ -216,10 +238,10 @@ paths. The live integration test can also synthesize a fresh fixture with
 `ffmpeg`, build a small native FAAD2 oracle from `third_party/faad2`, and
 byte-compare the Go decoder output against it.
 
-Encoder tests pin pure-Go FDK-shaped raw, ADTS-budgeted, and flushed
-access-unit SHA-256 values for deterministic S16 frames, verify ADTS reservoir
-signaling and RTMP/FLV wrapping, check invalid control transitions, and enforce
-zero allocations on the initialized raw encode hot path.
+Encoder tests pin pure-Go FDK-shaped raw, ADTS-budgeted, chunked-input, partial
+flush, and RTMP/FLV AAC message SHA-256 values for deterministic S16 frames,
+verify ADTS reservoir signaling and wrapping, check invalid control transitions,
+and enforce zero allocations on the initialized raw encode hot path.
 
 To regenerate the committed vectors:
 

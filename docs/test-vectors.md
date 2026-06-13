@@ -57,9 +57,11 @@ The public encoder facade pins one deterministic 48 kHz stereo, 128 kbit/s
 AAC-LC access unit produced from a smooth interleaved S16 frame. The raw
 access-unit SHA-256 is
 `86738e2a79887cb24c6c5897dc78acdf3fdd8d6d79dc14cf5412dfc368b60641`.
-Tests verify that `EncodeRawInto`, `EncodeADTSFrameInto`, and
-`EncodeRTMPMessageInto` all carry that same raw payload, and that initialized
-raw encoding performs zero heap allocations.
+Tests verify that `EncodeRawInto`, `EncodeADTSFrameInto`,
+`EncodeSamplesInto`, `EncodeRTMPMessageInto`, and `EncodeRTMPSamplesInto` carry
+the same raw payload at full-frame boundaries. Additional vectors pin full-frame
+drain and partial-final-frame zero-padding, and initialized raw encoding
+performs zero heap allocations.
 
 The FDK encoder bandwidth/channel-control subset is covered with source-shaped
 vectors for `FDKaacEnc_DetermineBandWidth`, `FDKaacEnc_GetVBRBitrate`,

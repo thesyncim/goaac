@@ -15,6 +15,14 @@ const (
 	encoderAACLCDelaySamples         = encoderSamplesPerFrame + encoderAACLCBlockSwitchLookahead
 )
 
+type encoderOutputMode int
+
+const (
+	encoderOutputUnset encoderOutputMode = iota
+	encoderOutputConfigured
+	encoderOutputFLV
+)
+
 // EncoderOptions configures an AAC-LC encoder.
 type EncoderOptions struct {
 	// Config selects the output sample rate and mono/stereo channel layout.
@@ -67,6 +75,8 @@ type Encoder struct {
 	closed           bool
 	flushing         bool
 	flushZeros       int
+	pendingSamples   int
+	pendingOutput    encoderOutputMode
 	planar           [encoderMaxChannels * encoderSamplesPerFrame]int16
 	raw              [encoderRawBufferBytes]byte
 }
@@ -179,6 +189,9 @@ func (e *Encoder) EncodeRawInto(dst []byte, pcm []int16) ([]byte, EncodedFrameIn
 	if e.flushing {
 		return dst, EncodedFrameInfo{}, ErrClosed
 	}
+	if e.pendingSamples != 0 {
+		return dst, EncodedFrameInfo{}, fmt.Errorf("%w: encoder has %d buffered samples per channel", ErrInvalidFrame, e.pendingSamples)
+	}
 	before := len(dst)
 	out, result, err := e.encodeRawPayloadLocked(dst, pcm)
 	if err != nil {
@@ -209,6 +222,9 @@ func (e *Encoder) EncodeADTSFrameInto(dst []byte, pcm []int16) ([]byte, EncodedF
 	if e.flushing {
 		return dst, EncodedFrameInfo{}, ErrClosed
 	}
+	if e.pendingSamples != 0 {
+		return dst, EncodedFrameInfo{}, fmt.Errorf("%w: encoder has %d buffered samples per channel", ErrInvalidFrame, e.pendingSamples)
+	}
 	raw, result, err := e.encodeRawPayloadLocked(e.raw[:0], pcm)
 	if err != nil {
 		return dst, EncodedFrameInfo{}, err
@@ -225,6 +241,51 @@ func (e *Encoder) EncodeADTSFrameInto(dst []byte, pcm []int16) ([]byte, EncodedF
 	return dst, info, nil
 }
 
+// EncodeSamplesInto consumes interleaved S16 PCM and appends at most one AAC
+// frame using the encoder's configured transport. It reports how many input
+// samples were consumed and ready=false when more PCM is needed before an
+// access unit can be emitted.
+func (e *Encoder) EncodeSamplesInto(dst []byte, pcm []int16) ([]byte, EncodedFrameInfo, int, bool, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return dst, EncodedFrameInfo{}, 0, false, ErrClosed
+	}
+	if e.flushing {
+		return dst, EncodedFrameInfo{}, 0, false, ErrClosed
+	}
+	consumed, ready, err := e.bufferPCMLocked(pcm, encoderOutputConfigured)
+	if err != nil || !ready {
+		return dst, EncodedFrameInfo{}, consumed, false, err
+	}
+	switch e.transport {
+	case TransportRaw:
+		before := len(dst)
+		out, result, err := e.encodeBufferedPayloadLocked(dst)
+		if err != nil {
+			return dst, EncodedFrameInfo{}, consumed, false, err
+		}
+		info := e.encodedFrameInfo(TransportRaw, consumed, len(out)-before, len(out)-before, 0, result)
+		return out, info, consumed, true, nil
+	case TransportADTS:
+		raw, result, err := e.encodeBufferedPayloadLocked(e.raw[:0])
+		if err != nil {
+			return dst, EncodedFrameInfo{}, consumed, false, err
+		}
+		before := len(dst)
+		dst, err = fdkaac.AppendADTSHeaderWithScratch(dst, e.coderConfig(), len(raw), e.adtsBufferFullnessLocked(), &e.transportScratch)
+		if err != nil {
+			return dst, EncodedFrameInfo{}, consumed, false, err
+		}
+		headerBytes := len(dst) - before
+		dst = append(dst, raw...)
+		info := e.encodedFrameInfo(TransportADTS, consumed, len(dst)-before, len(raw), headerBytes, result)
+		return dst, info, consumed, true, nil
+	default:
+		return dst, EncodedFrameInfo{}, consumed, false, fmt.Errorf("%w: unknown encoder transport %s", ErrInvalidConfig, e.transport)
+	}
+}
+
 // FlushFrameInto appends one delayed encoder frame using the configured
 // transport. It returns more=false once the AAC-LC encoder delay has been fully
 // drained. After flushing starts, normal Encode calls return ErrClosed.
@@ -237,14 +298,14 @@ func (e *Encoder) FlushFrameInto(dst []byte) ([]byte, EncodedFrameInfo, bool, er
 	switch e.transport {
 	case TransportRaw:
 		before := len(dst)
-		out, result, more, err := e.flushRawPayloadLocked(dst)
+		out, result, more, err := e.flushRawPayloadLocked(dst, encoderOutputConfigured)
 		if err != nil || !more {
 			return dst, EncodedFrameInfo{}, more, err
 		}
 		info := e.encodedFrameInfo(TransportRaw, 0, len(out)-before, len(out)-before, 0, result)
 		return out, info, true, nil
 	case TransportADTS:
-		raw, result, more, err := e.flushRawPayloadLocked(e.raw[:0])
+		raw, result, more, err := e.flushRawPayloadLocked(e.raw[:0], encoderOutputConfigured)
 		if err != nil || !more {
 			return dst, EncodedFrameInfo{}, more, err
 		}
@@ -292,6 +353,9 @@ func (e *Encoder) EncodeFLVTagInto(dst []byte, pcm []int16) ([]byte, EncodedFram
 	if e.flushing {
 		return dst, EncodedFrameInfo{}, ErrClosed
 	}
+	if e.pendingSamples != 0 {
+		return dst, EncodedFrameInfo{}, fmt.Errorf("%w: encoder has %d buffered samples per channel", ErrInvalidFrame, e.pendingSamples)
+	}
 	raw, result, err := e.encodeRawPayloadLocked(e.raw[:0], pcm)
 	if err != nil {
 		return dst, EncodedFrameInfo{}, err
@@ -308,6 +372,41 @@ func (e *Encoder) EncodeRTMPMessageInto(dst []byte, pcm []int16) ([]byte, Encode
 	return e.EncodeFLVTagInto(dst, pcm)
 }
 
+// EncodeFLVSamplesInto consumes interleaved S16 PCM and appends at most one FLV
+// AAC raw audio tag body. It reports ready=false when more PCM is needed before
+// a message can be emitted.
+func (e *Encoder) EncodeFLVSamplesInto(dst []byte, pcm []int16) ([]byte, EncodedFrameInfo, int, bool, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closed {
+		return dst, EncodedFrameInfo{}, 0, false, ErrClosed
+	}
+	if e.transport != TransportRaw {
+		return dst, EncodedFrameInfo{}, 0, false, fmt.Errorf("%w: encoder transport is %s, not %s", ErrInvalidConfig, e.transport, TransportRaw)
+	}
+	if e.flushing {
+		return dst, EncodedFrameInfo{}, 0, false, ErrClosed
+	}
+	consumed, ready, err := e.bufferPCMLocked(pcm, encoderOutputFLV)
+	if err != nil || !ready {
+		return dst, EncodedFrameInfo{}, consumed, false, err
+	}
+	raw, result, err := e.encodeBufferedPayloadLocked(e.raw[:0])
+	if err != nil {
+		return dst, EncodedFrameInfo{}, consumed, false, err
+	}
+	before := len(dst)
+	dst = AppendFLVAACRawTag(dst, raw)
+	info := e.encodedFrameInfo(TransportRaw, consumed, len(dst)-before, len(raw), 0, result)
+	return dst, info, consumed, true, nil
+}
+
+// EncodeRTMPSamplesInto consumes interleaved S16 PCM and appends at most one
+// RTMP AAC audio message payload.
+func (e *Encoder) EncodeRTMPSamplesInto(dst []byte, pcm []int16) ([]byte, EncodedFrameInfo, int, bool, error) {
+	return e.EncodeFLVSamplesInto(dst, pcm)
+}
+
 // FlushFLVTagInto appends one delayed FLV AAC raw audio tag body. It returns
 // more=false once the AAC-LC encoder delay has been fully drained.
 func (e *Encoder) FlushFLVTagInto(dst []byte) ([]byte, EncodedFrameInfo, bool, error) {
@@ -319,7 +418,7 @@ func (e *Encoder) FlushFLVTagInto(dst []byte) ([]byte, EncodedFrameInfo, bool, e
 	if e.transport != TransportRaw {
 		return dst, EncodedFrameInfo{}, false, fmt.Errorf("%w: encoder transport is %s, not %s", ErrInvalidConfig, e.transport, TransportRaw)
 	}
-	raw, result, more, err := e.flushRawPayloadLocked(e.raw[:0])
+	raw, result, more, err := e.flushRawPayloadLocked(e.raw[:0], encoderOutputFLV)
 	if err != nil || !more {
 		return dst, EncodedFrameInfo{}, more, err
 	}
@@ -352,7 +451,23 @@ func (e *Encoder) encodeRawPayloadLocked(dst []byte, pcm []int16) ([]byte, fdkaa
 	return e.encodePreparedPayloadLocked(dst)
 }
 
-func (e *Encoder) flushRawPayloadLocked(dst []byte) ([]byte, fdkaac.AACEncFrameResult, bool, error) {
+func (e *Encoder) flushRawPayloadLocked(dst []byte, output encoderOutputMode) ([]byte, fdkaac.AACEncFrameResult, bool, error) {
+	if e.pendingSamples > 0 {
+		if e.pendingOutput != output {
+			return dst, fdkaac.AACEncFrameResult{}, false, fmt.Errorf("%w: encoder has buffered samples for another output shape", ErrInvalidConfig)
+		}
+		e.flushing = true
+		zeros := encoderSamplesPerFrame - e.pendingSamples
+		e.clearPlanarRange(e.pendingSamples, encoderSamplesPerFrame)
+		out, result, err := e.encodePreparedPayloadLocked(dst)
+		if err != nil {
+			return dst, result, false, err
+		}
+		e.pendingSamples = 0
+		e.pendingOutput = encoderOutputUnset
+		e.flushZeros += zeros
+		return out, result, true, nil
+	}
 	e.flushing = true
 	if e.flushZeros >= encoderAACLCDelaySamples {
 		return dst, fdkaac.AACEncFrameResult{}, false, nil
@@ -380,21 +495,72 @@ func (e *Encoder) encodePreparedPayloadLocked(dst []byte) ([]byte, fdkaac.AACEnc
 	return out, result, nil
 }
 
+func (e *Encoder) encodeBufferedPayloadLocked(dst []byte) ([]byte, fdkaac.AACEncFrameResult, error) {
+	if e.pendingSamples != encoderSamplesPerFrame {
+		return dst, fdkaac.AACEncFrameResult{}, fmt.Errorf("%w: got %d buffered samples per channel, want %d", ErrInvalidFrame, e.pendingSamples, encoderSamplesPerFrame)
+	}
+	out, result, err := e.encodePreparedPayloadLocked(dst)
+	if err != nil {
+		return dst, result, err
+	}
+	e.pendingSamples = 0
+	e.pendingOutput = encoderOutputUnset
+	return out, result, nil
+}
+
+func (e *Encoder) bufferPCMLocked(pcm []int16, output encoderOutputMode) (int, bool, error) {
+	channels := e.cfg.Channels
+	if len(pcm)%channels != 0 {
+		return 0, false, fmt.Errorf("%w: got %d interleaved samples for %d channels", ErrInvalidFrame, len(pcm), channels)
+	}
+	if e.pendingSamples > 0 && e.pendingOutput != output {
+		return 0, false, fmt.Errorf("%w: encoder has buffered samples for another output shape", ErrInvalidConfig)
+	}
+	available := len(pcm) / channels
+	if available == 0 {
+		return 0, e.pendingSamples == encoderSamplesPerFrame, nil
+	}
+	need := encoderSamplesPerFrame - e.pendingSamples
+	if need <= 0 {
+		return 0, true, nil
+	}
+	if available < need {
+		need = available
+	}
+	if e.pendingSamples == 0 {
+		e.pendingOutput = output
+	}
+	e.copyPCMToPlanar(e.pendingSamples, pcm[:need*channels], need)
+	e.pendingSamples += need
+	return need * channels, e.pendingSamples == encoderSamplesPerFrame, nil
+}
+
 func (e *Encoder) preparePCM(pcm []int16) error {
 	want := e.cfg.Channels * encoderSamplesPerFrame
 	if len(pcm) != want {
 		return fmt.Errorf("%w: got %d interleaved samples, want %d", ErrInvalidFrame, len(pcm), want)
 	}
-	if e.cfg.Channels == 1 {
-		copy(e.planar[:encoderSamplesPerFrame], pcm)
-		return nil
-	}
-	for i := 0; i < encoderSamplesPerFrame; i++ {
-		base := i * e.cfg.Channels
-		e.planar[i] = pcm[base]
-		e.planar[encoderSamplesPerFrame+i] = pcm[base+1]
-	}
+	e.copyPCMToPlanar(0, pcm, encoderSamplesPerFrame)
 	return nil
+}
+
+func (e *Encoder) copyPCMToPlanar(dstSample int, pcm []int16, samplesPerChannel int) {
+	if e.cfg.Channels == 1 {
+		copy(e.planar[dstSample:dstSample+samplesPerChannel], pcm[:samplesPerChannel])
+		return
+	}
+	for i := 0; i < samplesPerChannel; i++ {
+		base := i * e.cfg.Channels
+		e.planar[dstSample+i] = pcm[base]
+		e.planar[encoderSamplesPerFrame+dstSample+i] = pcm[base+1]
+	}
+}
+
+func (e *Encoder) clearPlanarRange(startSample int, endSample int) {
+	for ch := 0; ch < e.cfg.Channels; ch++ {
+		base := ch * encoderSamplesPerFrame
+		clear(e.planar[base+startSample : base+endSample])
+	}
 }
 
 func (e *Encoder) encodedFrameInfo(transport Transport, inputSamples int, outputBytes int, payloadBytes int, headerBytes int, result fdkaac.AACEncFrameResult) EncodedFrameInfo {

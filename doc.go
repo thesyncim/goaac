@@ -26,10 +26,12 @@
 //	rtmp := aac.NewRTMPAACDecoder()
 //	pcm, info, err := rtmp.DecodeRTMPMessage(pcm, payload)
 //
-// The encoder accepts 1024-sample interleaved S16 frames and appends raw AAC,
-// ADTS, or FLV/RTMP AAC message payloads into caller-owned buffers. At end of
-// input, call FlushFrameInto or FlushRTMPMessageInto until more is false to
-// drain the AAC-LC encoder delay.
+// The exact-frame encoder calls accept 1024-sample interleaved S16 frames.
+// EncodeSamplesInto and EncodeRTMPSamplesInto buffer channel-aligned chunks and
+// append raw AAC, ADTS, or FLV/RTMP AAC message payloads into caller-owned
+// buffers once a frame is ready. At end of input, call FlushFrameInto or
+// FlushRTMPMessageInto until more is false to zero-pad partial input and drain
+// the AAC-LC encoder delay.
 //
 // PCM samples are interleaved signed 16-bit values in native Go int16 form.
 package aac
