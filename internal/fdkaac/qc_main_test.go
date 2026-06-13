@@ -20,6 +20,91 @@ func TestFDKaacEncCalcMaxValueInSfbVector(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncReduceBitConsumptionVectors(t *testing.T) {
+	var left QCOutChannel
+	var right QCOutChannel
+	element := QCOutElement{
+		DynBitsUsed: 90,
+		QCOutChannel: [2]*QCOutChannel{
+			&left,
+			&right,
+		},
+	}
+	left.GlobalGain = 50
+	right.GlobalGain = 70
+	iterations := 0
+	chConstraints := [...]int{0, 1}
+	calculateQuant := [...]int{0, 0}
+	elBits := ElementBits{MaxBitsEl: 1024, BitResLevelEl: 128}
+
+	result, errCode := FDKaacEncReduceBitConsumption(
+		&iterations, 4, 1, chConstraints[:], calculateQuant[:], 2, &element, &elBits,
+	)
+	if errCode != AACEncOK {
+		t.Fatalf("reduce-bit normal error = %#x, want OK", errCode)
+	}
+	if iterations != 1 || result.IterationsReached != 1 || result.AdjustedChannels != 1 {
+		t.Fatalf("reduce-bit iteration result = %+v iterations=%d", result, iterations)
+	}
+	if left.GlobalGain != 51 || right.GlobalGain != 70 {
+		t.Fatalf("global gains = %d,%d want 51,70", left.GlobalGain, right.GlobalGain)
+	}
+	if calculateQuant != [...]int{1, 0} {
+		t.Fatalf("calculate quant = %v, want [1 0]", calculateQuant)
+	}
+
+	element.GrantedDynBits = 256
+	element.StaticBitsUsed = 9
+	left.GlobalGain = 51
+	right.GlobalGain = 70
+	iterations = 4
+	chConstraints = [...]int{1, 1}
+	calculateQuant = [...]int{0, 0}
+	elBits = ElementBits{MaxBitsEl: 2048, BitResLevelEl: 128}
+	result, errCode = FDKaacEncReduceBitConsumption(
+		&iterations, 4, -1, chConstraints[:], calculateQuant[:], 2, &element, &elBits,
+	)
+	if errCode != AACEncOK {
+		t.Fatalf("reduce-bit max-iteration non-crash error = %#x, want OK", errCode)
+	}
+	if iterations != 5 || result.MaxIterationsHit != 1 || result.AdjustedChannels != 2 {
+		t.Fatalf("max-iteration result = %+v iterations=%d", result, iterations)
+	}
+	if left.GlobalGain != 52 || right.GlobalGain != 71 {
+		t.Fatalf("max-iteration global gains = %d,%d want 52,71", left.GlobalGain, right.GlobalGain)
+	}
+	if calculateQuant != [...]int{1, 1} {
+		t.Fatalf("max-iteration calculate quant = %v, want [1 1]", calculateQuant)
+	}
+}
+
+func TestFDKaacEncReduceBitConsumptionCrashRecoveryBoundary(t *testing.T) {
+	var qc QCOutChannel
+	element := QCOutElement{
+		StaticBitsUsed: 21,
+		DynBitsUsed:    300,
+		GrantedDynBits: 10,
+		QCOutChannel:   [2]*QCOutChannel{&qc},
+	}
+	elBits := ElementBits{MaxBitsEl: 128, BitResLevelEl: 0}
+	iterations := 3
+	chConstraints := [...]int{1}
+	calculateQuant := [...]int{0}
+
+	result, errCode := FDKaacEncReduceBitConsumption(
+		&iterations, 3, 1, chConstraints[:], calculateQuant[:], 1, &element, &elBits,
+	)
+	if errCode != AACEncQuantError {
+		t.Fatalf("crash recovery boundary error = %#x, want quant error", errCode)
+	}
+	if result.CrashRecoveryNeeded != 1 || result.BitsToSave != 298 {
+		t.Fatalf("crash recovery result = %+v, want needed with 298 bits", result)
+	}
+	if iterations != 3 || qc.GlobalGain != 0 || calculateQuant[0] != 0 {
+		t.Fatalf("crash recovery mutated state iterations=%d gain=%d calc=%d", iterations, qc.GlobalGain, calculateQuant[0])
+	}
+}
+
 func TestFDKaacEncQCMainPrepareSCEVector(t *testing.T) {
 	var directElement ElementInfo
 	var directState ATSElement
@@ -95,13 +180,15 @@ func TestFDKaacEncQCMainQuantizeFrameSCEVector(t *testing.T) {
 	var directPsyElement PsyOutElement
 	var directQCElement QCOutElement
 	var directQCOut QCOut
+	var directElementBits ElementBits
 	var directScratch QCMainQuantizeScratch
-	fillQCMainQuantizeCase(&directCM, &directAdj, &directState, &directPsy, &directQC, &directPsyElement, &directQCElement, &directQCOut)
+	fillQCMainQuantizeCase(&directCM, &directAdj, &directState, &directPsy, &directQC, &directPsyElement, &directQCElement, &directElementBits, &directQCOut)
 
 	directPsyElements := [1]*PsyOutElement{&directPsyElement}
 	directQCElements := [1]*QCOutElement{&directQCElement}
+	directElementBitsSlice := [1]*ElementBits{&directElementBits}
 	directResult, directErr := runDirectQCMainQuantizeFrame(
-		&directCM, directPsyElements[:], &directQCOut, directQCElements[:], &directAdj, &directScratch, 2, 0, 0,
+		&directCM, directPsyElements[:], &directQCOut, directQCElements[:], &directAdj, directElementBitsSlice[:], &directScratch, 2, 0, 4, 0,
 	)
 	if directErr != AACEncOK {
 		t.Fatalf("direct QC quantize error = %#x, want OK", directErr)
@@ -115,13 +202,15 @@ func TestFDKaacEncQCMainQuantizeFrameSCEVector(t *testing.T) {
 	var wrappedPsyElement PsyOutElement
 	var wrappedQCElement QCOutElement
 	var wrappedQCOut QCOut
+	var wrappedElementBits ElementBits
 	var wrappedScratch QCMainQuantizeScratch
-	fillQCMainQuantizeCase(&wrappedCM, &wrappedAdj, &wrappedState, &wrappedPsy, &wrappedQC, &wrappedPsyElement, &wrappedQCElement, &wrappedQCOut)
+	fillQCMainQuantizeCase(&wrappedCM, &wrappedAdj, &wrappedState, &wrappedPsy, &wrappedQC, &wrappedPsyElement, &wrappedQCElement, &wrappedElementBits, &wrappedQCOut)
 
 	wrappedPsyElements := [1]*PsyOutElement{&wrappedPsyElement}
 	wrappedQCElements := [1]*QCOutElement{&wrappedQCElement}
+	wrappedElementBitsSlice := [1]*ElementBits{&wrappedElementBits}
 	wrappedResult, wrappedErr := FDKaacEncQCMainQuantizeFrame(
-		&wrappedCM, wrappedPsyElements[:], &wrappedQCOut, wrappedQCElements[:], &wrappedAdj, &wrappedScratch, 2, 0, 0,
+		&wrappedCM, wrappedPsyElements[:], &wrappedQCOut, wrappedQCElements[:], &wrappedAdj, wrappedElementBitsSlice[:], &wrappedScratch, 2, 0, 4, 0,
 	)
 	if wrappedErr != AACEncOK {
 		t.Fatalf("QC quantize error = %#x, want OK", wrappedErr)
@@ -149,6 +238,44 @@ func TestFDKaacEncQCMainQuantizeFrameSCEVector(t *testing.T) {
 		wrappedQC.SectionData.ScalefacBits != directQC.SectionData.ScalefacBits ||
 		wrappedQC.SectionData.NoOfSections != directQC.SectionData.NoOfSections {
 		t.Fatalf("section data differs from direct sequence")
+	}
+}
+
+func TestFDKaacEncQCMainQuantizeFrameResetsRetryScratch(t *testing.T) {
+	var cm ChannelMapping
+	var adj AdjThrState
+	var state ATSElement
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var psyElement PsyOutElement
+	var qcElement QCOutElement
+	var elementBits ElementBits
+	var qcOut QCOut
+	var scratch QCMainQuantizeScratch
+	fillQCMainQuantizeCase(&cm, &adj, &state, &psy, &qc, &psyElement, &qcElement, &elementBits, &qcOut)
+	for i := 0; i < maxChannelElements; i++ {
+		scratch.Iterations[i] = 99
+		scratch.ConstraintsFulfilled[i] = 0
+		for ch := 0; ch < 2; ch++ {
+			scratch.ChConstraintsFulfilled[i][ch] = 0
+			scratch.CalculateQuant[i][ch] = 0
+		}
+	}
+
+	psyElements := [1]*PsyOutElement{&psyElement}
+	qcElements := [1]*QCOutElement{&qcElement}
+	elementBitsSlice := [1]*ElementBits{&elementBits}
+	result, errCode := FDKaacEncQCMainQuantizeFrame(
+		&cm, psyElements[:], &qcOut, qcElements[:], &adj, elementBitsSlice[:], &scratch, 2, 0, 4, 0,
+	)
+	if errCode != AACEncOK {
+		t.Fatalf("QC quantize with stale scratch error = %#x, want OK", errCode)
+	}
+	if result.ReductionIterations != 0 || result.GainAdjustments != 0 || scratch.Iterations[0] != 0 {
+		t.Fatalf("stale scratch leaked into retry state result=%+v iterations=%d", result, scratch.Iterations[0])
+	}
+	if qcOut.UsedDynBits <= 0 || qcElement.DynBitsUsed != qcOut.UsedDynBits {
+		t.Fatalf("stale scratch dynamic bits = element %d frame %d", qcElement.DynBitsUsed, qcOut.UsedDynBits)
 	}
 }
 
@@ -211,28 +338,39 @@ func TestFDKaacEncQCMainQuantizeRejectsInvalid(t *testing.T) {
 			var qcOut QCOut
 			var adj AdjThrState
 			var scratch QCMainQuantizeScratch
-			FDKaacEncQCMainQuantizeFrame(nil, nil, &qcOut, nil, &adj, &scratch, 2, 0, 0)
+			FDKaacEncQCMainQuantizeFrame(nil, nil, &qcOut, nil, &adj, nil, &scratch, 2, 0, 4, 0)
 		}},
 		{"nil output", func() {
-			cm, adj, psyElements, qcElements, _ := buildQCMainQuantizeValidInput()
+			cm, adj, psyElements, qcElements, elementBits, _ := buildQCMainQuantizeValidInput()
 			var scratch QCMainQuantizeScratch
-			FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], nil, qcElements[:], &adj, &scratch, 2, 0, 0)
+			FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], nil, qcElements[:], &adj, elementBits[:], &scratch, 2, 0, 4, 0)
 		}},
 		{"nil scratch", func() {
-			cm, adj, psyElements, qcElements, qcOut := buildQCMainQuantizeValidInput()
-			FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], &qcOut, qcElements[:], &adj, nil, 2, 0, 0)
+			cm, adj, psyElements, qcElements, elementBits, qcOut := buildQCMainQuantizeValidInput()
+			FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], &qcOut, qcElements[:], &adj, elementBits[:], nil, 2, 0, 4, 0)
 		}},
 		{"nil threshold element", func() {
-			cm, adj, psyElements, qcElements, qcOut := buildQCMainQuantizeValidInput()
+			cm, adj, psyElements, qcElements, elementBits, qcOut := buildQCMainQuantizeValidInput()
 			var scratch QCMainQuantizeScratch
 			adj.AdjThrStateElem[0] = nil
-			FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], &qcOut, qcElements[:], &adj, &scratch, 2, 0, 0)
+			FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], &qcOut, qcElements[:], &adj, elementBits[:], &scratch, 2, 0, 4, 0)
+		}},
+		{"nil element bits", func() {
+			cm, adj, psyElements, qcElements, elementBits, qcOut := buildQCMainQuantizeValidInput()
+			var scratch QCMainQuantizeScratch
+			elementBits[0] = nil
+			FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], &qcOut, qcElements[:], &adj, elementBits[:], &scratch, 2, 0, 4, 0)
 		}},
 		{"negative static bits", func() {
-			cm, adj, psyElements, qcElements, qcOut := buildQCMainQuantizeValidInput()
+			cm, adj, psyElements, qcElements, elementBits, qcOut := buildQCMainQuantizeValidInput()
 			var scratch QCMainQuantizeScratch
 			qcElements[0].StaticBitsUsed = -1
-			FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], &qcOut, qcElements[:], &adj, &scratch, 2, 0, 0)
+			FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], &qcOut, qcElements[:], &adj, elementBits[:], &scratch, 2, 0, 4, 0)
+		}},
+		{"negative max iterations", func() {
+			cm, adj, psyElements, qcElements, elementBits, qcOut := buildQCMainQuantizeValidInput()
+			var scratch QCMainQuantizeScratch
+			FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], &qcOut, qcElements[:], &adj, elementBits[:], &scratch, 2, 0, -1, 0)
 		}},
 		{"short max-value offsets", func() {
 			var maxValue [4]uint32
@@ -241,11 +379,77 @@ func TestFDKaacEncQCMainQuantizeRejectsInvalid(t *testing.T) {
 			FDKaacEncCalcMaxValueInSfb(4, 2, 4, offsets[:], quant[:], maxValue[:])
 		}},
 		{"nil dynamic-bit sum", func() {
-			cm, _, _, qcElements, _ := buildQCMainQuantizeValidInput()
+			cm, _, _, qcElements, _, _ := buildQCMainQuantizeValidInput()
 			FDKaacEncUpdateUsedDynBits(nil, qcElements[:], &cm)
 		}},
 		{"nil consumed frame", func() {
 			FDKaacEncGetTotalConsumedDynBits([]*QCOut{nil}, 1)
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		})
+	}
+}
+
+func TestFDKaacEncReduceBitConsumptionRejectsInvalid(t *testing.T) {
+	var qc QCOutChannel
+	element := QCOutElement{QCOutChannel: [2]*QCOutChannel{&qc}}
+	elBits := ElementBits{MaxBitsEl: 128}
+	for _, tt := range []struct {
+		name string
+		fn   func()
+	}{
+		{"nil iterations", func() {
+			chConstraints := [...]int{1}
+			calculateQuant := [...]int{0}
+			FDKaacEncReduceBitConsumption(nil, 4, 1, chConstraints[:], calculateQuant[:], 1, &element, &elBits)
+		}},
+		{"negative iterations", func() {
+			iterations := -1
+			chConstraints := [...]int{1}
+			calculateQuant := [...]int{0}
+			FDKaacEncReduceBitConsumption(&iterations, 4, 1, chConstraints[:], calculateQuant[:], 1, &element, &elBits)
+		}},
+		{"bad gain adjustment", func() {
+			iterations := 0
+			chConstraints := [...]int{1}
+			calculateQuant := [...]int{0}
+			FDKaacEncReduceBitConsumption(&iterations, 4, 0, chConstraints[:], calculateQuant[:], 1, &element, &elBits)
+		}},
+		{"short constraints", func() {
+			iterations := 0
+			calculateQuant := [...]int{0}
+			FDKaacEncReduceBitConsumption(&iterations, 4, 1, nil, calculateQuant[:], 1, &element, &elBits)
+		}},
+		{"short calculate flags", func() {
+			iterations := 0
+			chConstraints := [...]int{1}
+			FDKaacEncReduceBitConsumption(&iterations, 4, 1, chConstraints[:], nil, 1, &element, &elBits)
+		}},
+		{"nil element", func() {
+			iterations := 0
+			chConstraints := [...]int{1}
+			calculateQuant := [...]int{0}
+			FDKaacEncReduceBitConsumption(&iterations, 4, 1, chConstraints[:], calculateQuant[:], 1, nil, &elBits)
+		}},
+		{"nil element bits", func() {
+			iterations := 0
+			chConstraints := [...]int{1}
+			calculateQuant := [...]int{0}
+			FDKaacEncReduceBitConsumption(&iterations, 4, 1, chConstraints[:], calculateQuant[:], 1, &element, nil)
+		}},
+		{"nil output channel", func() {
+			iterations := 0
+			chConstraints := [...]int{1}
+			calculateQuant := [...]int{0}
+			bad := QCOutElement{}
+			FDKaacEncReduceBitConsumption(&iterations, 4, 1, chConstraints[:], calculateQuant[:], 1, &bad, &elBits)
 		}},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -268,12 +472,14 @@ func TestFDKaacEncQCMainQuantizeAllocs(t *testing.T) {
 		var qc QCOutChannel
 		var psyElement PsyOutElement
 		var qcElement QCOutElement
+		var elementBits ElementBits
 		var qcOut QCOut
 		var scratch QCMainQuantizeScratch
-		fillQCMainQuantizeCase(&cm, &adj, &state, &psy, &qc, &psyElement, &qcElement, &qcOut)
+		fillQCMainQuantizeCase(&cm, &adj, &state, &psy, &qc, &psyElement, &qcElement, &elementBits, &qcOut)
 		psyElements := [1]*PsyOutElement{&psyElement}
 		qcElements := [1]*QCOutElement{&qcElement}
-		result, errCode := FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], &qcOut, qcElements[:], &adj, &scratch, 2, 0, 0)
+		elementBitsSlice := [1]*ElementBits{&elementBits}
+		result, errCode := FDKaacEncQCMainQuantizeFrame(&cm, psyElements[:], &qcOut, qcElements[:], &adj, elementBitsSlice[:], &scratch, 2, 0, 4, 0)
 		if errCode != AACEncOK {
 			t.Fatalf("QC quantize error = %#x", errCode)
 		}
@@ -323,7 +529,7 @@ func buildQCMainPrepareValidInput() (ElementInfo, ATSElement, PsyOutElement, QCO
 	return element, state, psyElement, qcElement
 }
 
-func buildQCMainQuantizeValidInput() (ChannelMapping, AdjThrState, [1]*PsyOutElement, [1]*QCOutElement, QCOut) {
+func buildQCMainQuantizeValidInput() (ChannelMapping, AdjThrState, [1]*PsyOutElement, [1]*QCOutElement, [1]*ElementBits, QCOut) {
 	var cm ChannelMapping
 	var adj AdjThrState
 	var state ATSElement
@@ -331,9 +537,10 @@ func buildQCMainQuantizeValidInput() (ChannelMapping, AdjThrState, [1]*PsyOutEle
 	var qc QCOutChannel
 	var psyElement PsyOutElement
 	var qcElement QCOutElement
+	var elementBits ElementBits
 	var qcOut QCOut
-	fillQCMainQuantizeCase(&cm, &adj, &state, &psy, &qc, &psyElement, &qcElement, &qcOut)
-	return cm, adj, [1]*PsyOutElement{&psyElement}, [1]*QCOutElement{&qcElement}, qcOut
+	fillQCMainQuantizeCase(&cm, &adj, &state, &psy, &qc, &psyElement, &qcElement, &elementBits, &qcOut)
+	return cm, adj, [1]*PsyOutElement{&psyElement}, [1]*QCOutElement{&qcElement}, [1]*ElementBits{&elementBits}, qcOut
 }
 
 func runDirectQCMainQuantizeFrame(
@@ -342,11 +549,15 @@ func runDirectQCMainQuantizeFrame(
 	qcOut *QCOut,
 	qcElement []*QCOutElement,
 	adjThrState *AdjThrState,
+	elementBits []*ElementBits,
 	scratch *QCMainQuantizeScratch,
 	invQuant int,
 	dZoneQuantEnable int,
+	maxIterations int,
 	syntaxFlags uint32,
 ) (QCMainQuantizeResult, int) {
+	_ = elementBits
+	_ = maxIterations
 	result := QCMainQuantizeResult{ConstraintsFulfilled: 1, DecreaseBitConsumption: -1}
 	for i := 0; i < cm.NElements; i++ {
 		elInfo := cm.ElInfo[i]
@@ -405,6 +616,7 @@ func fillQCMainQuantizeCase(
 	qc *QCOutChannel,
 	psyElement *PsyOutElement,
 	qcElement *QCOutElement,
+	elementBits *ElementBits,
 	qcOut *QCOut,
 ) {
 	var quantTmp [11]int16
@@ -424,6 +636,7 @@ func fillQCMainQuantizeCase(
 	cm.ElInfo[0] = ElementInfo{ElType: idSCE, InstanceTag: 2, NChannelsInEl: 1}
 	*psyElement = PsyOutElement{PsyOutChannel: [2]*PsyOutChannel{psy}}
 	*qcElement = QCOutElement{StaticBitsUsed: 29, QCOutChannel: [2]*QCOutChannel{qc}}
+	*elementBits = ElementBits{MaxBitsEl: minBufSizePerEffChan, MaxBitResBitsEl: minBufSizePerEffChan}
 	*qcOut = QCOut{UsedDynBits: -1}
 }
 

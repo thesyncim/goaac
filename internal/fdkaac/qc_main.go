@@ -1,8 +1,20 @@
 package fdkaac
 
 type QCMainQuantizeScratch struct {
-	BitCounter   BitCounterState
-	QuantSpecTmp [maxSpectralLines]int16
+	BitCounter             BitCounterState
+	QuantSpecTmp           [maxSpectralLines]int16
+	Iterations             [maxChannelElements]int
+	ConstraintsFulfilled   [maxChannelElements]int
+	ChConstraintsFulfilled [maxChannelElements][2]int
+	CalculateQuant         [maxChannelElements][2]int
+}
+
+type ElementBits struct {
+	ChBitrateEl     int
+	MaxBitsEl       int
+	BitResLevelEl   int
+	MaxBitResBitsEl int
+	RelativeBitsEl  FixpDBL
 }
 
 type QCMainQuantizeResult struct {
@@ -12,6 +24,18 @@ type QCMainQuantizeResult struct {
 	MaxValueAll            int
 	DecreaseBitConsumption int
 	ConstraintsFulfilled   int
+	ReductionIterations    int
+	GainAdjustments        int
+	CrashRecoveryNeeded    int
+	BitsToSave             int
+}
+
+type QCMainReduceBitConsumptionResult struct {
+	IterationsReached   int
+	AdjustedChannels    int
+	MaxIterationsHit    int
+	CrashRecoveryNeeded int
+	BitsToSave          int
 }
 
 func FDKaacEncQCMainPrepare(
@@ -43,12 +67,14 @@ func FDKaacEncQCMainQuantizeFrame(
 	qcOut *QCOut,
 	qcElement []*QCOutElement,
 	adjThrState *AdjThrState,
+	elementBits []*ElementBits,
 	scratch *QCMainQuantizeScratch,
 	invQuant int,
 	dZoneQuantEnable int,
+	maxIterations int,
 	syntaxFlags uint32,
 ) (QCMainQuantizeResult, int) {
-	checkQCMainQuantizeFrameInputs(cm, psyOutElement, qcOut, qcElement, adjThrState, scratch)
+	checkQCMainQuantizeFrameInputs(cm, psyOutElement, qcOut, qcElement, adjThrState, elementBits, scratch, maxIterations)
 
 	result := QCMainQuantizeResult{ConstraintsFulfilled: 1, DecreaseBitConsumption: -1}
 	for i := 0; i < cm.NElements; i++ {
@@ -63,79 +89,183 @@ func FDKaacEncQCMainQuantizeFrame(
 
 		FDKaacEncEstimateScaleFactors(psyChannels, qcChannels, invQuant, dZoneQuantEnable, nChannels, scratch.QuantSpecTmp[:])
 
+		scratch.ConstraintsFulfilled[i] = 1
+		scratch.Iterations[i] = 0
 		for ch := 0; ch < nChannels; ch++ {
-			qcOutCh := qcChannels[ch]
-			psyOutCh := psyChannels[ch]
+			scratch.ChConstraintsFulfilled[i][ch] = 1
+			scratch.CalculateQuant[i][ch] = 1
+		}
 
-			FDKaacEncQuantizeSpectrum(
-				psyOutCh.SfbCnt,
-				psyOutCh.MaxSfbPerGroup,
-				psyOutCh.SfbPerGroup,
-				psyOutCh.SfbOffsets[:],
-				qcOutCh.MdctSpectrum[:],
-				qcOutCh.GlobalGain,
-				qcOutCh.Scf[:],
-				qcOutCh.QuantSpec[:],
-				dZoneQuantEnable,
-			)
-
-			maxValue := FDKaacEncCalcMaxValueInSfb(
-				psyOutCh.SfbCnt,
-				psyOutCh.MaxSfbPerGroup,
-				psyOutCh.SfbPerGroup,
-				psyOutCh.SfbOffsets[:],
-				qcOutCh.QuantSpec[:],
-				qcOutCh.MaxValueInSfb[:],
-			)
-			if maxValue > result.MaxValueAll {
-				result.MaxValueAll = maxValue
+		for {
+			if scratch.ConstraintsFulfilled[i] == 0 {
+				gainAdjustment := 1
+				if result.DecreaseBitConsumption == 0 {
+					gainAdjustment = -1
+				}
+				reduceResult, errCode := FDKaacEncReduceBitConsumption(
+					&scratch.Iterations[i],
+					maxIterations,
+					gainAdjustment,
+					scratch.ChConstraintsFulfilled[i][:nChannels],
+					scratch.CalculateQuant[i][:nChannels],
+					nChannels,
+					qcElement[i],
+					elementBits[i],
+				)
+				result.ReductionIterations++
+				result.GainAdjustments += reduceResult.AdjustedChannels
+				if reduceResult.CrashRecoveryNeeded != 0 {
+					result.CrashRecoveryNeeded = 1
+					result.BitsToSave = reduceResult.BitsToSave
+				}
+				if errCode != AACEncOK {
+					result.ConstraintsFulfilled = 0
+					return result, errCode
+				}
 			}
-			if maxValue > maxQuant {
+
+			scratch.ConstraintsFulfilled[i] = 1
+			for ch := 0; ch < nChannels; ch++ {
+				scratch.ChConstraintsFulfilled[i][ch] = 1
+
+				if scratch.CalculateQuant[i][ch] == 0 {
+					continue
+				}
+				qcOutCh := qcChannels[ch]
+				psyOutCh := psyChannels[ch]
+				scratch.CalculateQuant[i][ch] = 0
+
+				FDKaacEncQuantizeSpectrum(
+					psyOutCh.SfbCnt,
+					psyOutCh.MaxSfbPerGroup,
+					psyOutCh.SfbPerGroup,
+					psyOutCh.SfbOffsets[:],
+					qcOutCh.MdctSpectrum[:],
+					qcOutCh.GlobalGain,
+					qcOutCh.Scf[:],
+					qcOutCh.QuantSpec[:],
+					dZoneQuantEnable,
+				)
+
+				maxValue := FDKaacEncCalcMaxValueInSfb(
+					psyOutCh.SfbCnt,
+					psyOutCh.MaxSfbPerGroup,
+					psyOutCh.SfbPerGroup,
+					psyOutCh.SfbOffsets[:],
+					qcOutCh.QuantSpec[:],
+					qcOutCh.MaxValueInSfb[:],
+				)
+				if maxValue > result.MaxValueAll {
+					result.MaxValueAll = maxValue
+				}
+				if maxValue > maxQuant {
+					scratch.ChConstraintsFulfilled[i][ch] = 0
+					scratch.ConstraintsFulfilled[i] = 0
+					result.ConstraintsFulfilled = 0
+					result.DecreaseBitConsumption = 1
+				}
+			}
+			if scratch.ConstraintsFulfilled[i] == 0 {
+				continue
+			}
+
+			qcElement[i].DynBitsUsed = 0
+			for ch := 0; ch < nChannels; ch++ {
+				qcOutCh := qcChannels[ch]
+				psyOutCh := psyChannels[ch]
+				chDynBits := FDKaacEncDynBitCount(
+					&scratch.BitCounter,
+					qcOutCh.QuantSpec[:],
+					qcOutCh.MaxValueInSfb[:],
+					qcOutCh.Scf[:],
+					psyOutCh.LastWindowSequence,
+					psyOutCh.SfbCnt,
+					psyOutCh.MaxSfbPerGroup,
+					psyOutCh.SfbPerGroup,
+					psyOutCh.SfbOffsets[:],
+					&qcOutCh.SectionData,
+					psyOutCh.NoiseNrg[:],
+					psyOutCh.IsBook[:],
+					psyOutCh.IsScale[:],
+					syntaxFlags,
+				)
+				qcElement[i].DynBitsUsed += chDynBits
+			}
+
+			if adjThrState.AdjThrStateElem[i].DynBitsLast == -1 {
+				adjThrState.AdjThrStateElem[i].DynBitsLast = qcElement[i].DynBitsUsed
+			}
+
+			maxElementDynBits := nChannels*minBufSizePerEffChan - qcElement[i].StaticBitsUsed - qcElement[i].ExtBitsUsed
+			if qcElement[i].DynBitsUsed > maxElementDynBits {
+				scratch.ConstraintsFulfilled[i] = 0
 				result.ConstraintsFulfilled = 0
 				result.DecreaseBitConsumption = 1
-				return result, AACEncQuantError
+				continue
 			}
+			break
 		}
 
-		qcElement[i].DynBitsUsed = 0
-		for ch := 0; ch < nChannels; ch++ {
-			qcOutCh := qcChannels[ch]
-			psyOutCh := psyChannels[ch]
-			chDynBits := FDKaacEncDynBitCount(
-				&scratch.BitCounter,
-				qcOutCh.QuantSpec[:],
-				qcOutCh.MaxValueInSfb[:],
-				qcOutCh.Scf[:],
-				psyOutCh.LastWindowSequence,
-				psyOutCh.SfbCnt,
-				psyOutCh.MaxSfbPerGroup,
-				psyOutCh.SfbPerGroup,
-				psyOutCh.SfbOffsets[:],
-				&qcOutCh.SectionData,
-				psyOutCh.NoiseNrg[:],
-				psyOutCh.IsBook[:],
-				psyOutCh.IsScale[:],
-				syntaxFlags,
-			)
-			qcElement[i].DynBitsUsed += chDynBits
-		}
-
-		if adjThrState.AdjThrStateElem[i].DynBitsLast == -1 {
-			adjThrState.AdjThrStateElem[i].DynBitsLast = qcElement[i].DynBitsUsed
-		}
-
+		result.ConstraintsFulfilled = 1
 		result.DynBitsConsumed += qcElement[i].DynBitsUsed
 		result.QuantizedElements++
-		maxElementDynBits := nChannels*minBufSizePerEffChan - qcElement[i].StaticBitsUsed - qcElement[i].ExtBitsUsed
-		if qcElement[i].DynBitsUsed > maxElementDynBits {
-			result.ConstraintsFulfilled = 0
-			result.DecreaseBitConsumption = 1
-			return result, AACEncQuantError
-		}
 	}
 
 	FDKaacEncUpdateUsedDynBits(&qcOut.UsedDynBits, qcElement, cm)
 	result.SumDynBitsConsumed = FDKaacEncGetTotalConsumedDynBits([]*QCOut{qcOut}, 1)
+	return result, AACEncOK
+}
+
+func FDKaacEncReduceBitConsumption(
+	iterations *int,
+	maxIterations int,
+	gainAdjustment int,
+	chConstraintsFulfilled []int,
+	calculateQuant []int,
+	nChannels int,
+	qcOutElement *QCOutElement,
+	elBits *ElementBits,
+) (QCMainReduceBitConsumptionResult, int) {
+	checkReduceBitConsumptionInputs(
+		iterations, maxIterations, gainAdjustment, chConstraintsFulfilled,
+		calculateQuant, nChannels, qcOutElement, elBits,
+	)
+
+	result := QCMainReduceBitConsumptionResult{IterationsReached: *iterations}
+	if *iterations < maxIterations {
+		for ch := 0; ch < nChannels; ch++ {
+			if chConstraintsFulfilled[ch] == 0 {
+				qcOutElement.QCOutChannel[ch].GlobalGain += gainAdjustment
+				calculateQuant[ch] = 1
+				result.AdjustedChannels++
+			}
+		}
+	} else if *iterations == maxIterations {
+		result.MaxIterationsHit = 1
+		if qcOutElement.DynBitsUsed == 0 {
+			return result, AACEncQuantError
+		}
+
+		bitsToSave := maxInt(
+			(qcOutElement.DynBitsUsed+8)-(elBits.BitResLevelEl+qcOutElement.GrantedDynBits),
+			(qcOutElement.DynBitsUsed+qcOutElement.StaticBitsUsed+8)-elBits.MaxBitsEl,
+		)
+		if bitsToSave > 0 {
+			result.CrashRecoveryNeeded = 1
+			result.BitsToSave = bitsToSave
+			return result, AACEncQuantError
+		}
+		for ch := 0; ch < nChannels; ch++ {
+			qcOutElement.QCOutChannel[ch].GlobalGain++
+			calculateQuant[ch] = 1
+			result.AdjustedChannels++
+		}
+	} else {
+		return result, AACEncQuantError
+	}
+
+	(*iterations)++
+	result.IterationsReached = *iterations
 	return result, AACEncOK
 }
 
@@ -234,7 +364,9 @@ func checkQCMainQuantizeFrameInputs(
 	qcOut *QCOut,
 	qcElement []*QCOutElement,
 	adjThrState *AdjThrState,
+	elementBits []*ElementBits,
 	scratch *QCMainQuantizeScratch,
+	maxIterations int,
 ) {
 	if cm == nil {
 		panic("fdkaac: nil QC quantize channel mapping")
@@ -248,10 +380,13 @@ func checkQCMainQuantizeFrameInputs(
 	if scratch == nil {
 		panic("fdkaac: nil QC quantize scratch")
 	}
+	if maxIterations < 0 {
+		panic("fdkaac: invalid QC quantize iteration limit")
+	}
 	if cm.NElements <= 0 || cm.NElements > maxChannelElements {
 		panic("fdkaac: invalid QC quantize element count")
 	}
-	if len(psyOutElement) < cm.NElements || len(qcElement) < cm.NElements {
+	if len(psyOutElement) < cm.NElements || len(qcElement) < cm.NElements || len(elementBits) < cm.NElements {
 		panic("fdkaac: short QC quantize elements")
 	}
 	for i := 0; i < cm.NElements; i++ {
@@ -274,6 +409,9 @@ func checkQCMainQuantizeFrameInputs(
 		if adjThrState.AdjThrStateElem[i] == nil {
 			panic("fdkaac: nil QC quantize threshold element")
 		}
+		if elementBits[i] == nil {
+			panic("fdkaac: nil QC quantize element bits")
+		}
 		for ch := 0; ch < elInfo.NChannelsInEl; ch++ {
 			if psyOutElement[i].PsyOutChannel[ch] == nil {
 				panic("fdkaac: nil QC quantize psy channel")
@@ -285,6 +423,53 @@ func checkQCMainQuantizeFrameInputs(
 		if qcElement[i].StaticBitsUsed < 0 || qcElement[i].ExtBitsUsed < 0 {
 			panic("fdkaac: invalid QC quantize static bits")
 		}
+	}
+}
+
+func checkReduceBitConsumptionInputs(
+	iterations *int,
+	maxIterations int,
+	gainAdjustment int,
+	chConstraintsFulfilled []int,
+	calculateQuant []int,
+	nChannels int,
+	qcOutElement *QCOutElement,
+	elBits *ElementBits,
+) {
+	if iterations == nil {
+		panic("fdkaac: nil reduce-bit iteration counter")
+	}
+	if *iterations < 0 || maxIterations < 0 {
+		panic("fdkaac: invalid reduce-bit iteration count")
+	}
+	if gainAdjustment != -1 && gainAdjustment != 1 {
+		panic("fdkaac: invalid reduce-bit gain adjustment")
+	}
+	if nChannels <= 0 || nChannels > 2 {
+		panic("fdkaac: invalid reduce-bit channel count")
+	}
+	if len(chConstraintsFulfilled) < nChannels || len(calculateQuant) < nChannels {
+		panic("fdkaac: short reduce-bit channel controls")
+	}
+	if qcOutElement == nil {
+		panic("fdkaac: nil reduce-bit output element")
+	}
+	if elBits == nil {
+		panic("fdkaac: nil reduce-bit element bits")
+	}
+	for ch := 0; ch < nChannels; ch++ {
+		if chConstraintsFulfilled[ch] != 0 && chConstraintsFulfilled[ch] != 1 {
+			panic("fdkaac: invalid reduce-bit channel constraint")
+		}
+		if calculateQuant[ch] != 0 && calculateQuant[ch] != 1 {
+			panic("fdkaac: invalid reduce-bit quantize flag")
+		}
+		if qcOutElement.QCOutChannel[ch] == nil {
+			panic("fdkaac: nil reduce-bit output channel")
+		}
+	}
+	if qcOutElement.DynBitsUsed < 0 || qcOutElement.StaticBitsUsed < 0 {
+		panic("fdkaac: invalid reduce-bit bit counts")
 	}
 }
 
