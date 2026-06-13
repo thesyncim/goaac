@@ -100,6 +100,15 @@ energy/log-data scaling, short-window band energies, and mid/side band energies
 with log-data output enabled. Tests also verify invalid offset/scale/output
 transitions and zero steady-state allocation.
 
+The FDK AAC-LC threshold spreading subset is covered with a source-derived
+bidirectional spreading vector over scalefactor-band energy/threshold data,
+invalid input transitions, and zero steady-state allocation.
+
+The FDK AAC-LC pre-echo control subset is covered with source-derived vectors
+for initialization, disabled-control copy-through, current-scale-larger
+limiting, and previous-scale-larger limiting, plus invalid state/shift
+transitions and zero steady-state allocation.
+
 ## Regenerate
 
 ```sh
