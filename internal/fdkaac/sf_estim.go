@@ -26,9 +26,14 @@ const scfThresholdConstLdData = FixpDBL(0x0582809d)
 const scfConvConst = FixpDBL(0x268826a1)
 const scf08585 = FixpDBL(0x6de353f8)
 const scfC1Const = FixpDBL(-581606939)
+const maxSpectralLines = 1024
 
 type QCOutChannel struct {
-	MdctSpectrum        [1024]FixpDBL
+	MdctSpectrum        [maxSpectralLines]FixpDBL
+	QuantSpec           [maxSpectralLines]int16
+	MaxValueInSfb       [maxGroupedSFB]uint32
+	Scf                 [maxGroupedSFB]int
+	GlobalGain          int
 	SfbFormFactorLdData [maxGroupedSFB]FixpDBL
 	SfbEnergyLdData     [maxGroupedSFB]FixpDBL
 	SfbThresholdLdData  [maxGroupedSFB]FixpDBL
@@ -491,6 +496,37 @@ func FDKaacEncEstimateScaleFactorsChannel(
 				qcOutChannel.MdctSpectrum[j] = 0
 			}
 		}
+	}
+}
+
+func FDKaacEncEstimateScaleFactors(
+	psyOutChannel []*PsyOutChannel,
+	qcOutChannel []*QCOutChannel,
+	invQuant int,
+	dZoneQuantEnable int,
+	nChannels int,
+	quantSpecTmp []int16,
+) {
+	checkEstimateScaleFactorsInputs(psyOutChannel, qcOutChannel, invQuant, nChannels, quantSpecTmp)
+
+	for ch := 0; ch < nChannels; ch++ {
+		if qcOutChannel[ch] == nil {
+			panic("fdkaac: nil estimate-scalefactor qc output")
+		}
+		if psyOutChannel[ch] == nil {
+			panic("fdkaac: nil estimate-scalefactor psy output")
+		}
+		FDKaacEncEstimateScaleFactorsChannel(
+			qcOutChannel[ch],
+			psyOutChannel[ch],
+			qcOutChannel[ch].Scf[:],
+			&qcOutChannel[ch].GlobalGain,
+			qcOutChannel[ch].SfbFormFactorLdData[:],
+			invQuant,
+			qcOutChannel[ch].QuantSpec[:],
+			dZoneQuantEnable,
+			quantSpecTmp,
+		)
 	}
 }
 
@@ -1193,6 +1229,21 @@ func checkEstimateScaleFactorsChannelInputs(
 		panic("fdkaac: short estimate-scalefactor quant data")
 	}
 	return prev
+}
+
+func checkEstimateScaleFactorsInputs(
+	psyOutChannel []*PsyOutChannel,
+	qcOutChannel []*QCOutChannel,
+	invQuant int,
+	nChannels int,
+	quantSpecTmp []int16,
+) {
+	if nChannels < 0 || len(qcOutChannel) < nChannels || len(psyOutChannel) < nChannels {
+		panic("fdkaac: invalid estimate-scalefactor channel count")
+	}
+	if invQuant > 0 && len(quantSpecTmp) < maxSpectralLines {
+		panic("fdkaac: short estimate-scalefactor scratch")
+	}
 }
 
 func checkAssimilateSingleScfInputs(

@@ -811,6 +811,48 @@ func TestFDKaacEncEstimateScaleFactorsChannelGroupedVector(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncEstimateScaleFactorsVectors(t *testing.T) {
+	var psy0 PsyOutChannel
+	var psy1 PsyOutChannel
+	var qc0 QCOutChannel
+	var qc1 QCOutChannel
+	var quantTmp [11]int16
+	var minScf [5]int
+	var constPart [5]FixpDBL
+	activeThreshold := [5]FixpDBL{-400000000, -400000000, -400000000, -400000000, -400000000}
+
+	setupAssimilateSingleVector(&psy0, &qc0, qc0.QuantSpec[:11], quantTmp[:], minScf[:], constPart[:], qc0.SfbFormFactorLdData[:5])
+	copy(qc0.SfbThresholdLdData[:], activeThreshold[:])
+	setupAssimilateSingleVector(&psy1, &qc1, qc1.QuantSpec[:11], quantTmp[:], minScf[:], constPart[:], qc1.SfbFormFactorLdData[:5])
+
+	var scratch [maxSpectralLines]int16
+	fillImproveScfQuant(scratch[:], -77)
+	qcChannels := []*QCOutChannel{&qc0, &qc1}
+	psyChannels := []*PsyOutChannel{&psy0, &psy1}
+
+	FDKaacEncEstimateScaleFactors(psyChannels, qcChannels, 2, 0, 2, scratch[:])
+
+	wantScf0 := [5]int{0, 0, 3, 5, 5}
+	wantQuant0 := [11]int16{0, 0, 0, 0, 1, -1, 2, -3, 4, 0, -1}
+	wantScf1 := [5]int{0, 0, 0, 0, 0}
+	var wantMdct1 [11]FixpDBL
+	var wantQuant1 [11]int16
+	wantScratch := [11]int16{0, 0, 0, 0, 1, -1, 2, -3, 3, 0, -1}
+
+	if qc0.GlobalGain != -14 {
+		t.Fatalf("ch0 global gain = %d, want -14", qc0.GlobalGain)
+	}
+	if qc1.GlobalGain != 0 {
+		t.Fatalf("ch1 global gain = %d, want 0", qc1.GlobalGain)
+	}
+	assertIntSlice(t, "estimate ch0 owned scf", qc0.Scf[:5], wantScf0[:], 0x66c92d9b71ec9936)
+	assertInt16Slice(t, "estimate ch0 owned quant", qc0.QuantSpec[:11], wantQuant0[:], 0xc7edf3bbcd3d6894)
+	assertIntSlice(t, "estimate ch1 owned scf", qc1.Scf[:5], wantScf1[:], 0xee85fafd354b0935)
+	assertFixpDBLSlice(t, "estimate ch1 zero mdct", qc1.MdctSpectrum[:11], wantMdct1[:], 0x6b54ea71af95ef15)
+	assertInt16Slice(t, "estimate ch1 owned quant", qc1.QuantSpec[:11], wantQuant1[:], 0x6b54ea71af95ef15)
+	assertInt16Slice(t, "estimate shared scratch", scratch[:11], wantScratch[:], 0xbbdd5ac43875336b)
+}
+
 func TestFDKaacEncCalcFormFactorRejectsInvalid(t *testing.T) {
 	var qc QCOutChannel
 	var psy PsyOutChannel
@@ -1160,6 +1202,51 @@ func TestFDKaacEncEstimateScaleFactorsChannelRejectsInvalid(t *testing.T) {
 	}
 }
 
+func TestFDKaacEncEstimateScaleFactorsRejectsInvalid(t *testing.T) {
+	var psy PsyOutChannel
+	var qc QCOutChannel
+	var quantTmp [11]int16
+	var minScf [5]int
+	var constPart [5]FixpDBL
+	setupAssimilateSingleVector(&psy, &qc, qc.QuantSpec[:11], quantTmp[:], minScf[:], constPart[:], qc.SfbFormFactorLdData[:5])
+	var scratch [maxSpectralLines]int16
+
+	tests := []struct {
+		name string
+		fn   func()
+	}{
+		{name: "negative channel count", fn: func() {
+			FDKaacEncEstimateScaleFactors([]*PsyOutChannel{&psy}, []*QCOutChannel{&qc}, 0, 0, -1, nil)
+		}},
+		{name: "short psy channels", fn: func() {
+			FDKaacEncEstimateScaleFactors([]*PsyOutChannel{}, []*QCOutChannel{&qc}, 0, 0, 1, nil)
+		}},
+		{name: "short qc channels", fn: func() {
+			FDKaacEncEstimateScaleFactors([]*PsyOutChannel{&psy}, []*QCOutChannel{}, 0, 0, 1, nil)
+		}},
+		{name: "nil psy channel", fn: func() {
+			FDKaacEncEstimateScaleFactors([]*PsyOutChannel{nil}, []*QCOutChannel{&qc}, 0, 0, 1, nil)
+		}},
+		{name: "nil qc channel", fn: func() {
+			FDKaacEncEstimateScaleFactors([]*PsyOutChannel{&psy}, []*QCOutChannel{nil}, 0, 0, 1, nil)
+		}},
+		{name: "short scratch", fn: func() {
+			FDKaacEncEstimateScaleFactors([]*PsyOutChannel{&psy}, []*QCOutChannel{&qc}, 1, 0, 1, scratch[:maxSpectralLines-1])
+		}},
+	}
+
+	for _, tt := range tests {
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Fatalf("%s did not panic", tt.name)
+				}
+			}()
+			tt.fn()
+		}()
+	}
+}
+
 func TestFDKaacEncAssimilateSingleScfRejectsInvalid(t *testing.T) {
 	var psy PsyOutChannel
 	var qc QCOutChannel
@@ -1464,6 +1551,33 @@ func TestFDKaacEncEstimateScaleFactorsChannelAllocs(t *testing.T) {
 	})
 	if allocs != 0 {
 		t.Fatalf("estimate-scalefactor allocations = %v, want 0", allocs)
+	}
+}
+
+func TestFDKaacEncEstimateScaleFactorsAllocs(t *testing.T) {
+	var psy0 PsyOutChannel
+	var psy1 PsyOutChannel
+	var qc0 QCOutChannel
+	var qc1 QCOutChannel
+	var quantTmp [11]int16
+	var scratch [maxSpectralLines]int16
+	var minScf [5]int
+	var constPart [5]FixpDBL
+	activeThreshold := [5]FixpDBL{-400000000, -400000000, -400000000, -400000000, -400000000}
+	qcChannels := []*QCOutChannel{&qc0, &qc1}
+	psyChannels := []*PsyOutChannel{&psy0, &psy1}
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		setupAssimilateSingleVector(&psy0, &qc0, qc0.QuantSpec[:11], quantTmp[:], minScf[:], constPart[:], qc0.SfbFormFactorLdData[:5])
+		copy(qc0.SfbThresholdLdData[:], activeThreshold[:])
+		setupAssimilateSingleVector(&psy1, &qc1, qc1.QuantSpec[:11], quantTmp[:], minScf[:], constPart[:], qc1.SfbFormFactorLdData[:5])
+		fillImproveScfQuant(scratch[:], -77)
+		FDKaacEncEstimateScaleFactors(psyChannels, qcChannels, 2, 0, 2, scratch[:])
+		scfPeSink = FixpDBL(qc0.GlobalGain+qc1.GlobalGain) + qc0.MdctSpectrum[0] + FixpDBL(qc0.QuantSpec[8])
+		scfPeHashSink = hashBandEnergyInts(qc0.Scf[:5])
+	})
+	if allocs != 0 {
+		t.Fatalf("estimate-scalefactors allocations = %v, want 0", allocs)
 	}
 }
 

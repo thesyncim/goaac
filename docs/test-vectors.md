@@ -197,6 +197,13 @@ refinement, single/multi-SCF orchestration, dead-zone quantization, all-zero
 spectrum clearing, grouped inactive-band transitions, malformed controls, and
 zero steady-state allocation.
 
+The FDK AAC-LC multi-channel scale-factor wrapper is covered with
+source-derived vectors for `FDKaacEnc_EstimateScaleFactors` and the owned
+`QC_OUT_CHANNEL` scale-factor fields. Tests verify channel-owned `quantSpec`,
+`scf`, and `globalGain` mutation, active/all-zero channel iteration, shared
+caller-owned scratch reuse, malformed controls, and zero steady-state
+allocation.
+
 The FDK AAC-LC line-PE subset is covered with source-derived vectors for
 `CalcLdInt`, `fMultI`, `FDKaacEnc_prepareSfbPe`, and `FDKaacEnc_calcSfbPe`.
 Tests verify active-line preparation, high/low PE branches, inactive and
