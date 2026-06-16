@@ -85,6 +85,8 @@ var mpeg4AudioChannels = [...]int{
 	8,
 }
 
+const maxExplicitSampleRate = (1 << 24) - 1
+
 // Config describes an MPEG-4 AudioSpecificConfig and decoder output shape.
 //
 // For raw AAC-LC decoding, pass either ExtraData containing an
@@ -228,12 +230,18 @@ func normalizeRawConfig(c Config) (Config, error) {
 	if c.SampleRateIndex == 0 {
 		if idx, ok := SampleRateIndex(c.SampleRate); ok {
 			c.SampleRateIndex = idx
+		} else {
+			c.SampleRateIndex = 15
 		}
 	}
 	if c.SampleRateIndex < 0 || c.SampleRateIndex > 15 {
 		return Config{}, fmt.Errorf("%w: sample rate index %d", ErrInvalidConfig, c.SampleRateIndex)
 	}
-	if c.SampleRateIndex != 15 {
+	if c.SampleRateIndex == 15 {
+		if c.SampleRate > maxExplicitSampleRate {
+			return Config{}, fmt.Errorf("%w: explicit sample rate %d", ErrInvalidConfig, c.SampleRate)
+		}
+	} else {
 		sr, ok := SampleRateFromIndex(c.SampleRateIndex)
 		if !ok {
 			return Config{}, fmt.Errorf("%w: sample rate index %d", ErrInvalidConfig, c.SampleRateIndex)
@@ -248,6 +256,9 @@ func normalizeRawConfig(c Config) (Config, error) {
 			return Config{}, fmt.Errorf("%w: channels %d require program config element", ErrInvalidConfig, c.Channels)
 		}
 		c.ChannelConfig = chConfig
+	}
+	if c.ChannelConfig == 0 && c.Channels == 0 {
+		return Config{}, fmt.Errorf("%w: missing channel config", ErrInvalidConfig)
 	}
 	channels, ok := ChannelsFromConfig(c.ChannelConfig)
 	if !ok {
@@ -295,6 +306,9 @@ func readSampleRate(r *bitReader) (rate int, index int, err error) {
 		explicit, err := r.readBits(24)
 		if err != nil {
 			return 0, 0, err
+		}
+		if explicit == 0 {
+			return 0, 0, fmt.Errorf("explicit sample rate 0")
 		}
 		return int(explicit), index, nil
 	}

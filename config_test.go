@@ -44,6 +44,46 @@ func TestBuildAudioSpecificConfigAACLC(t *testing.T) {
 	}
 }
 
+func TestNormalizeRawConfigExplicitSampleRate(t *testing.T) {
+	cfg, err := normalizeRawConfig(Config{
+		ObjectType:    AOTAACLC,
+		SampleRate:    12345,
+		ChannelConfig: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.SampleRateIndex != 15 || cfg.SampleRate != 12345 {
+		t.Fatalf("sample rate = %d index %d, want explicit 12345/index 15", cfg.SampleRate, cfg.SampleRateIndex)
+	}
+	parsed, err := ParseAudioSpecificConfig(cfg.ExtraData)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsed.SampleRate != 12345 || parsed.SampleRateIndex != 15 || parsed.Channels != 1 {
+		t.Fatalf("explicit ASC round trip = %+v", parsed)
+	}
+}
+
+func TestNormalizeRawConfigRejectsMissingChannels(t *testing.T) {
+	_, err := normalizeRawConfig(Config{ObjectType: AOTAACLC, SampleRate: 44100})
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+}
+
+func TestParseAudioSpecificConfigRejectsZeroExplicitSampleRate(t *testing.T) {
+	w := bitWriter{}
+	writeObjectType(&w, AOTAACLC)
+	w.writeBits(4, 15)
+	w.writeBits(24, 0)
+	w.writeBits(4, 2)
+	_, err := ParseAudioSpecificConfig(w.bytes())
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("err = %v, want ErrInvalidConfig", err)
+	}
+}
+
 func TestRejectSBRConfig(t *testing.T) {
 	_, err := NewDecoder(Config{ExtraData: []byte{0x2b, 0x92, 0x08}})
 	if !errors.Is(err, ErrUnsupportedProfile) {
