@@ -3,6 +3,7 @@ package aac
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -158,6 +159,24 @@ func TestADTSReaderTruncatedFrameDoesNotAdvance(t *testing.T) {
 	}
 	if reader.FrameIndex() != 0 || reader.Offset() != 0 {
 		t.Fatalf("truncated frame advanced reader: index=%d offset=%d", reader.FrameIndex(), reader.Offset())
+	}
+}
+
+func TestADTSStreamDecodeErrorsIncludeFrameIndex(t *testing.T) {
+	frame, err := appendTestADTSHeader(nil, Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame[2] &^= 0xc0
+
+	_, _, err = DecodeADTSInto(nil, frame)
+	if !errors.Is(err, ErrUnsupportedProfile) || !strings.Contains(err.Error(), "frame 0:") {
+		t.Fatalf("DecodeADTSInto err = %v, want frame-indexed ErrUnsupportedProfile", err)
+	}
+
+	_, _, err = DecodeADTSReaderInto(nil, bytes.NewReader(frame))
+	if !errors.Is(err, ErrUnsupportedProfile) || !strings.Contains(err.Error(), "frame 0:") {
+		t.Fatalf("DecodeADTSReaderInto err = %v, want frame-indexed ErrUnsupportedProfile", err)
 	}
 }
 

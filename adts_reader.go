@@ -88,7 +88,7 @@ func DecodeADTSReaderInto(dst []int16, r io.Reader) ([]int16, Config, error) {
 	defer dec.Close()
 
 	var frameBuf []byte
-	for {
+	for frameIndex := 0; ; frameIndex++ {
 		frameBuf = frameBuf[:0]
 		frame, err := ar.ReadFrame(frameBuf)
 		if errors.Is(err, io.EOF) {
@@ -100,7 +100,7 @@ func DecodeADTSReaderInto(dst []int16, r io.Reader) ([]int16, Config, error) {
 		frameBuf = frame.Data
 		dst, _, err = dec.DecodeADTSFrameInto(dst, frame.Data)
 		if err != nil {
-			return dst, Config{}, err
+			return dst, Config{}, fmt.Errorf("frame %d: %w", frameIndex, err)
 		}
 	}
 	return dst, dec.Config(), nil

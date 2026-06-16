@@ -275,7 +275,7 @@ func DecodeADTSInto(dst []int16, data []byte) ([]int16, Config, error) {
 		frame := data[off : off+h.FrameLength]
 		dst, _, err = dec.DecodeADTSFrameInto(dst, frame)
 		if err != nil {
-			return dst, Config{}, err
+			return dst, Config{}, fmt.Errorf("frame %d: %w", frameIndex, err)
 		}
 		off += h.FrameLength
 	}
