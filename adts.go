@@ -108,7 +108,7 @@ func SplitADTSFrames(data []byte) ([]ADTSFrame, error) {
 	for off := 0; off < len(data); {
 		h, err := ParseADTSHeader(data[off:])
 		if err != nil {
-			return nil, fmt.Errorf("frame %d: %w", len(frames), err)
+			return nil, adtsFrameError(len(frames), int64(off), err)
 		}
 		end := off + h.FrameLength
 		frameData := data[off:end]
@@ -121,4 +121,8 @@ func SplitADTSFrames(data []byte) ([]ADTSFrame, error) {
 		off = end
 	}
 	return frames, nil
+}
+
+func adtsFrameError(index int, offset int64, err error) error {
+	return fmt.Errorf("frame %d at byte %d: %w", index, offset, err)
 }

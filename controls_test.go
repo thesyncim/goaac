@@ -157,12 +157,15 @@ func TestADTSReaderTruncatedFrameDoesNotAdvance(t *testing.T) {
 	if !errors.Is(err, ErrNeedMoreData) {
 		t.Fatalf("truncated frame err = %v, want ErrNeedMoreData", err)
 	}
+	if !strings.Contains(err.Error(), "frame 0 at byte 0:") {
+		t.Fatalf("truncated frame err = %v, want frame position", err)
+	}
 	if reader.FrameIndex() != 0 || reader.Offset() != 0 {
 		t.Fatalf("truncated frame advanced reader: index=%d offset=%d", reader.FrameIndex(), reader.Offset())
 	}
 }
 
-func TestADTSStreamDecodeErrorsIncludeFrameIndex(t *testing.T) {
+func TestADTSStreamDecodeErrorsIncludeFramePosition(t *testing.T) {
 	frame, err := appendTestADTSHeader(nil, Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}, 0)
 	if err != nil {
 		t.Fatal(err)
@@ -170,13 +173,13 @@ func TestADTSStreamDecodeErrorsIncludeFrameIndex(t *testing.T) {
 	frame[2] &^= 0xc0
 
 	_, _, err = DecodeADTSInto(nil, frame)
-	if !errors.Is(err, ErrUnsupportedProfile) || !strings.Contains(err.Error(), "frame 0:") {
-		t.Fatalf("DecodeADTSInto err = %v, want frame-indexed ErrUnsupportedProfile", err)
+	if !errors.Is(err, ErrUnsupportedProfile) || !strings.Contains(err.Error(), "frame 0 at byte 0:") {
+		t.Fatalf("DecodeADTSInto err = %v, want frame-positioned ErrUnsupportedProfile", err)
 	}
 
 	_, _, err = DecodeADTSReaderInto(nil, bytes.NewReader(frame))
-	if !errors.Is(err, ErrUnsupportedProfile) || !strings.Contains(err.Error(), "frame 0:") {
-		t.Fatalf("DecodeADTSReaderInto err = %v, want frame-indexed ErrUnsupportedProfile", err)
+	if !errors.Is(err, ErrUnsupportedProfile) || !strings.Contains(err.Error(), "frame 0 at byte 0:") {
+		t.Fatalf("DecodeADTSReaderInto err = %v, want frame-positioned ErrUnsupportedProfile", err)
 	}
 }
 

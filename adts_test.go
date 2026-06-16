@@ -3,6 +3,7 @@ package aac
 import (
 	"bytes"
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -139,6 +140,17 @@ func TestADTSNeedMoreData(t *testing.T) {
 	_, err := ParseADTSHeader([]byte{0xff, 0xf1})
 	if !errors.Is(err, ErrNeedMoreData) {
 		t.Fatalf("err = %v, want need more data", err)
+	}
+}
+
+func TestSplitADTSFramesErrorsIncludeFramePosition(t *testing.T) {
+	frame, err := appendTestADTSHeader(nil, Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = SplitADTSFrames(append(frame, 0xff, 0xf1))
+	if !errors.Is(err, ErrNeedMoreData) || !strings.Contains(err.Error(), "frame 1 at byte 7:") {
+		t.Fatalf("split err = %v, want frame-positioned ErrNeedMoreData", err)
 	}
 }
 

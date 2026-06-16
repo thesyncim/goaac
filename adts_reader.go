@@ -46,27 +46,27 @@ func (r *ADTSReader) ReadFrame(dst []byte) (ADTSFrame, error) {
 		if errors.Is(err, io.EOF) && n == 0 {
 			return ADTSFrame{}, io.EOF
 		}
-		return ADTSFrame{}, fmt.Errorf("frame %d: %w", r.frameIndex, ErrNeedMoreData)
+		return ADTSFrame{}, adtsFrameError(r.frameIndex, r.offset, ErrNeedMoreData)
 	}
 	frameIndex := r.frameIndex
 	frameOffset := r.offset
 	h, err := parseADTSHeaderPrefix(header[:])
 	if err != nil {
-		return ADTSFrame{}, fmt.Errorf("frame %d: %w", r.frameIndex, err)
+		return ADTSFrame{}, adtsFrameError(frameIndex, frameOffset, err)
 	}
 	dst = append(dst, header[:]...)
 	remaining := h.FrameLength - ADTSHeaderSize
 	if remaining < 0 {
-		return ADTSFrame{}, fmt.Errorf("frame %d: %w", r.frameIndex, ErrInvalidADTS)
+		return ADTSFrame{}, adtsFrameError(frameIndex, frameOffset, ErrInvalidADTS)
 	}
 	payloadStart := len(dst)
 	dst = growBytes(dst, remaining)
 	if _, err := io.ReadFull(r.r, dst[payloadStart:]); err != nil {
-		return ADTSFrame{}, fmt.Errorf("frame %d: %w", r.frameIndex, ErrNeedMoreData)
+		return ADTSFrame{}, adtsFrameError(frameIndex, frameOffset, ErrNeedMoreData)
 	}
 	h, err = ParseADTSHeader(dst[startLen:])
 	if err != nil {
-		return ADTSFrame{}, fmt.Errorf("frame %d: %w", r.frameIndex, err)
+		return ADTSFrame{}, adtsFrameError(frameIndex, frameOffset, err)
 	}
 	frame := ADTSFrame{Header: h, Data: dst[startLen:], Index: frameIndex, Offset: frameOffset}
 	r.frameIndex++
@@ -90,7 +90,7 @@ func DecodeADTSReaderInto(dst []int16, r io.Reader) ([]int16, Config, error) {
 	defer dec.Close()
 
 	var frameBuf []byte
-	for frameIndex := 0; ; frameIndex++ {
+	for {
 		frameBuf = frameBuf[:0]
 		frame, err := ar.ReadFrame(frameBuf)
 		if errors.Is(err, io.EOF) {
@@ -102,7 +102,7 @@ func DecodeADTSReaderInto(dst []int16, r io.Reader) ([]int16, Config, error) {
 		frameBuf = frame.Data
 		dst, _, err = dec.DecodeADTSFrameInto(dst, frame.Data)
 		if err != nil {
-			return dst, Config{}, fmt.Errorf("frame %d: %w", frameIndex, err)
+			return dst, Config{}, adtsFrameError(frame.Index, frame.Offset, err)
 		}
 	}
 	return dst, dec.Config(), nil
