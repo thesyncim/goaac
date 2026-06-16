@@ -1,6 +1,7 @@
 package aac
 
 import (
+	"bytes"
 	"errors"
 	"testing"
 )
@@ -35,7 +36,62 @@ func TestADTSHeaderRoundTrip(t *testing.T) {
 	}
 }
 
+func TestADTSCRCHeaderRoundTrip(t *testing.T) {
+	cfg := Config{
+		ObjectType:    AOTAACLC,
+		SampleRate:    48000,
+		ChannelConfig: 1,
+	}
+	frame, err := appendTestADTSCRCHeader(nil, cfg, 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame = append(frame, 0xaa, 0xbb, 1, 2, 3)
+
+	h, err := ParseADTSHeader(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if h.ProtectionAbsent || h.HeaderLength != ADTSHeaderSizeCRC {
+		t.Fatalf("crc header = protection absent %v header length %d", h.ProtectionAbsent, h.HeaderLength)
+	}
+	if h.FrameLength != len(frame) || h.PayloadLength != 3 || h.SampleRate != 48000 || h.Channels != 1 {
+		t.Fatalf("crc header = %+v", h)
+	}
+
+	frames, err := SplitADTSFrames(append(frame, frame...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 2 || frames[0].Header.HeaderLength != ADTSHeaderSizeCRC {
+		t.Fatalf("crc split frames = %d first=%+v", len(frames), frames[0].Header)
+	}
+
+	reader := NewADTSReader(bytes.NewReader(frame))
+	got, err := reader.ReadFrame(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Header.HeaderLength != ADTSHeaderSizeCRC || got.Header.PayloadLength != 3 {
+		t.Fatalf("reader crc frame = %+v", got.Header)
+	}
+	if !bytes.Equal(got.Data, frame) {
+		t.Fatal("reader returned frame data different from input")
+	}
+	if reader.FrameIndex() != 1 || reader.Offset() != int64(len(frame)) {
+		t.Fatalf("reader state = index %d offset %d", reader.FrameIndex(), reader.Offset())
+	}
+}
+
 func appendTestADTSHeader(dst []byte, cfg Config, payloadLen int) ([]byte, error) {
+	return appendTestADTSHeaderWithProtection(dst, cfg, payloadLen, true)
+}
+
+func appendTestADTSCRCHeader(dst []byte, cfg Config, payloadLen int) ([]byte, error) {
+	return appendTestADTSHeaderWithProtection(dst, cfg, payloadLen, false)
+}
+
+func appendTestADTSHeaderWithProtection(dst []byte, cfg Config, payloadLen int, protectionAbsent bool) ([]byte, error) {
 	const maxFrameBytes = (1 << 13) - 1
 	cfg, err := normalizeRawConfig(cfg)
 	if err != nil {
@@ -44,14 +100,21 @@ func appendTestADTSHeader(dst []byte, cfg Config, payloadLen int) ([]byte, error
 	if cfg.SampleRateIndex == 15 {
 		return nil, ErrInvalidConfig
 	}
-	fullLen := ADTSHeaderSize + payloadLen
+	headerLen := ADTSHeaderSize
+	if !protectionAbsent {
+		headerLen = ADTSHeaderSizeCRC
+	}
+	fullLen := headerLen + payloadLen
 	if payloadLen < 0 || fullLen > maxFrameBytes {
 		return nil, ErrInvalidADTS
 	}
 	profile := int(cfg.ObjectType) - 1
 	var h [ADTSHeaderSize]byte
 	h[0] = 0xff
-	h[1] = 0xf1
+	h[1] = 0xf0
+	if protectionAbsent {
+		h[1] |= 0x01
+	}
 	h[2] = byte(profile<<6) | byte(cfg.SampleRateIndex<<2) | byte((cfg.ChannelConfig>>2)&1)
 	h[3] = byte((cfg.ChannelConfig&3)<<6) | byte((fullLen>>11)&0x03)
 	h[4] = byte(fullLen >> 3)
