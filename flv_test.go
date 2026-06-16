@@ -10,12 +10,9 @@ const testFLVAACHeader = byte(FLVSoundFormatAAC<<4) |
 	byte(FLVSoundSize16Bit<<1) |
 	byte(FLVSoundTypeStereo)
 
-func TestAppendFLVAACMessagePayloads(t *testing.T) {
+func TestParseFLVAACMessagePayloads(t *testing.T) {
 	cfg := Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}
-	seq, err := AppendRTMPAACSequenceHeader([]byte{0xee}, cfg)
-	if err != nil {
-		t.Fatal(err)
-	}
+	seq := appendTestFLVAACSequenceHeader(t, []byte{0xee}, cfg)
 	if seq[0] != 0xee {
 		t.Fatalf("sequence header prefix = %#x, want 0xee", seq[0])
 	}
@@ -34,7 +31,7 @@ func TestAppendFLVAACMessagePayloads(t *testing.T) {
 		t.Fatalf("sequence header config = %+v, want AAC-LC 44100 Hz/2 ch", parsed)
 	}
 
-	raw := AppendRTMPAACRawMessage([]byte{0xdd}, []byte{1, 2, 3})
+	raw := appendTestFLVAACRawTag([]byte{0xdd}, []byte{1, 2, 3})
 	if raw[0] != 0xdd {
 		t.Fatalf("raw tag prefix = %#x, want 0xdd", raw[0])
 	}
@@ -305,12 +302,23 @@ func flvAACSequenceHeaderFromADTS(t *testing.T, h ADTSHeader) []byte {
 
 func flvAACSequenceHeaderFromConfig(t *testing.T, cfg Config) []byte {
 	t.Helper()
-	extra, err := cfg.AudioSpecificConfig()
+	return appendTestFLVAACSequenceHeader(t, nil, cfg)
+}
+
+func appendTestFLVAACSequenceHeader(t *testing.T, dst []byte, cfg Config) []byte {
+	t.Helper()
+	normalized, err := normalizeRawConfig(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	tag := []byte{testFLVAACHeader, byte(FLVAACPacketTypeSequenceHeader)}
-	return append(tag, extra...)
+	extra := buildAudioSpecificConfig(normalized)
+	dst = append(dst, testFLVAACHeader, byte(FLVAACPacketTypeSequenceHeader))
+	return append(dst, extra...)
+}
+
+func appendTestFLVAACRawTag(dst, accessUnit []byte) []byte {
+	dst = append(dst, testFLVAACHeader, byte(FLVAACPacketTypeRaw))
+	return append(dst, accessUnit...)
 }
 
 func flvAACRawTagFromADTSFrame(t *testing.T, frame ADTSFrame) []byte {

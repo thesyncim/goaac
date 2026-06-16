@@ -27,10 +27,11 @@ func TestBuildAudioSpecificConfigAACLC(t *testing.T) {
 		SampleRate:    44100,
 		ChannelConfig: 2,
 	}
-	extra, err := cfg.AudioSpecificConfig()
+	normalized, err := normalizeRawConfig(cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
+	extra := buildAudioSpecificConfig(normalized)
 	if got, want := extra, []byte{0x12, 0x10}; string(got) != string(want) {
 		t.Fatalf("ASC = % x, want % x", got, want)
 	}

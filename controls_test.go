@@ -90,7 +90,7 @@ func TestDecoderTransportMisusePreservesDst(t *testing.T) {
 
 	raw := newRawTestDecoder(t)
 	defer raw.Close()
-	frame, err := AppendADTSHeader(nil, Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}, 0)
+	frame, err := appendTestADTSHeader(nil, Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +120,7 @@ func TestDecoderConfigReturnsCopy(t *testing.T) {
 }
 
 func TestADTSReaderTruncatedFrameDoesNotAdvance(t *testing.T) {
-	header, err := AppendADTSHeader(nil, Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}, 4)
+	header, err := appendTestADTSHeader(nil, Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}, 4)
 	if err != nil {
 		t.Fatal(err)
 	}

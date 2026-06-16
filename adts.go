@@ -5,7 +5,6 @@ import "fmt"
 const (
 	ADTSHeaderSize    = 7
 	ADTSHeaderSizeCRC = 9
-	adtsMaxFrameBytes = (1 << 13) - 1
 )
 
 type ADTSHeader struct {
@@ -115,36 +114,4 @@ func SplitADTSFrames(data []byte) ([]ADTSFrame, error) {
 		off = end
 	}
 	return frames, nil
-}
-
-// AppendADTSHeader appends a seven-byte ADTS header for payloadLen bytes of
-// AAC-LC payload to dst.
-func AppendADTSHeader(dst []byte, cfg Config, payloadLen int) ([]byte, error) {
-	cfg, err := normalizeRawConfig(cfg)
-	if err != nil {
-		return nil, err
-	}
-	if cfg.SampleRateIndex == 15 {
-		return nil, fmt.Errorf("%w: explicit sample rate is illegal in ADTS", ErrInvalidConfig)
-	}
-	if cfg.ChannelConfig < 0 || cfg.ChannelConfig > 7 {
-		return nil, fmt.Errorf("%w: channel config %d", ErrInvalidConfig, cfg.ChannelConfig)
-	}
-	fullLen := ADTSHeaderSize + payloadLen
-	if payloadLen < 0 || fullLen > adtsMaxFrameBytes {
-		return nil, fmt.Errorf("%w: payload length %d", ErrInvalidADTS, payloadLen)
-	}
-	profile := int(cfg.ObjectType) - 1
-	if profile < 0 || profile > 3 {
-		return nil, fmt.Errorf("%w: %s cannot be signaled in ADTS", ErrUnsupportedProfile, cfg.ObjectType)
-	}
-	var h [ADTSHeaderSize]byte
-	h[0] = 0xff
-	h[1] = 0xf1
-	h[2] = byte(profile<<6) | byte(cfg.SampleRateIndex<<2) | byte((cfg.ChannelConfig>>2)&1)
-	h[3] = byte((cfg.ChannelConfig&3)<<6) | byte((fullLen>>11)&0x03)
-	h[4] = byte(fullLen >> 3)
-	h[5] = byte((fullLen&7)<<5) | 0x1f
-	h[6] = 0xfc
-	return append(dst, h[:]...), nil
 }

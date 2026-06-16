@@ -153,15 +153,6 @@ func ParseAudioSpecificConfig(data []byte) (Config, error) {
 	return cfg, nil
 }
 
-// AudioSpecificConfig serializes c as MPEG-4 AudioSpecificConfig bytes.
-func (c Config) AudioSpecificConfig() ([]byte, error) {
-	cfg, err := normalizeRawConfig(c)
-	if err != nil {
-		return nil, err
-	}
-	return buildAudioSpecificConfig(cfg), nil
-}
-
 func buildAudioSpecificConfig(cfg Config) []byte {
 	w := bitWriter{}
 	writeObjectType(&w, cfg.ObjectType)

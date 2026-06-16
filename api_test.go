@@ -36,7 +36,7 @@ func TestNewOptionsSelectsTransport(t *testing.T) {
 
 func TestADTSReaderReadFrame(t *testing.T) {
 	cfg := Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}
-	frame, err := AppendADTSHeader(nil, cfg, 4)
+	frame, err := appendTestADTSHeader(nil, cfg, 4)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestDecodeADTSFrameIntoRejectsRawDecoder(t *testing.T) {
 	}
 	defer raw.Close()
 
-	frame, err := AppendADTSHeader(nil, Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}, 0)
+	frame, err := appendTestADTSHeader(nil, Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
