@@ -45,6 +45,9 @@ func TestADTSHeaderRoundTrip(t *testing.T) {
 	if frames[1].Index != 1 || frames[1].Offset != int64(len(frame)) {
 		t.Fatalf("second frame position = index %d offset %d, want 1/%d", frames[1].Index, frames[1].Offset, len(frame))
 	}
+	if frames[0].PayloadOffset() != ADTSHeaderSize || frames[0].EndOffset() != int64(len(frame)) {
+		t.Fatalf("frame byte range = payload %d end %d, want %d/%d", frames[0].PayloadOffset(), frames[0].EndOffset(), ADTSHeaderSize, len(frame))
+	}
 	payload := frames[0].Payload()
 	if !bytes.Equal(payload, []byte{1, 2, 3, 4}) {
 		t.Fatalf("payload = %v, want [1 2 3 4]", payload)
@@ -88,6 +91,9 @@ func TestADTSCRCHeaderRoundTrip(t *testing.T) {
 	if frames[1].Index != 1 || frames[1].Offset != int64(len(frame)) {
 		t.Fatalf("crc second frame position = index %d offset %d, want 1/%d", frames[1].Index, frames[1].Offset, len(frame))
 	}
+	if frames[0].PayloadOffset() != ADTSHeaderSizeCRC || frames[0].EndOffset() != int64(len(frame)) {
+		t.Fatalf("crc frame byte range = payload %d end %d, want %d/%d", frames[0].PayloadOffset(), frames[0].EndOffset(), ADTSHeaderSizeCRC, len(frame))
+	}
 
 	reader := NewADTSReader(bytes.NewReader(frame))
 	got, err := reader.ReadFrame(nil)
@@ -130,6 +136,9 @@ func TestADTSLeadingID3v2Tag(t *testing.T) {
 	}
 	if frames[0].Index != 0 || frames[0].Offset != int64(len(id3)) {
 		t.Fatalf("frame position = index %d offset %d, want 0/%d", frames[0].Index, frames[0].Offset, len(id3))
+	}
+	if frames[0].PayloadOffset() != int64(len(id3)+ADTSHeaderSize) || frames[0].EndOffset() != int64(len(stream)) {
+		t.Fatalf("ID3 frame byte range = payload %d end %d, want %d/%d", frames[0].PayloadOffset(), frames[0].EndOffset(), len(id3)+ADTSHeaderSize, len(stream))
 	}
 	if !bytes.Equal(frames[0].Data, frame) {
 		t.Fatal("split frame data does not match input frame")

@@ -47,6 +47,24 @@ type ADTSFrame struct {
 	Offset int64
 }
 
+// EndOffset returns the byte offset immediately after this frame in the source
+// stream.
+func (f ADTSFrame) EndOffset() int64 {
+	if f.Header.FrameLength < 0 {
+		return f.Offset
+	}
+	return f.Offset + int64(f.Header.FrameLength)
+}
+
+// PayloadOffset returns the byte offset of the raw AAC access unit in the
+// source stream.
+func (f ADTSFrame) PayloadOffset() int64 {
+	if f.Header.HeaderLength < 0 {
+		return f.Offset
+	}
+	return f.Offset + int64(f.Header.HeaderLength)
+}
+
 // Payload returns the raw AAC access unit bytes after the ADTS header and
 // optional CRC field. The returned slice aliases Data.
 func (f ADTSFrame) Payload() []byte {
