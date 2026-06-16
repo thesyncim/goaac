@@ -32,6 +32,16 @@ func TestADTSHeaderRoundTrip(t *testing.T) {
 	if headerCfg.ObjectType != AOTAACLC || headerCfg.SampleRate != 44100 || headerCfg.SampleRateIndex != 4 || headerCfg.ChannelConfig != 2 || headerCfg.Channels != 2 {
 		t.Fatalf("header config = %+v", headerCfg)
 	}
+	parsedFrame, err := ParseADTSFrame(append(frame, 0xee))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if parsedFrame.Index != 0 || parsedFrame.Offset != 0 || parsedFrame.Header.FrameLength != len(frame) {
+		t.Fatalf("parsed frame metadata = %+v", parsedFrame)
+	}
+	if !bytes.Equal(parsedFrame.Data, frame) {
+		t.Fatalf("parsed frame data = %x, want %x", parsedFrame.Data, frame)
+	}
 	frames, err := SplitADTSFrames(append(frame, frame...))
 	if err != nil {
 		t.Fatal(err)
@@ -255,6 +265,10 @@ func TestADTSNeedMoreData(t *testing.T) {
 	_, err := ParseADTSHeader([]byte{0xff, 0xf1})
 	if !errors.Is(err, ErrNeedMoreData) {
 		t.Fatalf("err = %v, want need more data", err)
+	}
+	_, err = ParseADTSFrame([]byte{0xff, 0xf1})
+	if !errors.Is(err, ErrNeedMoreData) {
+		t.Fatalf("frame err = %v, want need more data", err)
 	}
 }
 

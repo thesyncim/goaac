@@ -60,13 +60,12 @@ func (r *ADTSReader) ReadFrame(dst []byte) (ADTSFrame, error) {
 	if _, err := io.ReadFull(r.r, dst[payloadStart:]); err != nil {
 		return ADTSFrame{}, adtsFrameError(frameIndex, frameOffset, ErrNeedMoreData)
 	}
-	h, err = ParseADTSHeader(dst[startLen:])
+	frame, err := parseADTSFrameAt(dst[startLen:], frameIndex, frameOffset)
 	if err != nil {
 		return ADTSFrame{}, adtsFrameError(frameIndex, frameOffset, err)
 	}
-	frame := ADTSFrame{Header: h, Data: dst[startLen:], Index: frameIndex, Offset: frameOffset}
 	r.frameIndex++
-	r.offset += int64(h.FrameLength)
+	r.offset += int64(frame.Header.FrameLength)
 	return frame, nil
 }
 

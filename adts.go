@@ -80,6 +80,12 @@ func ParseADTSHeader(data []byte) (ADTSHeader, error) {
 	return parseADTSHeader(data, true)
 }
 
+// ParseADTSFrame parses one complete ADTS frame from data. Returned Data
+// aliases data and excludes any bytes after the parsed frame.
+func ParseADTSFrame(data []byte) (ADTSFrame, error) {
+	return parseADTSFrameAt(data, 0, 0)
+}
+
 func parseADTSHeaderPrefix(data []byte) (ADTSHeader, error) {
 	return parseADTSHeader(data, false)
 }
@@ -150,21 +156,27 @@ func SplitADTSFrames(data []byte) ([]ADTSFrame, error) {
 		return nil, adtsFrameError(0, int64(off), err)
 	}
 	for off < len(data) {
-		h, err := ParseADTSHeader(data[off:])
+		frame, err := parseADTSFrameAt(data[off:], len(frames), int64(off))
 		if err != nil {
 			return nil, adtsFrameError(len(frames), int64(off), err)
 		}
-		end := off + h.FrameLength
-		frameData := data[off:end]
-		frames = append(frames, ADTSFrame{
-			Header: h,
-			Data:   frameData,
-			Index:  len(frames),
-			Offset: int64(off),
-		})
-		off = end
+		frames = append(frames, frame)
+		off += frame.Header.FrameLength
 	}
 	return frames, nil
+}
+
+func parseADTSFrameAt(data []byte, index int, offset int64) (ADTSFrame, error) {
+	h, err := ParseADTSHeader(data)
+	if err != nil {
+		return ADTSFrame{}, err
+	}
+	return ADTSFrame{
+		Header: h,
+		Data:   data[:h.FrameLength],
+		Index:  index,
+		Offset: offset,
+	}, nil
 }
 
 func adtsFrameError(index int, offset int64, err error) error {
