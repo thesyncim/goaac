@@ -193,13 +193,7 @@ func decodeVectorAsRawPayloads(t *testing.T, frames []ADTSFrame) []int16 {
 	h := frames[0].Header
 	dec, err := New(Options{
 		Transport: TransportRaw,
-		Config: Config{
-			ObjectType:      AOTAACLC,
-			SampleRate:      h.SampleRate,
-			SampleRateIndex: h.SampleRateIndex,
-			ChannelConfig:   h.ChannelConfig,
-			Channels:        h.Channels,
-		},
+		Config:    h.Config(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -208,13 +202,13 @@ func decodeVectorAsRawPayloads(t *testing.T, frames []ADTSFrame) []int16 {
 
 	var pcm []int16
 	for i, frame := range frames {
-		h := frame.Header
-		if h.HeaderLength > len(frame.Data) || h.FrameLength > len(frame.Data) {
+		payload := frame.Payload()
+		if payload == nil {
 			t.Fatalf("frame %d invalid payload bounds", i)
 		}
 		before := len(pcm)
 		var info FrameInfo
-		pcm, info, err = dec.DecodeRawInto(pcm, frame.Data[h.HeaderLength:h.FrameLength])
+		pcm, info, err = dec.DecodeRawInto(pcm, payload)
 		if err != nil {
 			t.Fatalf("raw frame %d: %v", i, err)
 		}

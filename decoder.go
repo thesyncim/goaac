@@ -205,13 +205,7 @@ func (d *Decoder) DecodeADTSFrameInto(dst []int16, frame []byte) ([]int16, Frame
 	if h.RawDataBlockCount != 0 {
 		return dst, FrameInfo{}, fmt.Errorf("%w: ADTS frames with %d raw data blocks are not supported", ErrInvalidADTS, h.RawDataBlockCount+1)
 	}
-	frameCfg := Config{
-		ObjectType:      h.ObjectType,
-		SampleRate:      h.SampleRate,
-		SampleRateIndex: h.SampleRateIndex,
-		ChannelConfig:   h.ChannelConfig,
-		Channels:        h.Channels,
-	}
+	frameCfg := h.Config()
 	out, core, err := d.pure.decodeInto(dst, frame[:h.FrameLength])
 	if err != nil {
 		return dst, FrameInfo{}, err

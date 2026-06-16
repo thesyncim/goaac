@@ -291,13 +291,7 @@ func TestFLVAACDecoderClose(t *testing.T) {
 
 func flvAACSequenceHeaderFromADTS(t *testing.T, h ADTSHeader) []byte {
 	t.Helper()
-	return flvAACSequenceHeaderFromConfig(t, Config{
-		ObjectType:      h.ObjectType,
-		SampleRate:      h.SampleRate,
-		SampleRateIndex: h.SampleRateIndex,
-		ChannelConfig:   h.ChannelConfig,
-		Channels:        h.Channels,
-	})
+	return flvAACSequenceHeaderFromConfig(t, h.Config())
 }
 
 func flvAACSequenceHeaderFromConfig(t *testing.T, cfg Config) []byte {
@@ -323,11 +317,10 @@ func appendTestFLVAACRawTag(dst, accessUnit []byte) []byte {
 
 func flvAACRawTagFromADTSFrame(t *testing.T, frame ADTSFrame) []byte {
 	t.Helper()
-	h := frame.Header
-	if h.HeaderLength > len(frame.Data) || h.FrameLength > len(frame.Data) {
+	payload := frame.Payload()
+	if payload == nil {
 		t.Fatal("invalid ADTS frame bounds")
 	}
-	payload := frame.Data[h.HeaderLength:h.FrameLength]
 	tag := make([]byte, 2+len(payload))
 	tag[0] = testFLVAACHeader
 	tag[1] = byte(FLVAACPacketTypeRaw)

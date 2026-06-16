@@ -28,6 +28,10 @@ func TestADTSHeaderRoundTrip(t *testing.T) {
 	if h.FrameLength != 11 || h.PayloadLength != 4 || h.HeaderLength != 7 {
 		t.Fatalf("lengths = frame %d payload %d header %d", h.FrameLength, h.PayloadLength, h.HeaderLength)
 	}
+	headerCfg := h.Config()
+	if headerCfg.ObjectType != AOTAACLC || headerCfg.SampleRate != 44100 || headerCfg.SampleRateIndex != 4 || headerCfg.ChannelConfig != 2 || headerCfg.Channels != 2 {
+		t.Fatalf("header config = %+v", headerCfg)
+	}
 	frames, err := SplitADTSFrames(append(frame, frame...))
 	if err != nil {
 		t.Fatal(err)
@@ -40,6 +44,14 @@ func TestADTSHeaderRoundTrip(t *testing.T) {
 	}
 	if frames[1].Index != 1 || frames[1].Offset != int64(len(frame)) {
 		t.Fatalf("second frame position = index %d offset %d, want 1/%d", frames[1].Index, frames[1].Offset, len(frame))
+	}
+	payload := frames[0].Payload()
+	if !bytes.Equal(payload, []byte{1, 2, 3, 4}) {
+		t.Fatalf("payload = %v, want [1 2 3 4]", payload)
+	}
+	payload[0] = 9
+	if frames[0].Data[ADTSHeaderSize] != 9 {
+		t.Fatal("payload does not alias frame data")
 	}
 }
 
@@ -93,6 +105,19 @@ func TestADTSCRCHeaderRoundTrip(t *testing.T) {
 	}
 	if reader.FrameIndex() != 1 || reader.Offset() != int64(len(frame)) {
 		t.Fatalf("reader state = index %d offset %d", reader.FrameIndex(), reader.Offset())
+	}
+	if !bytes.Equal(got.Payload(), []byte{1, 2, 3}) {
+		t.Fatalf("reader crc payload = %v, want [1 2 3]", got.Payload())
+	}
+}
+
+func TestADTSFramePayloadRejectsInvalidBounds(t *testing.T) {
+	frame := ADTSFrame{
+		Header: ADTSHeader{HeaderLength: ADTSHeaderSize, FrameLength: ADTSHeaderSize + 1},
+		Data:   make([]byte, ADTSHeaderSize),
+	}
+	if frame.Payload() != nil {
+		t.Fatal("invalid frame bounds returned payload")
 	}
 }
 

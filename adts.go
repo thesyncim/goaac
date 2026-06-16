@@ -26,6 +26,17 @@ type ADTSHeader struct {
 	CopyrightIDStart  bool
 }
 
+// Config returns the MPEG-4 decoder configuration signaled by the ADTS header.
+func (h ADTSHeader) Config() Config {
+	return Config{
+		ObjectType:      h.ObjectType,
+		SampleRate:      h.SampleRate,
+		SampleRateIndex: h.SampleRateIndex,
+		ChannelConfig:   h.ChannelConfig,
+		Channels:        h.Channels,
+	}
+}
+
 // ADTSFrame is one ADTS frame and its parsed header. Data aliases the input
 // stream bytes passed to the parser or reader.
 type ADTSFrame struct {
@@ -33,6 +44,16 @@ type ADTSFrame struct {
 	Data   []byte
 	Index  int
 	Offset int64
+}
+
+// Payload returns the raw AAC access unit bytes after the ADTS header and
+// optional CRC field. The returned slice aliases Data.
+func (f ADTSFrame) Payload() []byte {
+	h := f.Header
+	if h.HeaderLength < 0 || h.FrameLength < h.HeaderLength || h.FrameLength > len(f.Data) {
+		return nil
+	}
+	return f.Data[h.HeaderLength:h.FrameLength]
 }
 
 // ParseADTSHeader parses one complete ADTS frame header from data.
