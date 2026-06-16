@@ -31,6 +31,8 @@ type ADTSHeader struct {
 type ADTSFrame struct {
 	Header ADTSHeader
 	Data   []byte
+	Index  int
+	Offset int64
 }
 
 // ParseADTSHeader parses one complete ADTS frame header from data.
@@ -110,7 +112,12 @@ func SplitADTSFrames(data []byte) ([]ADTSFrame, error) {
 		}
 		end := off + h.FrameLength
 		frameData := data[off:end]
-		frames = append(frames, ADTSFrame{Header: h, Data: frameData})
+		frames = append(frames, ADTSFrame{
+			Header: h,
+			Data:   frameData,
+			Index:  len(frames),
+			Offset: int64(off),
+		})
 		off = end
 	}
 	return frames, nil

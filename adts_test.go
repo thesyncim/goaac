@@ -34,6 +34,12 @@ func TestADTSHeaderRoundTrip(t *testing.T) {
 	if len(frames) != 2 {
 		t.Fatalf("frames = %d, want 2", len(frames))
 	}
+	if frames[0].Index != 0 || frames[0].Offset != 0 {
+		t.Fatalf("first frame position = index %d offset %d, want 0/0", frames[0].Index, frames[0].Offset)
+	}
+	if frames[1].Index != 1 || frames[1].Offset != int64(len(frame)) {
+		t.Fatalf("second frame position = index %d offset %d, want 1/%d", frames[1].Index, frames[1].Offset, len(frame))
+	}
 }
 
 func TestADTSCRCHeaderRoundTrip(t *testing.T) {
@@ -66,6 +72,9 @@ func TestADTSCRCHeaderRoundTrip(t *testing.T) {
 	if len(frames) != 2 || frames[0].Header.HeaderLength != ADTSHeaderSizeCRC {
 		t.Fatalf("crc split frames = %d first=%+v", len(frames), frames[0].Header)
 	}
+	if frames[1].Index != 1 || frames[1].Offset != int64(len(frame)) {
+		t.Fatalf("crc second frame position = index %d offset %d, want 1/%d", frames[1].Index, frames[1].Offset, len(frame))
+	}
 
 	reader := NewADTSReader(bytes.NewReader(frame))
 	got, err := reader.ReadFrame(nil)
@@ -74,6 +83,9 @@ func TestADTSCRCHeaderRoundTrip(t *testing.T) {
 	}
 	if got.Header.HeaderLength != ADTSHeaderSizeCRC || got.Header.PayloadLength != 3 {
 		t.Fatalf("reader crc frame = %+v", got.Header)
+	}
+	if got.Index != 0 || got.Offset != 0 {
+		t.Fatalf("reader crc position = index %d offset %d, want 0/0", got.Index, got.Offset)
 	}
 	if !bytes.Equal(got.Data, frame) {
 		t.Fatal("reader returned frame data different from input")

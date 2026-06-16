@@ -54,6 +54,9 @@ func TestADTSReaderReadFrame(t *testing.T) {
 	if got.Header.FrameLength != len(frame) {
 		t.Fatalf("frame length = %d, want %d", got.Header.FrameLength, len(frame))
 	}
+	if got.Index != 0 || got.Offset != 0 {
+		t.Fatalf("returned frame position = index %d offset %d, want 0/0", got.Index, got.Offset)
+	}
 	if reader.FrameIndex() != 1 {
 		t.Fatalf("frame index = %d, want 1", reader.FrameIndex())
 	}
@@ -66,6 +69,9 @@ func TestADTSReaderReadFrame(t *testing.T) {
 	}
 	if !bytes.Equal(got.Data, frame) {
 		t.Fatalf("second frame bytes = %x, want %x", got.Data, frame)
+	}
+	if got.Index != 1 || got.Offset != int64(len(frame)) {
+		t.Fatalf("second returned frame position = index %d offset %d, want 1/%d", got.Index, got.Offset, len(frame))
 	}
 	_, err = reader.ReadFrame(got.Data[:0])
 	if !errors.Is(err, io.EOF) {

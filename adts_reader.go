@@ -48,6 +48,8 @@ func (r *ADTSReader) ReadFrame(dst []byte) (ADTSFrame, error) {
 		}
 		return ADTSFrame{}, fmt.Errorf("frame %d: %w", r.frameIndex, ErrNeedMoreData)
 	}
+	frameIndex := r.frameIndex
+	frameOffset := r.offset
 	h, err := parseADTSHeaderPrefix(header[:])
 	if err != nil {
 		return ADTSFrame{}, fmt.Errorf("frame %d: %w", r.frameIndex, err)
@@ -66,7 +68,7 @@ func (r *ADTSReader) ReadFrame(dst []byte) (ADTSFrame, error) {
 	if err != nil {
 		return ADTSFrame{}, fmt.Errorf("frame %d: %w", r.frameIndex, err)
 	}
-	frame := ADTSFrame{Header: h, Data: dst[startLen:]}
+	frame := ADTSFrame{Header: h, Data: dst[startLen:], Index: frameIndex, Offset: frameOffset}
 	r.frameIndex++
 	r.offset += int64(h.FrameLength)
 	return frame, nil
