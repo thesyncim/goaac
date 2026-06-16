@@ -175,6 +175,17 @@ func TestADTSRejectsInvalidLeadingID3v2Tag(t *testing.T) {
 	if !errors.Is(err, ErrInvalidADTS) || !strings.Contains(err.Error(), "frame 0 at byte 0:") {
 		t.Fatalf("reader invalid ID3 err = %v, want frame-positioned ErrInvalidADTS", err)
 	}
+
+	invalidVersion := []byte{'I', 'D', '3', 0xff, 0, 0, 0, 0, 0, 0}
+	_, err = SplitADTSFrames(invalidVersion)
+	if !errors.Is(err, ErrInvalidADTS) || !strings.Contains(err.Error(), "frame 0 at byte 0:") {
+		t.Fatalf("invalid ID3 version err = %v, want frame-positioned ErrInvalidADTS", err)
+	}
+
+	_, err = NewADTSReader(bytes.NewReader(invalidVersion)).ReadFrame(nil)
+	if !errors.Is(err, ErrInvalidADTS) || !strings.Contains(err.Error(), "frame 0 at byte 0:") {
+		t.Fatalf("reader invalid ID3 version err = %v, want frame-positioned ErrInvalidADTS", err)
+	}
 }
 
 func TestADTSFramePayloadRejectsInvalidBounds(t *testing.T) {

@@ -197,6 +197,9 @@ func id3v2TagLength(header []byte) (int, bool) {
 	if len(header) < id3v2HeaderSize || !hasID3v2Prefix(header) {
 		return 0, false
 	}
+	if header[3] < 2 || header[3] > 4 || header[4] == 0xff {
+		return 0, false
+	}
 	for _, b := range header[6:10] {
 		if b&0x80 != 0 {
 			return 0, false
