@@ -16,8 +16,7 @@ The pinned checkout is tag `2.11.2`, commit
 FFmpeg is used by tests only to synthesize AAC-LC ADTS fixtures. It is not linked
 or loaded by the decoder runtime.
 
-This repository also contains a pinned FDK-AAC `v2.0.3` source checkout under
-`third_party/fdk-aac` for encoder reference and native oracle generation.
-FDK-AAC is distributed under the "Software License for The Fraunhofer FDK AAC
-Codec Library for Android"; see `third_party/fdk-aac/NOTICE` for the complete
-license text. That license does not grant patent rights.
+This repository does not include an AAC encoder and does not provide, claim, or
+imply any patent license or patent non-infringement guarantee. Users and
+redistributors are responsible for evaluating patent obligations in their own
+jurisdictions and use cases.

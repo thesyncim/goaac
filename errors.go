@@ -12,5 +12,4 @@ var (
 	ErrUnsupportedFormat  = errors.New("aac: unsupported media format")
 	ErrUnsupportedProfile = errors.New("aac: unsupported profile")
 	ErrNativeUnavailable  = errors.New("aac: decoder unavailable")
-	ErrEncode             = errors.New("aac: encoder error")
 )

@@ -41,16 +41,18 @@ Go port's explicit `float32` evaluation.
 
 ## Local Production Slice
 
-Supported now:
+Supported:
 
 - AAC-LC profile.
 - ADTS streams with one raw data block per frame.
-- Raw AAC access units when configured with AAC-LC AudioSpecificConfig.
+- Raw AAC access units configured with AAC-LC AudioSpecificConfig.
+- RTMP/FLV AAC audio-message body parsing and decode.
 - Interleaved signed 16-bit PCM output.
 - Pure-Go runtime on generated targets: `darwin/arm64` and `linux/arm64`.
 
 Not claimed:
 
+- AAC encoding.
 - HE-AAC SBR/PS profiles.
 - AAC Main, SSR, LTP, LD, DRM, or error-resilience profiles.
 - LATM/LOAS transport.
@@ -58,17 +60,10 @@ Not claimed:
 - Generated support for targets that are not checked in under
   `internal/faad2ccgo`.
 
-## Encoder Upstream Pin
+## Patent And Licensing Stance
 
-- Project: Fraunhofer FDK AAC Codec Library for Android
-- Repository: `https://github.com/mstorsjo/fdk-aac`
-- Release tag: `v2.0.3`
-- Commit: `716f4394641d53f0d79c9ddac3fa93b03a49f278`
-- Local checkout: `third_party/fdk-aac`
-
-FDK-AAC is the source truth for the AAC-LC encoder track. It is used as a pinned
-native oracle and source-shaped translation reference only; the Go runtime must
-remain pure Go and must not link or load FDK-AAC.
-
-See `docs/encoder-reference.md` for the encoder module map, oracle command, and
-completion gates.
+This repository does not provide, claim, or imply any patent license or patent
+non-infringement guarantee. The production code intentionally remains
+decoder-only and does not carry an AAC encoder port or encoder source checkout.
+Users and redistributors are responsible for evaluating patent obligations in
+their own jurisdictions and use cases.

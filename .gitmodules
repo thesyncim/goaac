@@ -4,6 +4,3 @@
 [submodule "third_party/faad2"]
 	path = third_party/faad2
 	url = https://github.com/knik0/faad2
-[submodule "third_party/fdk-aac"]
-	path = third_party/fdk-aac
-	url = https://github.com/mstorsjo/fdk-aac
