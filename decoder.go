@@ -262,20 +262,22 @@ func (d *Decoder) Close() error {
 
 // DecodeADTSInto decodes a complete ADTS stream and appends PCM to dst.
 func DecodeADTSInto(dst []int16, data []byte) ([]int16, Config, error) {
-	frames, err := SplitADTSFrames(data)
-	if err != nil {
-		return dst, Config{}, err
-	}
 	dec, err := NewADTSDecoder()
 	if err != nil {
 		return dst, Config{}, err
 	}
 	defer dec.Close()
-	for _, frame := range frames {
-		dst, _, err = dec.DecodeADTSFrameInto(dst, frame.Data)
+	for off, frameIndex := 0, 0; off < len(data); frameIndex++ {
+		h, err := ParseADTSHeader(data[off:])
+		if err != nil {
+			return dst, Config{}, fmt.Errorf("frame %d: %w", frameIndex, err)
+		}
+		frame := data[off : off+h.FrameLength]
+		dst, _, err = dec.DecodeADTSFrameInto(dst, frame)
 		if err != nil {
 			return dst, Config{}, err
 		}
+		off += h.FrameLength
 	}
 	return dst, dec.Config(), nil
 }
