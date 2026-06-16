@@ -110,6 +110,9 @@ func NewADTSDecoder() (*Decoder, error) {
 
 // Transport reports the decoder input framing.
 func (d *Decoder) Transport() Transport {
+	if d == nil {
+		return TransportAuto
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.adts {
@@ -120,6 +123,9 @@ func (d *Decoder) Transport() Transport {
 
 // Config returns a copy of the decoder's current stream configuration.
 func (d *Decoder) Config() Config {
+	if d == nil {
+		return Config{}
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	return copyConfig(d.cfg)
@@ -127,6 +133,9 @@ func (d *Decoder) Config() Config {
 
 // DecodeRaw decodes one raw AAC-LC access unit and returns newly allocated PCM.
 func (d *Decoder) DecodeRaw(frame []byte) ([]int16, error) {
+	if d == nil {
+		return nil, ErrClosed
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -142,6 +151,9 @@ func (d *Decoder) DecodeRaw(frame []byte) ([]int16, error) {
 // Decode decodes one frame using the decoder's configured transport and appends
 // interleaved signed 16-bit PCM samples to dst.
 func (d *Decoder) Decode(dst []int16, frame []byte) ([]int16, FrameInfo, error) {
+	if d == nil {
+		return dst, FrameInfo{}, ErrClosed
+	}
 	if d.Transport() == TransportADTS {
 		return d.DecodeADTSFrameInto(dst, frame)
 	}
@@ -150,6 +162,9 @@ func (d *Decoder) Decode(dst []int16, frame []byte) ([]int16, FrameInfo, error) 
 
 // DecodeRawInto decodes one raw AAC-LC access unit and appends PCM to dst.
 func (d *Decoder) DecodeRawInto(dst []int16, frame []byte) ([]int16, FrameInfo, error) {
+	if d == nil {
+		return dst, FrameInfo{}, ErrClosed
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -169,6 +184,9 @@ func (d *Decoder) DecodeADTSFrame(frame []byte) ([]int16, error) {
 
 // DecodeADTSFrameInto decodes one ADTS frame and appends PCM to dst.
 func (d *Decoder) DecodeADTSFrameInto(dst []int16, frame []byte) ([]int16, FrameInfo, error) {
+	if d == nil {
+		return dst, FrameInfo{}, ErrClosed
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {
@@ -226,6 +244,9 @@ func (d *Decoder) DecodeADTSFrameInto(dst []int16, frame []byte) ([]int16, Frame
 
 // Close releases decoder state. It is valid to call Close more than once.
 func (d *Decoder) Close() error {
+	if d == nil {
+		return nil
+	}
 	d.mu.Lock()
 	defer d.mu.Unlock()
 	if d.closed {

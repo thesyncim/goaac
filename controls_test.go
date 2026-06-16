@@ -72,6 +72,33 @@ func TestDecoderCloseTransitions(t *testing.T) {
 	}
 }
 
+func TestNilDecoderControls(t *testing.T) {
+	var dec *Decoder
+	if got := dec.Transport(); got != TransportAuto {
+		t.Fatalf("nil decoder transport = %s, want %s", got, TransportAuto)
+	}
+	if cfg := dec.Config(); cfg.SampleRate != 0 || cfg.Channels != 0 {
+		t.Fatalf("nil decoder config = %+v, want zero value", cfg)
+	}
+	if err := dec.Close(); err != nil {
+		t.Fatalf("nil decoder close = %v, want nil", err)
+	}
+
+	dst := []int16{7, 8}
+	if got, _, err := dec.Decode(dst, nil); !errors.Is(err, ErrClosed) || !equalInt16s(got, dst) {
+		t.Fatalf("nil Decode got=%v err=%v, want dst/ErrClosed", got, err)
+	}
+	if got, err := dec.DecodeRaw(nil); !errors.Is(err, ErrClosed) || got != nil {
+		t.Fatalf("nil DecodeRaw got=%v err=%v, want nil/ErrClosed", got, err)
+	}
+	if got, _, err := dec.DecodeRawInto(dst, nil); !errors.Is(err, ErrClosed) || !equalInt16s(got, dst) {
+		t.Fatalf("nil DecodeRawInto got=%v err=%v, want dst/ErrClosed", got, err)
+	}
+	if got, _, err := dec.DecodeADTSFrameInto(dst, nil); !errors.Is(err, ErrClosed) || !equalInt16s(got, dst) {
+		t.Fatalf("nil DecodeADTSFrameInto got=%v err=%v, want dst/ErrClosed", got, err)
+	}
+}
+
 func TestDecoderTransportMisusePreservesDst(t *testing.T) {
 	adts, err := New(Options{Transport: TransportADTS})
 	if err != nil {
