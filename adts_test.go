@@ -111,6 +111,63 @@ func TestADTSCRCHeaderRoundTrip(t *testing.T) {
 	}
 }
 
+func TestADTSLeadingID3v2Tag(t *testing.T) {
+	cfg := Config{ObjectType: AOTAACLC, SampleRate: 44100, ChannelConfig: 2}
+	frame, err := appendTestADTSHeader(nil, cfg, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frame = append(frame, 1, 2)
+	id3 := appendTestID3v2(nil, []byte("hello"))
+	stream := append(append([]byte(nil), id3...), frame...)
+
+	frames, err := SplitADTSFrames(stream)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(frames) != 1 {
+		t.Fatalf("frames = %d, want 1", len(frames))
+	}
+	if frames[0].Index != 0 || frames[0].Offset != int64(len(id3)) {
+		t.Fatalf("frame position = index %d offset %d, want 0/%d", frames[0].Index, frames[0].Offset, len(id3))
+	}
+	if !bytes.Equal(frames[0].Data, frame) {
+		t.Fatal("split frame data does not match input frame")
+	}
+
+	reader := NewADTSReader(bytes.NewReader(stream))
+	got, err := reader.ReadFrame(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Index != 0 || got.Offset != int64(len(id3)) {
+		t.Fatalf("reader frame position = index %d offset %d, want 0/%d", got.Index, got.Offset, len(id3))
+	}
+	if reader.FrameIndex() != 1 || reader.Offset() != int64(len(stream)) {
+		t.Fatalf("reader state = index %d offset %d, want 1/%d", reader.FrameIndex(), reader.Offset(), len(stream))
+	}
+
+	frame[2] &^= 0xc0
+	badStream := append(append([]byte(nil), id3...), frame...)
+	_, _, err = DecodeADTSInto(nil, badStream)
+	if !errors.Is(err, ErrUnsupportedProfile) || !strings.Contains(err.Error(), "frame 0 at byte 15:") {
+		t.Fatalf("DecodeADTSInto err = %v, want frame-positioned ErrUnsupportedProfile after ID3", err)
+	}
+}
+
+func TestADTSRejectsInvalidLeadingID3v2Tag(t *testing.T) {
+	invalid := []byte{'I', 'D', '3', 4, 0, 0, 0x80, 0, 0, 0}
+	_, err := SplitADTSFrames(invalid)
+	if !errors.Is(err, ErrInvalidADTS) || !strings.Contains(err.Error(), "frame 0 at byte 0:") {
+		t.Fatalf("invalid ID3 err = %v, want frame-positioned ErrInvalidADTS", err)
+	}
+
+	_, err = NewADTSReader(bytes.NewReader(invalid)).ReadFrame(nil)
+	if !errors.Is(err, ErrInvalidADTS) || !strings.Contains(err.Error(), "frame 0 at byte 0:") {
+		t.Fatalf("reader invalid ID3 err = %v, want frame-positioned ErrInvalidADTS", err)
+	}
+}
+
 func TestADTSFramePayloadRejectsInvalidBounds(t *testing.T) {
 	frame := ADTSFrame{
 		Header: ADTSHeader{HeaderLength: ADTSHeaderSize, FrameLength: ADTSHeaderSize + 1},
@@ -159,6 +216,19 @@ func appendTestADTSHeaderWithProtection(dst []byte, cfg Config, payloadLen int, 
 	h[5] = byte((fullLen&7)<<5) | 0x1f
 	h[6] = 0xfc
 	return append(dst, h[:]...), nil
+}
+
+func appendTestID3v2(dst, payload []byte) []byte {
+	size := len(payload)
+	dst = append(dst,
+		'I', 'D', '3',
+		4, 0, 0,
+		byte((size>>21)&0x7f),
+		byte((size>>14)&0x7f),
+		byte((size>>7)&0x7f),
+		byte(size&0x7f),
+	)
+	return append(dst, payload...)
 }
 
 func TestADTSNeedMoreData(t *testing.T) {

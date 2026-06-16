@@ -261,7 +261,11 @@ func DecodeADTSInto(dst []int16, data []byte) ([]int16, Config, error) {
 		return dst, Config{}, err
 	}
 	defer dec.Close()
-	for off, frameIndex := 0, 0; off < len(data); frameIndex++ {
+	off, err := skipLeadingID3v2(data)
+	if err != nil {
+		return dst, Config{}, adtsFrameError(0, int64(off), err)
+	}
+	for frameIndex := 0; off < len(data); frameIndex++ {
 		h, err := ParseADTSHeader(data[off:])
 		if err != nil {
 			return dst, Config{}, adtsFrameError(frameIndex, int64(off), err)

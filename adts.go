@@ -5,6 +5,7 @@ import "fmt"
 const (
 	ADTSHeaderSize    = 7
 	ADTSHeaderSizeCRC = 9
+	id3v2HeaderSize   = 10
 )
 
 type ADTSHeader struct {
@@ -126,7 +127,11 @@ func parseADTSHeader(data []byte, requireFullFrame bool) (ADTSHeader, error) {
 // data.
 func SplitADTSFrames(data []byte) ([]ADTSFrame, error) {
 	var frames []ADTSFrame
-	for off := 0; off < len(data); {
+	off, err := skipLeadingID3v2(data)
+	if err != nil {
+		return nil, adtsFrameError(0, int64(off), err)
+	}
+	for off < len(data) {
 		h, err := ParseADTSHeader(data[off:])
 		if err != nil {
 			return nil, adtsFrameError(len(frames), int64(off), err)
@@ -146,4 +151,43 @@ func SplitADTSFrames(data []byte) ([]ADTSFrame, error) {
 
 func adtsFrameError(index int, offset int64, err error) error {
 	return fmt.Errorf("frame %d at byte %d: %w", index, offset, err)
+}
+
+func skipLeadingID3v2(data []byte) (int, error) {
+	off := 0
+	for hasID3v2Prefix(data[off:]) {
+		if len(data)-off < id3v2HeaderSize {
+			return off, ErrNeedMoreData
+		}
+		tagLen, ok := id3v2TagLength(data[off : off+id3v2HeaderSize])
+		if !ok {
+			return off, fmt.Errorf("%w: invalid ID3v2 tag", ErrInvalidADTS)
+		}
+		if len(data)-off < tagLen {
+			return off, ErrNeedMoreData
+		}
+		off += tagLen
+	}
+	return off, nil
+}
+
+func hasID3v2Prefix(data []byte) bool {
+	return len(data) >= 3 && data[0] == 'I' && data[1] == 'D' && data[2] == '3'
+}
+
+func id3v2TagLength(header []byte) (int, bool) {
+	if len(header) < id3v2HeaderSize || !hasID3v2Prefix(header) {
+		return 0, false
+	}
+	for _, b := range header[6:10] {
+		if b&0x80 != 0 {
+			return 0, false
+		}
+	}
+	size := int(header[6])<<21 | int(header[7])<<14 | int(header[8])<<7 | int(header[9])
+	tagLen := id3v2HeaderSize + size
+	if header[5]&0x10 != 0 {
+		tagLen += id3v2HeaderSize
+	}
+	return tagLen, true
 }

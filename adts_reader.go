@@ -40,13 +40,9 @@ func (r *ADTSReader) ReadFrame(dst []byte) (ADTSFrame, error) {
 		return ADTSFrame{}, fmt.Errorf("%w: nil ADTS reader", ErrInvalidADTS)
 	}
 	startLen := len(dst)
-	var header [ADTSHeaderSize]byte
-	n, err := io.ReadFull(r.r, header[:])
+	header, err := r.readFrameHeader()
 	if err != nil {
-		if errors.Is(err, io.EOF) && n == 0 {
-			return ADTSFrame{}, io.EOF
-		}
-		return ADTSFrame{}, adtsFrameError(r.frameIndex, r.offset, ErrNeedMoreData)
+		return ADTSFrame{}, err
 	}
 	frameIndex := r.frameIndex
 	frameOffset := r.offset
@@ -72,6 +68,38 @@ func (r *ADTSReader) ReadFrame(dst []byte) (ADTSFrame, error) {
 	r.frameIndex++
 	r.offset += int64(h.FrameLength)
 	return frame, nil
+}
+
+func (r *ADTSReader) readFrameHeader() ([ADTSHeaderSize]byte, error) {
+	for {
+		var header [ADTSHeaderSize]byte
+		n, err := io.ReadFull(r.r, header[:])
+		if err != nil {
+			if errors.Is(err, io.EOF) && n == 0 {
+				return header, io.EOF
+			}
+			return header, adtsFrameError(r.frameIndex, r.offset, ErrNeedMoreData)
+		}
+		if r.frameIndex != 0 || !hasID3v2Prefix(header[:]) {
+			return header, nil
+		}
+
+		var suffix [id3v2HeaderSize - ADTSHeaderSize]byte
+		if _, err := io.ReadFull(r.r, suffix[:]); err != nil {
+			return header, adtsFrameError(r.frameIndex, r.offset, ErrNeedMoreData)
+		}
+		var id3 [id3v2HeaderSize]byte
+		copy(id3[:], header[:])
+		copy(id3[ADTSHeaderSize:], suffix[:])
+		tagLen, ok := id3v2TagLength(id3[:])
+		if !ok {
+			return header, adtsFrameError(r.frameIndex, r.offset, fmt.Errorf("%w: invalid ID3v2 tag", ErrInvalidADTS))
+		}
+		if _, err := io.CopyN(io.Discard, r.r, int64(tagLen-id3v2HeaderSize)); err != nil {
+			return header, adtsFrameError(r.frameIndex, r.offset, ErrNeedMoreData)
+		}
+		r.offset += int64(tagLen)
+	}
 }
 
 // DecodeADTSReader decodes all ADTS frames from r and returns newly allocated
