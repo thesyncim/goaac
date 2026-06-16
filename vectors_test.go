@@ -86,6 +86,17 @@ func TestCommittedAACLCVectors(t *testing.T) {
 			byFramePCM := decodeVectorByADTSFrame(t, frames)
 			assertPCMHash(t, v, byFramePCM)
 
+			framePrefix := []int16{-3, 99}
+			framePCM, frameCfg, err := DecodeADTSFramesInto(append([]int16(nil), framePrefix...), frames)
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertVectorConfig(t, v, frameCfg)
+			if !equalInt16s(framePCM[:len(framePrefix)], framePrefix) {
+				t.Fatalf("DecodeADTSFramesInto modified prefix: got %v, want %v", framePCM[:len(framePrefix)], framePrefix)
+			}
+			assertPCMHash(t, v, framePCM[len(framePrefix):])
+
 			rawPCM := decodeVectorAsRawPayloads(t, frames)
 			assertPCMHash(t, v, rawPCM)
 		})

@@ -281,6 +281,27 @@ func DecodeADTS(data []byte) ([]int16, Config, error) {
 	return DecodeADTSInto(nil, data)
 }
 
+// DecodeADTSFramesInto decodes parsed ADTS frames and appends PCM to dst.
+func DecodeADTSFramesInto(dst []int16, frames []ADTSFrame) ([]int16, Config, error) {
+	dec, err := NewADTSDecoder()
+	if err != nil {
+		return dst, Config{}, err
+	}
+	defer dec.Close()
+	for i, frame := range frames {
+		dst, _, err = dec.DecodeADTSFrameInto(dst, frame.Data)
+		if err != nil {
+			return dst, Config{}, adtsFrameError(adtsFrameIndex(frame, i), frame.Offset, err)
+		}
+	}
+	return dst, dec.Config(), nil
+}
+
+// DecodeADTSFrames decodes parsed ADTS frames and returns newly allocated PCM.
+func DecodeADTSFrames(frames []ADTSFrame) ([]int16, Config, error) {
+	return DecodeADTSFramesInto(nil, frames)
+}
+
 // NativeVersion reports the decoder core version.
 func NativeVersion() string {
 	return PureGoVersion()
@@ -322,4 +343,11 @@ func (d *Decoder) decodeRawLocked(dst []int16, frame []byte) ([]int16, FrameInfo
 
 func hasRawConfig(c Config) bool {
 	return len(c.ExtraData) > 0 || c.SampleRate > 0 || c.SampleRateIndex > 0 || c.Channels > 0 || c.ChannelConfig > 0
+}
+
+func adtsFrameIndex(frame ADTSFrame, fallback int) int {
+	if frame.Index != 0 || fallback == 0 {
+		return frame.Index
+	}
+	return fallback
 }

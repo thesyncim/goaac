@@ -181,6 +181,16 @@ func TestADTSStreamDecodeErrorsIncludeFramePosition(t *testing.T) {
 	if !errors.Is(err, ErrUnsupportedProfile) || !strings.Contains(err.Error(), "frame 0 at byte 0:") {
 		t.Fatalf("DecodeADTSReaderInto err = %v, want frame-positioned ErrUnsupportedProfile", err)
 	}
+
+	_, _, err = DecodeADTSFrames(nil)
+	if err != nil {
+		t.Fatalf("DecodeADTSFrames empty err = %v, want nil", err)
+	}
+
+	_, _, err = DecodeADTSFrames([]ADTSFrame{{Header: ADTSHeader{}, Data: frame, Index: 7, Offset: 123}})
+	if !errors.Is(err, ErrUnsupportedProfile) || !strings.Contains(err.Error(), "frame 7 at byte 123:") {
+		t.Fatalf("DecodeADTSFrames err = %v, want frame-positioned ErrUnsupportedProfile", err)
+	}
 }
 
 func TestADTSFrameMetadataTransitions(t *testing.T) {
